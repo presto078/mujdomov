@@ -1172,536 +1172,61 @@ const STAV_PROJEKT={plan:{label:"Plánováno",color:C.blue},probiha:{label:"Prob
 const PROJ_EMOJIS=["🏗","🏠","💍","🛏","🍽","🚗","🌿","💡","📦","🔧","🎨","📚"];
 
 function ProjektyTab(){
-  const {data:projekty,loading,reload}=useData(()=>sb.from("projekty").select("*").order("datum"));
-  const [aktivni,setAktivni]=useState(null); // projekt_id nebo null
-  const [modal,setModal]=useState(false);
-  const [form,setForm]=useState({nazev:"",emoji:"🏗",datum:"",cas:"",misto:"",barva:"#4f7ef0"});
+  const {data:projekty,loading,reload}=useData(()=>sb.from("projekty").select("*").order("stav").order("priorita",{ascending:false}));
+  const [modal,setModal]=useState(null);
+  const [aktivni,setAktivni]=useState(null);
 
-  const ulozProjekt=async()=>{
-    await sb.from("projekty").insert({...form,datum:form.datum||null,cas:form.cas||null});
-    setModal(false);reload();
-  };
+  const smaz=async(p)=>{if(!confirm(`Smazat projekt "${p.nazev}"?`))return;await sb.from("projekty").delete().eq("id",p.id);reload();};
+  const zmenStav=async(p,stav)=>{await sb.from("projekty").update({stav}).eq("id",p.id);reload();};
 
   if(loading)return <Spinner/>;
 
-  if(aktivni){
-    const p=(projekty||[]).find(x=>x.id===aktivni);
-    if(!p)return null;
-    return <ProjektDetail projekt={p} onBack={()=>setAktivni(null)}/>;
-  }
-
-  const odpocet=(datum)=>{
-    if(!datum)return null;
-    const diff=Math.ceil((new Date(datum)-new Date())/(1000*60*60*24));
-    if(diff<0)return null;
-    if(diff===0)return"Dnes!";
-    return`Za ${diff} dní`;
-  };
+  const skupiny=Object.keys(STAV_PROJEKT).map(stav=>({stav,items:(projekty||[]).filter(p=>p.stav===stav)})).filter(g=>g.items.length>0);
 
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-      <h2 style={{margin:0,fontSize:22,fontWeight:800}}>🏗 Projekty</h2>
-      <button onClick={()=>setModal(true)} style={btnC()}>+ Nový projekt</button>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:8}}>
+      <div style={{color:C.text,fontWeight:800,fontSize:17}}>🏗 Projekty</div>
+      <button onClick={()=>setModal("new")} style={btnC()}>+ Nový projekt</button>
     </div>
-
-    {(projekty||[]).length===0&&<EmptyState emoji="🏗" text="Žádné projekty" action="+ Přidat projekt" onAction={()=>setModal(true)}/>}
-
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14}}>
-      {(projekty||[]).map(p=>{
-        const dniZbyvá=odpocet(p.datum);
-        return <div key={p.id} onClick={()=>setAktivni(p.id)}
-          style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",cursor:"pointer",transition:"all .2s",boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}
-          onMouseEnter={e=>e.currentTarget.style.transform="translateY(-3px)"}
-          onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
-          <div style={{background:p.barva||C.accent,padding:"20px 20px 16px"}}>
-            <div style={{fontSize:32,marginBottom:6}}>{p.emoji}</div>
-            <div style={{fontWeight:800,fontSize:16,color:"#fff"}}>{p.nazev}</div>
-            {p.misto&&<div style={{fontSize:12,color:"rgba(255,255,255,.8)",marginTop:3}}>📍 {p.misto}</div>}
-          </div>
-          <div style={{padding:"14px 16px"}}>
-            {p.datum&&<div style={{fontSize:13,color:C.muted,marginBottom:6}}>
-              📅 {new Date(p.datum).toLocaleDateString("cs-CZ",{day:"numeric",month:"long",year:"numeric"})}
-              {p.cas&&` v ${p.cas.slice(0,5)}`}
-            </div>}
-            {dniZbyvá&&<div style={{fontWeight:800,fontSize:15,color:p.barva||C.accent}}>{dniZbyvá}</div>}
-          </div>
-        </div>;
-      })}
-    </div>
-
-    {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:400,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
-        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>Nový projekt</h3>
-        {[
-          {l:"Název",k:"nazev",t:"text"},
-          {l:"Emoji",k:"emoji",t:"text"},
-          {l:"Datum",k:"datum",t:"date"},
-          {l:"Čas",k:"cas",t:"time"},
-          {l:"Místo",k:"misto",t:"text"},
-          {l:"Barva",k:"barva",t:"color"},
-        ].map(f=><div key={f.k} style={{marginBottom:11}}>
-          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
-          <input style={inp} type={f.t} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
-        </div>)}
-        <div style={{display:"flex",gap:10,marginTop:16}}>
-          <button onClick={ulozProjekt} style={btnC()}>Uložit</button>
-          <button onClick={()=>setModal(false)} style={btnC(C.muted,true)}>Zrušit</button>
+    {(projekty||[]).length===0&&<EmptyState emoji="🏗" text="Žádné projekty" action="+ Přidat projekt" onAction={()=>setModal("new")}/>}
+    {skupiny.map(({stav,items})=>(
+      <div key={stav} style={{marginBottom:24}}>
+        <div style={{fontSize:12,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",color:STAV_PROJEKT[stav].color,marginBottom:10}}>{STAV_PROJEKT[stav].label} ({items.length})</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+          {items.map(p=>(
+            <div key={p.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",cursor:"pointer",transition:"box-shadow .15s",boxShadow:aktivni===p.id?"0 4px 20px rgba(0,0,0,.1)":"none"}}
+              onClick={()=>setAktivni(aktivni===p.id?null:p.id)}>
+              <div style={{background:p.barva||C.accent,padding:"16px 16px 12px",position:"relative"}}>
+                <div style={{fontSize:28,marginBottom:4}}>{p.emoji}</div>
+                <div style={{fontWeight:800,fontSize:16,color:"#fff"}}>{p.nazev}</div>
+                <div style={{position:"absolute",top:12,right:12}}><Tag color="#ffffff44">{PRIORITA[p.priorita]?.label}</Tag></div>
+              </div>
+              <div style={{padding:"12px 16px"}}>
+                {p.popis&&<div style={{color:C.muted,fontSize:13,marginBottom:8}}>{p.popis}</div>}
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                  <Tag color={STAV_PROJEKT[p.stav].color}>{STAV_PROJEKT[p.stav].label}</Tag>
+                  {p.rozpocet&&<Tag color={C.muted}>{fmt(p.rozpocet)}</Tag>}
+                </div>
+                {aktivni===p.id&&<>
+                  <div style={{borderTop:`1px solid ${C.border}`,marginTop:12,paddingTop:12}}>
+                    <ProjektUkoly projektId={p.id}/>
+                  </div>
+                  <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}} onClick={e=>e.stopPropagation()}>
+                    {p.stav==="plan"&&<button onClick={()=>zmenStav(p,"probiha")} style={{...btnC(C.orange),padding:"4px 10px",fontSize:12}}>▶ Zahájit</button>}
+                    {p.stav==="probiha"&&<button onClick={()=>zmenStav(p,"hotovo")} style={{...btnC(C.green),padding:"4px 10px",fontSize:12}}>✓ Hotovo</button>}
+                    {p.stav==="probiha"&&<button onClick={()=>zmenStav(p,"pozastaveno")} style={{...btnC(C.muted),padding:"4px 10px",fontSize:12}}>⏸ Pozastavit</button>}
+                    {p.stav==="pozastaveno"&&<button onClick={()=>zmenStav(p,"probiha")} style={{...btnC(C.orange),padding:"4px 10px",fontSize:12}}>▶ Obnovit</button>}
+                    <button onClick={e=>{e.stopPropagation();setModal(p);}} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
+                    <button onClick={e=>{e.stopPropagation();smaz(p);}} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
+                  </div>
+                </>}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
-    </div>}
-  </div>;
-}
-
-function ProjektDetail({projekt,onBack}){
-  const [zalozka,setZalozka]=useState("rozpocet");
-  const [countdown,setCountdown]=useState("");
-  const p=projekt;
-
-  // Živý odpočet na vteřiny
-  useEffect(()=>{
-    if(!p.datum)return;
-    const cil=new Date(p.datum+"T"+(p.cas?p.cas.slice(0,5):"00:00"));
-    const tick=()=>{
-      const diff=cil-new Date();
-      if(diff<=0){setCountdown("🎉 Dnes!");return;}
-      const d=Math.floor(diff/(1000*60*60*24));
-      const h=Math.floor((diff%(1000*60*60*24))/(1000*60*60));
-      const m=Math.floor((diff%(1000*60*60))/(1000*60));
-      const s=Math.floor((diff%( 1000*60))/1000);
-      setCountdown(`${d} dní ${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`);
-    };
-    tick();
-    const id=setInterval(tick,1000);
-    return()=>clearInterval(id);
-  },[p.datum,p.cas]);
-
-  // Načtení souhrnných dat pro sticky header
-  const {data:rozpocet,reload:reloadRozpocet}=useData(()=>sb.from("projekty_rozpocet").select("cena_odhad,cena_skutecna,jiz_zaplaceno").eq("projekt_id",p.id));
-  const celkemOdhad=(rozpocet||[]).reduce((a,r)=>a+r.cena_odhad,0);
-  const celkemSkutecna=(rozpocet||[]).reduce((a,r)=>a+(r.cena_skutecna||0),0);
-  const celkemZaplaceno=(rozpocet||[]).reduce((a,r)=>a+r.jiz_zaplaceno,0);
-
-  const tabs=[
-    {id:"rozpocet",l:"💰 Rozpočet"},
-    {id:"hoste",l:"👥 Hosté"},
-    {id:"obed",l:"🍽 Oběd"},
-    {id:"zakusky",l:"🍰 Zákusky"},
-    {id:"todo",l:"✅ ToDo"},
-  ];
-
-  return <div>
-    {/* Sticky hlavička */}
-    <div style={{position:"sticky",top:54,zIndex:40,background:C.bg,paddingBottom:12,marginBottom:8}}>
-      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
-        <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:C.muted,padding:"4px 8px",borderRadius:8,whiteSpace:"nowrap"}}>← Zpět</button>
-        <div style={{flex:1,minWidth:0}}>
-          <h2 style={{margin:0,fontSize:20,fontWeight:800,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.emoji} {p.nazev}</h2>
-          <div style={{fontSize:12,color:C.muted}}>
-            {p.datum&&new Date(p.datum).toLocaleDateString("cs-CZ",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
-            {p.cas&&` v ${p.cas.slice(0,5)}`}
-            {p.misto&&` · ${p.misto}`}
-          </div>
-        </div>
-        {countdown&&<div style={{background:p.barva||C.accent,color:"#fff",borderRadius:12,padding:"8px 16px",fontWeight:800,fontSize:14,whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}}>{countdown}</div>}
-      </div>
-
-      {/* Souhrnné cifry */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-        {[
-          {l:"Odhad",v:`${celkemOdhad.toLocaleString("cs")} Kč`,c:C.blue},
-          {l:"Zaplaceno",v:`${celkemZaplaceno.toLocaleString("cs")} Kč`,c:C.green},
-          {l:"Zbývá",v:`${Math.max(0,celkemOdhad-celkemZaplaceno).toLocaleString("cs")} Kč`,c:celkemOdhad<=celkemZaplaceno?C.green:C.orange},
-        ].map(k=><div key={k.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",borderLeft:`3px solid ${k.c}`}}>
-          <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5}}>{k.l}</div>
-          <div style={{fontSize:15,fontWeight:800,color:k.c}}>{k.v}</div>
-        </div>)}
-      </div>
-
-      {/* Záložky */}
-      <div style={{display:"flex",gap:2,marginTop:10,borderBottom:`2px solid ${C.border}`}}>
-        {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"8px 14px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{t.l}</button>)}
-      </div>
-    </div>
-
-    {zalozka==="rozpocet"&&<RozpocetTab projektId={p.id} onSaved={reloadRozpocet}/>}
-    {zalozka==="hoste"&&<HosteTab projektId={p.id}/>}
-    {zalozka==="obed"&&<ObedTab projektId={p.id}/>}
-    {zalozka==="zakusky"&&<ZakuskyTab projektId={p.id}/>}
-    {zalozka==="todo"&&<TodoTab projektId={p.id}/>}
-  </div>;
-}
-
-function RozpocetTab({projektId,onSaved}){
-  const {data:polozky,reload}=useData(()=>sb.from("projekty_rozpocet").select("*").eq("projekt_id",projektId).order("kategorie").order("polozka"));
-  const [modal,setModal]=useState(null);
-  const [form,setForm]=useState({kategorie:"",polozka:"",cena_odhad:"",jiz_zaplaceno:"",poznamka:""});
-
-  const KATEGORIE=["Administrativa","Místo a jídlo","Jídlo","Oblečení a vizáž","Zábava a vzpomínky","Dekorace","Ostatní"];
-
-  const uloz=async()=>{
-    const data={projekt_id:projektId,kategorie:form.kategorie,polozka:form.polozka,cena_odhad:+form.cena_odhad||0,cena_skutecna:null,jiz_zaplaceno:+form.jiz_zaplaceno||0,poznamka:form.poznamka||null};
-    if(modal==="nova")await sb.from("projekty_rozpocet").insert(data);
-    else await sb.from("projekty_rozpocet").update(data).eq("id",modal.id);
-    reload();onSaved&&onSaved();setModal(null);
-  };
-  const smaz=async(id)=>{if(!confirm("Smazat?"))return;await sb.from("projekty_rozpocet").delete().eq("id",id);reload();onSaved&&onSaved();};
-
-  const celkemOdhad=(polozky||[]).reduce((a,p)=>a+p.cena_odhad,0);
-  const celkemZaplaceno=(polozky||[]).reduce((a,p)=>a+p.jiz_zaplaceno,0);
-  const zbyva=celkemOdhad-celkemZaplaceno;
-
-  return <div>
-    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
-      <button onClick={()=>{setForm({kategorie:KATEGORIE[0],polozka:"",cena_odhad:"",jiz_zaplaceno:"",poznamka:""});setModal("nova");}} style={btnC()}>+ Přidat položku</button>
-    </div>
-
-    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-      <table style={{width:"100%",borderCollapse:"collapse"}}>
-        <thead><tr style={{background:C.bg}}>
-          {["Kategorie","Položka","Odhad","Zaplaceno","Zbývá","Poznámka",""].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.4}}>{h}</th>)}
-        </tr></thead>
-        <tbody>
-          {(polozky||[]).length===0&&<tr><td colSpan={7} style={{padding:24,textAlign:"center",color:C.dim}}>Žádné položky</td></tr>}
-          {(polozky||[]).map((p,i)=>{
-            const zbyva=p.cena_odhad-p.jiz_zaplaceno;
-            return <tr key={p.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
-              <td style={{padding:"9px 12px"}}>
-                <span style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:600,color:C.muted,whiteSpace:"nowrap"}}>{p.kategorie}</span>
-              </td>
-              <td style={{padding:"9px 12px",fontWeight:600,fontSize:13}}>{p.polozka}</td>
-              <td style={{padding:"9px 12px",fontSize:13,color:C.muted}}>{p.cena_odhad.toLocaleString("cs")} Kč</td>
-              <td style={{padding:"9px 12px",fontSize:13,fontWeight:700,color:p.jiz_zaplaceno>0?C.green:C.dim}}>{p.jiz_zaplaceno>0?`${p.jiz_zaplaceno.toLocaleString("cs")} Kč`:"—"}</td>
-              <td style={{padding:"9px 12px",fontSize:13,fontWeight:700,color:zbyva>0?C.orange:C.green}}>{zbyva>0?`${zbyva.toLocaleString("cs")} Kč`:"✓"}</td>
-              <td style={{padding:"9px 12px",fontSize:12,color:C.muted}}>{p.poznamka||""}</td>
-              <td style={{padding:"9px 8px",whiteSpace:"nowrap"}}>
-                <button onClick={()=>{setModal(p);setForm({kategorie:p.kategorie,polozka:p.polozka,cena_odhad:String(p.cena_odhad),jiz_zaplaceno:String(p.jiz_zaplaceno),poznamka:p.poznamka||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
-                <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
-              </td>
-            </tr>;
-          })}
-        </tbody>
-        {(polozky||[]).length>0&&<tfoot>
-          <tr style={{background:C.bg,borderTop:`2px solid ${C.border}`}}>
-            <td colSpan={2} style={{padding:"10px 12px",fontWeight:700,fontSize:13}}>CELKEM</td>
-            <td style={{padding:"10px 12px",fontWeight:800,fontSize:14,color:C.muted}}>{celkemOdhad.toLocaleString("cs")} Kč</td>
-            <td style={{padding:"10px 12px",fontWeight:800,fontSize:14,color:C.green}}>{celkemZaplaceno.toLocaleString("cs")} Kč</td>
-            <td style={{padding:"10px 12px",fontWeight:800,fontSize:14,color:zbyva>0?C.orange:C.green}}>{zbyva>0?`${zbyva.toLocaleString("cs")} Kč`:"✓ Vše zaplaceno"}</td>
-            <td colSpan={2}/>
-          </tr>
-        </tfoot>}
-      </table>
-    </div>
-
-    {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:420,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
-        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="nova"?"Nová položka":"Upravit položku"}</h3>
-        <div style={{marginBottom:11}}>
-          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Kategorie</div>
-          <select style={inp} value={form.kategorie} onChange={e=>setForm(p=>({...p,kategorie:e.target.value}))}>
-            {KATEGORIE.map(k=><option key={k} value={k}>{k}</option>)}
-          </select>
-        </div>
-        {[
-          {l:"Položka",k:"polozka",t:"text"},
-          {l:"Odhadovaná cena (Kč)",k:"cena_odhad",t:"number"},
-          {l:"Již zaplaceno (Kč)",k:"jiz_zaplaceno",t:"number"},
-          {l:"Poznámka",k:"poznamka",t:"text"},
-        ].map(f=><div key={f.k} style={{marginBottom:11}}>
-          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
-          <input style={inp} type={f.t} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
-        </div>)}
-        <div style={{display:"flex",gap:10,marginTop:16}}>
-          <button onClick={uloz} style={btnC()}>Uložit</button>
-          <button onClick={()=>setModal(null)} style={btnC(C.muted,true)}>Zrušit</button>
-        </div>
-      </div>
-    </div>}
-  </div>;
-}
-
-function HosteTab({projektId}){
-  const {data:hoste,reload}=useData(()=>sb.from("projekty_hoste").select("*").eq("projekt_id",projektId).order("typ").order("jmeno"));
-  const [form,setForm]=useState({jmeno:"",typ:"dospely"});
-  const [pridavam,setPridavam]=useState(false);
-
-  const uloz=async()=>{
-    if(!form.jmeno.trim())return;
-    await sb.from("projekty_hoste").insert({projekt_id:projektId,jmeno:form.jmeno,typ:form.typ});
-    setForm({jmeno:"",typ:"dospely"});setPridavam(false);reload();
-  };
-  const smaz=async(id)=>{await sb.from("projekty_hoste").delete().eq("id",id);reload();};
-
-  const dospeli=(hoste||[]).filter(h=>h.typ==="dospely");
-  const deti=(hoste||[]).filter(h=>h.typ==="dite");
-
-  return <div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
-      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${C.accent}`}}>
-        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>Dospělí</div>
-        <div style={{fontSize:24,fontWeight:800,color:C.accent}}>{dospeli.length}</div>
-      </div>
-      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${C.green}`}}>
-        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>Děti</div>
-        <div style={{fontSize:24,fontWeight:800,color:C.green}}>{deti.length}</div>
-      </div>
-    </div>
-
-    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
-      <button onClick={()=>setPridavam(true)} style={btnC()}>+ Přidat hosta</button>
-    </div>
-
-    {pridavam&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:16,display:"flex",gap:10,alignItems:"flex-end",flexWrap:"wrap"}}>
-      <div style={{flex:1}}>
-        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Jméno</div>
-        <input style={inp} value={form.jmeno} onChange={e=>setForm(p=>({...p,jmeno:e.target.value}))} placeholder="Jméno hosta" onKeyDown={e=>e.key==="Enter"&&uloz()}/>
-      </div>
-      <div>
-        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Typ</div>
-        <select style={inp} value={form.typ} onChange={e=>setForm(p=>({...p,typ:e.target.value}))}>
-          <option value="dospely">Dospělý</option>
-          <option value="dite">Dítě</option>
-        </select>
-      </div>
-      <button onClick={uloz} style={btnC()}>Přidat</button>
-      <button onClick={()=>setPridavam(false)} style={btnC(C.muted,true)}>Zrušit</button>
-    </div>}
-
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-      {[{label:"👤 Dospělí",items:dospeli},{label:"👶 Děti",items:deti}].map(({label,items})=><div key={label}>
-        <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:8}}>{label} ({items.length})</div>
-        <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-          {items.length===0?<div style={{padding:16,color:C.dim,fontSize:13,textAlign:"center"}}>Žádní hosté</div>:
-          items.map((h,i)=><div key={h.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderBottom:i<items.length-1?`1px solid ${C.border}`:"none"}}>
-            <span style={{fontSize:13,fontWeight:500}}>{h.jmeno}</span>
-            <button onClick={()=>smaz(h.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.dim,fontSize:12}} onMouseEnter={e=>e.currentTarget.style.color=C.red} onMouseLeave={e=>e.currentTarget.style.color=C.dim}>✕</button>
-          </div>)}
-        </div>
-      </div>)}
-    </div>
-  </div>;
-}
-
-function ObedTab({projektId}){
-  const {data:polozky,reload}=useData(()=>sb.from("projekty_obed").select("*").eq("projekt_id",projektId).order("polozka"));
-  const [modal,setModal]=useState(null);
-  const [form,setForm]=useState({polozka:"",pocet_osob:"",cena_osoba:""});
-
-  const uloz=async()=>{
-    const data={projekt_id:projektId,polozka:form.polozka,pocet_osob:+form.pocet_osob||0,cena_osoba:+form.cena_osoba||0};
-    if(modal==="nova")await sb.from("projekty_obed").insert(data);
-    else await sb.from("projekty_obed").update(data).eq("id",modal.id);
-    reload();setModal(null);
-  };
-  const smaz=async(id)=>{await sb.from("projekty_obed").delete().eq("id",id);reload();};
-
-  const celkem=(polozky||[]).reduce((a,p)=>a+p.pocet_osob*p.cena_osoba,0);
-
-  return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-      <div style={{fontWeight:800,fontSize:15}}>Celkem: <span style={{color:C.accent}}>{celkem.toLocaleString("cs")} Kč</span></div>
-      <button onClick={()=>{setForm({polozka:"",pocet_osob:"",cena_osoba:""});setModal("nova");}} style={btnC()}>+ Přidat</button>
-    </div>
-    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-      <table style={{width:"100%",borderCollapse:"collapse"}}>
-        <thead><tr style={{background:C.bg}}>
-          {["Položka","Počet osob","Cena/osoba","Celkem",""].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
-        </tr></thead>
-        <tbody>
-          {(polozky||[]).length===0&&<tr><td colSpan={5} style={{padding:20,textAlign:"center",color:C.dim}}>Žádné položky</td></tr>}
-          {(polozky||[]).map((p,i)=><tr key={p.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
-            <td style={{padding:"9px 12px",fontWeight:600,fontSize:13}}>{p.polozka}</td>
-            <td style={{padding:"9px 12px",fontSize:13,textAlign:"center"}}>{p.pocet_osob}</td>
-            <td style={{padding:"9px 12px",fontSize:13}}>{p.cena_osoba.toLocaleString("cs")} Kč</td>
-            <td style={{padding:"9px 12px",fontSize:13,fontWeight:700,color:C.accent}}>{(p.pocet_osob*p.cena_osoba).toLocaleString("cs")} Kč</td>
-            <td style={{padding:"9px 8px",whiteSpace:"nowrap"}}>
-              <button onClick={()=>{setModal(p);setForm({polozka:p.polozka,pocet_osob:String(p.pocet_osob),cena_osoba:String(p.cena_osoba)});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
-              <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
-            </td>
-          </tr>)}
-        </tbody>
-        {(polozky||[]).length>0&&<tfoot><tr style={{background:C.bg,borderTop:`2px solid ${C.border}`}}>
-          <td colSpan={3} style={{padding:"10px 12px",fontWeight:700}}>CELKEM</td>
-          <td style={{padding:"10px 12px",fontWeight:800,fontSize:14,color:C.accent}}>{celkem.toLocaleString("cs")} Kč</td>
-          <td/>
-        </tr></tfoot>}
-      </table>
-    </div>
-
-    {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
-        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="nova"?"Nová položka":"Upravit"}</h3>
-        {[{l:"Položka",k:"polozka",t:"text"},{l:"Počet osob",k:"pocet_osob",t:"number"},{l:"Cena na osobu (Kč)",k:"cena_osoba",t:"number"}].map(f=><div key={f.k} style={{marginBottom:11}}>
-          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
-          <input style={inp} type={f.t} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
-        </div>)}
-        {form.pocet_osob&&form.cena_osoba&&<div style={{background:C.accentS,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13,color:C.accent,fontWeight:600}}>Celkem: {(+form.pocet_osob*(+form.cena_osoba)).toLocaleString("cs")} Kč</div>}
-        <div style={{display:"flex",gap:10,marginTop:16}}>
-          <button onClick={uloz} style={btnC()}>Uložit</button>
-          <button onClick={()=>setModal(null)} style={btnC(C.muted,true)}>Zrušit</button>
-        </div>
-      </div>
-    </div>}
-  </div>;
-}
-
-function ZakuskyTab({projektId}){
-  const {data:zakusky,reload}=useData(()=>sb.from("projekty_zakusky").select("*").eq("projekt_id",projektId).order("nazev"));
-  const [modal,setModal]=useState(null);
-  const [form,setForm]=useState({nazev:"",cena:"",mnozstvi:""});
-
-  const uloz=async()=>{
-    const data={projekt_id:projektId,nazev:form.nazev,cena:+form.cena||0,mnozstvi:+form.mnozstvi||0};
-    if(modal==="nova")await sb.from("projekty_zakusky").insert(data);
-    else await sb.from("projekty_zakusky").update(data).eq("id",modal.id);
-    reload();setModal(null);
-  };
-  const smaz=async(id)=>{await sb.from("projekty_zakusky").delete().eq("id",id);reload();};
-
-  const celkemKs=(zakusky||[]).reduce((a,z)=>a+z.mnozstvi,0);
-  const celkemCena=(zakusky||[]).reduce((a,z)=>a+z.cena*z.mnozstvi,0);
-
-  return <div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
-      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${C.orange}`}}>
-        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>Kusů celkem</div>
-        <div style={{fontSize:24,fontWeight:800,color:C.orange}}>{celkemKs}</div>
-      </div>
-      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${C.accent}`}}>
-        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>Celková cena</div>
-        <div style={{fontSize:24,fontWeight:800,color:C.accent}}>{celkemCena.toLocaleString("cs")} Kč</div>
-      </div>
-    </div>
-
-    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
-      <button onClick={()=>{setForm({nazev:"",cena:"",mnozstvi:""});setModal("nova");}} style={btnC()}>+ Přidat zákusek</button>
-    </div>
-
-    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-      <table style={{width:"100%",borderCollapse:"collapse"}}>
-        <thead><tr style={{background:C.bg}}>
-          {["Zákusek","Cena/ks","Množství","Objednáno",""].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
-        </tr></thead>
-        <tbody>
-          {(zakusky||[]).length===0&&<tr><td colSpan={5} style={{padding:20,textAlign:"center",color:C.dim}}>Žádné zákusky</td></tr>}
-          {(zakusky||[]).map((z,i)=><tr key={z.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
-            <td style={{padding:"9px 12px",fontWeight:600,fontSize:13}}>{z.nazev}</td>
-            <td style={{padding:"9px 12px",fontSize:13}}>{z.cena.toLocaleString("cs")} Kč</td>
-            <td style={{padding:"9px 12px",fontSize:13,textAlign:"center"}}>{z.mnozstvi||"—"}</td>
-            <td style={{padding:"9px 12px",fontSize:13,fontWeight:700,color:z.mnozstvi>0?C.accent:C.dim}}>{z.mnozstvi>0?`${(z.cena*z.mnozstvi).toLocaleString("cs")} Kč`:"—"}</td>
-            <td style={{padding:"9px 8px",whiteSpace:"nowrap"}}>
-              <button onClick={()=>{setModal(z);setForm({nazev:z.nazev,cena:String(z.cena),mnozstvi:String(z.mnozstvi)});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
-              <button onClick={()=>smaz(z.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
-            </td>
-          </tr>)}
-        </tbody>
-        {celkemCena>0&&<tfoot><tr style={{background:C.bg,borderTop:`2px solid ${C.border}`}}>
-          <td colSpan={2} style={{padding:"10px 12px",fontWeight:700}}>CELKEM</td>
-          <td style={{padding:"10px 12px",fontWeight:800,textAlign:"center"}}>{celkemKs} ks</td>
-          <td style={{padding:"10px 12px",fontWeight:800,fontSize:14,color:C.accent}}>{celkemCena.toLocaleString("cs")} Kč</td>
-          <td/>
-        </tr></tfoot>}
-      </table>
-    </div>
-
-    {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
-        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="nova"?"Nový zákusek":"Upravit"}</h3>
-        {[{l:"Název",k:"nazev",t:"text"},{l:"Cena/ks (Kč)",k:"cena",t:"number"},{l:"Množství",k:"mnozstvi",t:"number"}].map(f=><div key={f.k} style={{marginBottom:11}}>
-          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
-          <input style={inp} type={f.t} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
-        </div>)}
-        {form.cena&&form.mnozstvi&&<div style={{background:C.accentS,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13,color:C.accent,fontWeight:600}}>Celkem: {(+form.cena*(+form.mnozstvi)).toLocaleString("cs")} Kč</div>}
-        <div style={{display:"flex",gap:10,marginTop:16}}>
-          <button onClick={uloz} style={btnC()}>Uložit</button>
-          <button onClick={()=>setModal(null)} style={btnC(C.muted,true)}>Zrušit</button>
-        </div>
-      </div>
-    </div>}
-  </div>;
-}
-
-function TodoTab({projektId}){
-  const {data:ukoly,reload}=useData(()=>sb.from("projekty_todo").select("*").eq("projekt_id",projektId).order("created_at"));
-  const [form,setForm]=useState({nazev:"",poznamka:""});
-  const [pridavam,setPridavam]=useState(false);
-
-  const uloz=async()=>{
-    if(!form.nazev.trim())return;
-    await sb.from("projekty_todo").insert({projekt_id:projektId,nazev:form.nazev,poznamka:form.poznamka||null,splneno:false});
-    setForm({nazev:"",poznamka:""});setPridavam(false);reload();
-  };
-  const toggle=async(u)=>{await sb.from("projekty_todo").update({splneno:!u.splneno}).eq("id",u.id);reload();};
-  const smaz=async(id)=>{await sb.from("projekty_todo").delete().eq("id",id);reload();};
-
-  const hotovo=(ukoly||[]).filter(u=>u.splneno).length;
-  const celkem=(ukoly||[]).length;
-  const pct=celkem>0?Math.round(hotovo/celkem*100):0;
-
-  const nesplnene=(ukoly||[]).filter(u=>!u.splneno);
-  const splnene=(ukoly||[]).filter(u=>u.splneno);
-
-  return <div>
-    {/* Progress */}
-    {celkem>0&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 18px",marginBottom:16}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8,fontSize:13}}>
-        <span style={{fontWeight:700}}>Hotovo {hotovo} z {celkem}</span>
-        <span style={{color:C.muted}}>{pct} %</span>
-      </div>
-      <div style={{background:C.bg,borderRadius:99,height:8}}>
-        <div style={{height:"100%",width:`${pct}%`,background:C.green,borderRadius:99,transition:"width .4s"}}/>
-      </div>
-    </div>}
-
-    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
-      <button onClick={()=>setPridavam(true)} style={btnC()}>+ Přidat úkol</button>
-    </div>
-
-    {pridavam&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:16}}>
-      <div style={{marginBottom:10}}>
-        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Co zařídit</div>
-        <input style={inp} value={form.nazev} onChange={e=>setForm(p=>({...p,nazev:e.target.value}))} placeholder="např. Zavolat fotografovi" autoFocus onKeyDown={e=>e.key==="Enter"&&uloz()}/>
-      </div>
-      <div style={{marginBottom:12}}>
-        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Poznámka (volitelně)</div>
-        <input style={inp} value={form.poznamka} onChange={e=>setForm(p=>({...p,poznamka:e.target.value}))} placeholder="telefon, termín, odkaz..."/>
-      </div>
-      <div style={{display:"flex",gap:8}}>
-        <button onClick={uloz} style={btnC()}>Přidat</button>
-        <button onClick={()=>setPridavam(false)} style={btnC(C.muted,true)}>Zrušit</button>
-      </div>
-    </div>}
-
-    {/* Nesplněné úkoly */}
-    {nesplnene.length>0&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",marginBottom:16}}>
-      {nesplnene.map((u,i)=><div key={u.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<nesplnene.length-1?`1px solid ${C.border}`:"none"}}>
-        <div onClick={()=>toggle(u)} style={{width:22,height:22,borderRadius:6,border:`2px solid ${C.border}`,background:"transparent",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}/>
-        <div style={{flex:1}}>
-          <div style={{fontSize:14,fontWeight:600,color:C.text}}>{u.nazev}</div>
-          {u.poznamka&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>{u.poznamka}</div>}
-        </div>
-        <button onClick={()=>smaz(u.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.dim,fontSize:13,padding:"2px 6px"}} onMouseEnter={e=>e.currentTarget.style.color=C.red} onMouseLeave={e=>e.currentTarget.style.color=C.dim}>✕</button>
-      </div>)}
-    </div>}
-
-    {/* Splněné úkoly */}
-    {splnene.length>0&&<div>
-      <div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:8}}>✓ Hotovo ({splnene.length})</div>
-      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",opacity:.7}}>
-        {splnene.map((u,i)=><div key={u.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 16px",borderBottom:i<splnene.length-1?`1px solid ${C.border}`:"none"}}>
-          <div onClick={()=>toggle(u)} style={{width:22,height:22,borderRadius:6,border:`2px solid ${C.green}`,background:C.green,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:13}}>✓</div>
-          <div style={{flex:1}}>
-            <div style={{fontSize:14,color:C.dim,textDecoration:"line-through"}}>{u.nazev}</div>
-            {u.poznamka&&<div style={{fontSize:12,color:C.dim,marginTop:2}}>{u.poznamka}</div>}
-          </div>
-          <button onClick={()=>smaz(u.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.dim,fontSize:13,padding:"2px 6px"}}>✕</button>
-        </div>)}
-      </div>
-    </div>}
-
-    {(ukoly||[]).length===0&&!pridavam&&<div style={{textAlign:"center",padding:40,color:C.dim}}>
-      <div style={{fontSize:32,marginBottom:8}}>✅</div>
-      <div style={{fontSize:14}}>Žádné úkoly — přidej co je potřeba zařídit</div>
-    </div>}
+    ))}
+    {modal&&<ProjektModal projekt={modal==="new"?null:modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
   </div>;
 }
 
@@ -1711,13 +1236,17 @@ function ProjektUkoly({projektId}){
   const toggle=async(u)=>{await sb.from("projekt_ukoly").update({splneno:!u.splneno}).eq("id",u.id);reload();};
   const pridej=async()=>{const n=novy.trim();if(!n)return;await sb.from("projekt_ukoly").insert({projekt_id:projektId,nazev:n,poradi:(ukoly||[]).length});setNovy("");reload();};
   const smaz=async(u)=>{await sb.from("projekt_ukoly").delete().eq("id",u.id);reload();};
+  const hotovo=(ukoly||[]).filter(u=>u.splneno).length;
   return <div>
+    {(ukoly||[]).length>0&&<div style={{fontSize:11,color:C.muted,marginBottom:8}}>Úkoly: {hotovo}/{(ukoly||[]).length}</div>}
     <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:8}}>
-      {(ukoly||[]).map(u=><div key={u.id} style={{display:"flex",alignItems:"center",gap:8}}>
-        <div onClick={()=>toggle(u)} style={{width:18,height:18,borderRadius:4,border:`2px solid ${u.splneno?C.green:C.border}`,background:u.splneno?C.green:"transparent",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:11}}>{u.splneno?"✓":""}</div>
-        <span style={{flex:1,fontSize:12,color:u.splneno?C.dim:C.text,textDecoration:u.splneno?"line-through":"none"}}>{u.nazev}</span>
-        <button onClick={()=>smaz(u)} style={{background:"none",border:"none",cursor:"pointer",color:C.dim,fontSize:11,padding:"1px 4px"}}>✕</button>
-      </div>)}
+      {(ukoly||[]).map(u=>(
+        <div key={u.id} style={{display:"flex",alignItems:"center",gap:8}}>
+          <div onClick={()=>toggle(u)} style={{width:18,height:18,borderRadius:4,border:`2px solid ${u.splneno?C.green:C.border}`,background:u.splneno?C.green:"transparent",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:11}}>{u.splneno?"✓":""}</div>
+          <span style={{flex:1,fontSize:12,color:u.splneno?C.dim:C.text,textDecoration:u.splneno?"line-through":"none"}}>{u.nazev}</span>
+          <button onClick={()=>smaz(u)} style={{background:"none",border:"none",cursor:"pointer",color:C.dim,fontSize:11,padding:"1px 4px"}} onMouseEnter={e=>e.currentTarget.style.color=C.red} onMouseLeave={e=>e.currentTarget.style.color=C.dim}>✕</button>
+        </div>
+      ))}
     </div>
     <div style={{display:"flex",gap:6}}>
       <input style={{...inp,fontSize:12,padding:"5px 8px"}} value={novy} onChange={e=>setNovy(e.target.value)} placeholder="Přidat úkol…" onKeyDown={e=>e.key==="Enter"&&pridej()}/>
@@ -1732,7 +1261,17 @@ function ProjektModal({projekt,onClose,onSaved}){
   const [saving,setSaving]=useState(false);const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const uloz=async()=>{if(!f.nazev.trim())return;setSaving(true);const data={...f,rozpocet:f.rozpocet?+f.rozpocet:null};if(isNew)await sb.from("projekty").insert(data);else await sb.from("projekty").update(data).eq("id",projekt.id);setSaving(false);onSaved();};
   return <Modal title={isNew?"Nový projekt":"Upravit projekt"} onClose={onClose}>
+    <Field label="Emoji"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{PROJ_EMOJIS.map(e=><span key={e} onClick={()=>setF(p=>({...p,emoji:e}))} style={{fontSize:22,cursor:"pointer",padding:4,borderRadius:6,background:f.emoji===e?C.accentS:"transparent"}}>{e}</span>)}</div></Field>
     <Field label="Název"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus/></Field>
+    <Field label="Popis"><textarea style={{...inp,resize:"vertical",minHeight:60}} value={f.popis} onChange={set("popis")}/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Stav"><select style={inp} value={f.stav} onChange={set("stav")}>{Object.entries(STAV_PROJEKT).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></Field>
+      <Field label="Priorita"><select style={inp} value={f.priorita} onChange={set("priorita")}>{Object.entries(PRIORITA).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></Field>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Barva"><input style={inp} type="color" value={f.barva} onChange={set("barva")}/></Field>
+      <Field label="Rozpočet (Kč)"><input style={inp} type="number" value={f.rozpocet} onChange={set("rozpocet")} placeholder="0"/></Field>
+    </div>
     <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}><button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button><button onClick={uloz} disabled={saving} style={btnC()}>{saving?"…":"Uložit"}</button></div>
   </Modal>;
 }
@@ -2481,7 +2020,7 @@ function useGoogleToken(){
   const [loading,setLoading]=useState(true);
 
   const nactiToken=async()=>{
-    const {data}=await sb.from("google_tokens").select("*").order("created_at",{ascending:false}).limit(1).maybeSingle();
+    const {data}=await sb.from("google_tokens").select("*").order("created_at",{ascending:false}).limit(1).single();
     if(data){
       // Zkontroluj expiraci
       if(data.expires_at&&new Date(data.expires_at)<new Date()){
@@ -2691,40 +2230,6 @@ const TILES=[
 ];
 
 // ── TÝDENNÍ WIDGET NA HOMEPAGE ───────────────────────────────────────────────
-function OdpocetWidget(){
-  const {data:projekty}=useData(()=>sb.from("projekty").select("*").not("datum","is",null).order("datum").limit(1));
-  const [countdown,setCountdown]=useState("");
-
-  useEffect(()=>{
-    if(!projekty||projekty.length===0)return;
-    const p=projekty[0];
-    const cil=new Date(p.datum+"T"+(p.cas?p.cas.slice(0,5):"00:00"));
-    const tick=()=>{
-      const diff=cil-new Date();
-      if(diff<=0){setCountdown("🎉 Dnes!");return;}
-      const d=Math.floor(diff/(1000*60*60*24));
-      const h=Math.floor((diff%(1000*60*60*24))/(1000*60*60));
-      const m=Math.floor((diff%(1000*60*60))/(1000*60));
-      const s=Math.floor((diff%(1000*60))/1000);
-      setCountdown(`${d}d ${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`);
-    };
-    tick();
-    const id=setInterval(tick,1000);
-    return()=>clearInterval(id);
-  },[projekty]);
-
-  if(!projekty||projekty.length===0||!countdown)return null;
-  const p=projekty[0];
-
-  return <div style={{display:"flex",alignItems:"center",gap:10,background:"#fff0f6",border:"1px solid #f9a8d4",borderRadius:12,padding:"8px 16px"}}>
-    <span style={{fontSize:22}}>{p.emoji||"💒"}</span>
-    <div>
-      <div style={{fontWeight:800,fontSize:15,color:"#be185d",fontVariantNumeric:"tabular-nums"}}>{countdown}</div>
-      <div style={{fontSize:10,color:"#9d174d"}}>{p.nazev}</div>
-    </div>
-  </div>;
-}
-
 function TydenWidget(){
   const {token,loading}=useGoogleToken();
   const [udalosti,setUdalosti]=useState([]);
@@ -2908,8 +2413,7 @@ export default function App() {
         </div>
         <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
           <div style={{fontSize:13,color:C.dim}}>{new Date().toLocaleDateString("cs-CZ",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
-          <PocasiWidget/>
-          <OdpocetWidget/>
+        <PocasiWidget/>
           {/* Přepínač úprav */}
           <button onClick={()=>setUpravy(u=>!u)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 16px",borderRadius:10,border:`1px solid ${upravy?C.orange:C.border}`,background:upravy?C.orangeS:C.surface,cursor:"pointer",transition:"all .2s"}}>
             <div style={{width:32,height:18,borderRadius:99,background:upravy?C.orange:C.border,position:"relative",transition:"all .2s"}}>
