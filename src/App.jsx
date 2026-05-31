@@ -2675,6 +2675,475 @@ function PocasiWidget(){
   </div>;
 }
 
+// ── VODA TAB ─────────────────────────────────────────────────────────────────
+function VodaTab(){
+  const [zalozka,setZalozka]=useState("fakturacni");
+  const {data:odecty,reload:reloadOdecty}=useData(()=>sb.from("voda_odecty").select("*").order("datum",{ascending:true}));
+  const {data:faktury,reload:reloadFaktury}=useData(()=>sb.from("voda_faktury").select("*").order("obdobi_od",{ascending:true}));
+  const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("voda_nastaveni").select("*"));
+
+  const nast=Object.fromEntries((nastaveni||[]).map(r=>[r.klic,r.hodnota]));
+  const cenaM3=parseFloat(nast.cena_m3_s_dph||"80.19");
+  const pasualRocni=parseFloat(nast.pausal_rocni_s_dph||"1232");
+
+  const hlavniOdecty=(odecty||[]).filter(o=>o.typ==="hlavni").sort((a,b)=>new Date(a.datum)-new Date(b.datum));
+  const podruznyOdecty=(odecty||[]).filter(o=>o.typ==="podruzny").sort((a,b)=>new Date(a.datum)-new Date(b.datum));
+
+  const tabs=[
+    {id:"fakturacni",l:"🏠 Fakturační vodoměr"},
+    {id:"podruzny",l:"🚿 Podružný vodoměr"},
+    {id:"nastaveni",l:"⚙️ Nastavení"},
+  ];
+
+  // ── FAKTURAČNÍ ──
+  const FakturacniView=()=>{
+    const [modalFak,setModalFak]=useState(null);
+    const [formFak,setFormFak]=useState({cislo_faktury:"",datum_vystaveni:"",datum_splatnosti:"",obdobi_od:"",obdobi_do:"",stav_od:"",stav_do:"",castka:"",zaplaceno:false,poznamka:""});
+    const [modalOdecet,setModalOdecet]=useState(null);
+    const [formOdecet,setFormOdecet]=useState({datum:"",stav:"",poznamka:""});
+
+    const ulozFakturu=async()=>{
+      const data={typ:"baracom",cislo_faktury:formFak.cislo_faktury||null,datum_vystaveni:formFak.datum_vystaveni||null,datum_splatnosti:formFak.datum_splatnosti||null,obdobi_od:formFak.obdobi_od||null,obdobi_do:formFak.obdobi_do||null,castka:parseInt(formFak.castka)||0,zaplaceno:formFak.zaplaceno,poznamka:formFak.poznamka||null,stav_od:formFak.stav_od?parseFloat(formFak.stav_od):null,stav_do:formFak.stav_do?parseFloat(formFak.stav_do):null};
+      if(modalFak==="nova")await sb.from("voda_faktury").insert(data);
+      else await sb.from("voda_faktury").update(data).eq("id",modalFak.id);
+      reloadFaktury();setModalFak(null);
+    };
+    const smazFakturu=async(id)=>{if(!confirm("Smazat fakturu?"))return;await sb.from("voda_faktury").delete().eq("id",id);reloadFaktury();};
+    const toggleZaplaceno=async(f)=>{await sb.from("voda_faktury").update({zaplaceno:!f.zaplaceno}).eq("id",f.id);reloadFaktury();};
+
+    const ulozOdecet=async()=>{
+      const data={datum:formOdecet.datum,typ:"hlavni",stav:parseFloat(formOdecet.stav),poznamka:formOdecet.poznamka||null};
+      if(modalOdecet==="nova")await sb.from("voda_odecty").insert(data);
+      else await sb.from("voda_odecty").update(data).eq("id",modalOdecet.id);
+      reloadOdecty();setModalOdecet(null);
+    };
+    const smazOdecet=async(id)=>{if(!confirm("Smazat odečet?"))return;await sb.from("voda_odecty").delete().eq("id",id);reloadOdecty();};
+
+    // Průběžný odhad od poslední faktury
+    const posledniF=(faktury||[]).filter(f=>f.typ==="baracom").sort((a,b)=>new Date(b.obdobi_do)-new Date(a.obdobi_do))[0];
+
+    const odhad=()=>{
+      if(!posledniF||posledniF.stav_do==null)return null;
+      const datumPosledniF=new Date(posledniF.obdobi_do);
+
+      // Zjisti jestli od poslední faktury proběhla výměna vodoměru
+      const vymena=hlavniOdecty.find(o=>o.vymena&&new Date(o.datum)>datumPosledniF);
+
+      let stavZakladu, datumZakladu, popisZakladu;
+      if(vymena){
+        // Po výměně — odhadovaný stav = stav_novy (počáteční stav nového) + spotřeba podružného od výměny
+        stavZakladu=+(vymena.stav_novy||0);
+        datumZakladu=new Date(vymena.datum);
+        popisZakladu=`Po výměně ${new Date(vymena.datum).toLocaleDateString("cs-CZ")} (nový = ${stavZakladu} m³)`;
+      } else {
+        // Bez výměny — odhadovaný stav = stav při faktuře + spotřeba podružného od faktury
+        stavZakladu=+(posledniF.stav_do);
+        datumZakladu=datumPosledniF;
+        popisZakladu=`Stav při faktuře (${stavZakladu} m³)`;
+      }
+
+      // Spotřeba podružného od datumZakladu
+      const predZakladem=podruznyOdecty.filter(o=>new Date(o.datum)<=datumZakladu);
+      const stavPred=predZakladem.length>0?+(predZakladem[predZakladem.length-1].stav):null;
+      const stavNyn=podruznyOdecty.length>0?+(podruznyOdecty[podruznyOdecty.length-1].stav):null;
+      const spotrebaPodruzny=stavPred!=null&&stavNyn!=null?stavNyn-stavPred:null;
+
+      const odhadStavHlavni=spotrebaPodruzny!=null?stavZakladu+spotrebaPodruzny:null;
+      const dny=Math.round((new Date()-datumPosledniF)/(1000*60*60*24));
+      const odhadCena=spotrebaPodruzny!=null?spotrebaPodruzny*cenaM3+(pasualRocni/365*dny):null;
+
+      return{stavPosledniF:+(posledniF.stav_do),datumOd:posledniF.obdobi_do,spotrebaPodruzny,odhadStavHlavni,dny,odhadCena,vymena:!!vymena,popisZakladu};
+    };
+    const o=odhad();
+
+    return <div>
+      {/* Průběžný odhad */}
+      {o&&<div style={{background:"#e8f5e9",border:"1px solid #81c784",borderRadius:14,padding:"16px 20px",marginBottom:20}}>
+        <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:.6,color:"#2e7d32",marginBottom:10}}>📊 Průběžný odhad od poslední faktury</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:12}}>
+          {[
+            {l:"Od data (poslední faktura)",v:new Date(o.datumOd).toLocaleDateString("cs-CZ")},
+            {l:"Dní od faktury",v:`${o.dny} dní`},
+            {l:"Základ výpočtu",v:o.popisZakladu},
+            {l:"Spotřeba dle podružného",v:o.spotrebaPodruzny!=null?`${o.spotrebaPodruzny.toFixed(3)} m³`:"—"},
+            {l:"Datum posl. odečtu podr.",v:podruznyOdecty.length>0?new Date(podruznyOdecty[podruznyOdecty.length-1].datum).toLocaleDateString("cs-CZ"):"—"},
+            {l:"Odhadovaný stav hlavního",v:o.odhadStavHlavni!=null?`~${o.odhadStavHlavni.toFixed(0)} m³`:"—"},
+          ].map(k=><div key={k.l} style={{background:"rgba(255,255,255,.6)",borderRadius:8,padding:"8px 10px"}}>
+            <div style={{fontSize:10,fontWeight:700,color:"#388e3c",textTransform:"uppercase",letterSpacing:.4,marginBottom:2}}>{k.l}</div>
+            <div style={{fontSize:14,fontWeight:700,color:"#1b5e20"}}>{k.v}</div>
+          </div>)}
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(255,255,255,.6)",borderRadius:10,padding:"10px 14px"}}>
+          <span style={{fontSize:13,fontWeight:700,color:"#2e7d32"}}>Odhadovaná příští faktura</span>
+          <span style={{fontSize:22,fontWeight:800,color:"#1b5e20"}}>{o.odhadCena!=null?`${o.odhadCena.toLocaleString("cs",{maximumFractionDigits:0})} Kč`:"—"}</span>
+        </div>
+      </div>}
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        {/* Faktury */}
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontWeight:700,fontSize:14}}>🧾 Faktury BARACOM</div>
+            <button onClick={()=>{setFormFak({cislo_faktury:"",datum_vystaveni:"",datum_splatnosti:"",obdobi_od:"",obdobi_do:"",stav_od:"",stav_do:"",castka:"",zaplaceno:false,poznamka:""});setModalFak("nova");}} style={{...btnC(C.accent,true),padding:"5px 12px",fontSize:12}}>+ Přidat</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {(faktury||[]).filter(f=>f.typ==="baracom").sort((a,b)=>new Date(b.obdobi_od)-new Date(a.obdobi_od)).map(f=>{
+              const spotreba=f.stav_do!=null&&f.stav_od!=null?f.stav_do-f.stav_od:null;
+              return <div key={f.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+                <div style={{padding:"12px 14px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14}}>{f.cislo_faktury||"Faktura"}</div>
+                    <div style={{fontSize:12,color:C.muted}}>
+                      {f.obdobi_od&&f.obdobi_do&&`${new Date(f.obdobi_od).toLocaleDateString("cs-CZ")} – ${new Date(f.obdobi_do).toLocaleDateString("cs-CZ")}`}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontWeight:800,fontSize:18,color:f.zaplaceno?C.green:C.orange}}>{f.castka.toLocaleString("cs")} Kč</div>
+                    <div onClick={()=>toggleZaplaceno(f)} style={{fontSize:11,fontWeight:700,cursor:"pointer",color:f.zaplaceno?C.green:"#b36a00"}}>{f.zaplaceno?"✓ Zaplaceno":"⏳ Čeká na úhradu"}</div>
+                  </div>
+                </div>
+                <div style={{padding:"10px 14px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,fontSize:12,color:C.muted}}>
+                  <div><span style={{fontWeight:600}}>Stav od:</span> {f.stav_od!=null?`${(+f.stav_od).toFixed(0)} m³`:"—"}</div>
+                  <div><span style={{fontWeight:600}}>Stav do:</span> {f.stav_do!=null?`${(+f.stav_do).toFixed(0)} m³`:"—"}</div>
+                  <div><span style={{fontWeight:600}}>Spotřeba:</span> {spotreba!=null?`${spotreba.toFixed(0)} m³`:"—"}</div>
+                  {f.datum_splatnosti&&<div style={{gridColumn:"1/-1"}}><span style={{fontWeight:600}}>Splatnost:</span> {new Date(f.datum_splatnosti).toLocaleDateString("cs-CZ")}</div>}
+                </div>
+                <div style={{padding:"0 14px 10px",display:"flex",gap:6}}>
+                  <button onClick={()=>{setModalFak(f);setFormFak({cislo_faktury:f.cislo_faktury||"",datum_vystaveni:f.datum_vystaveni||"",datum_splatnosti:f.datum_splatnosti||"",obdobi_od:f.obdobi_od||"",obdobi_do:f.obdobi_do||"",stav_od:f.stav_od!=null?String(f.stav_od):"",stav_do:f.stav_do!=null?String(f.stav_do):"",castka:String(f.castka),zaplaceno:f.zaplaceno,poznamka:f.poznamka||""});}} style={{...btnC(C.accent,true),padding:"3px 10px",fontSize:11}}>✏ Upravit</button>
+                  <button onClick={()=>smazFakturu(f.id)} style={{...btnC(C.red,true),padding:"3px 10px",fontSize:11}}>🗑</button>
+                </div>
+              </div>;
+            })}
+            {(faktury||[]).filter(f=>f.typ==="baracom").length===0&&<div style={{padding:20,textAlign:"center",color:C.dim,fontSize:13}}>Žádné faktury</div>}
+          </div>
+        </div>
+
+        {/* Odečty hlavního vodoměru */}
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontWeight:700,fontSize:14}}>📟 Odečty hlavního vodoměru</div>
+            <button onClick={()=>{setFormOdecet({datum:new Date().toISOString().slice(0,10),stav:"",poznamka:""});setModalOdecet("nova");}} style={{...btnC(C.accent,true),padding:"5px 12px",fontSize:12}}>+ Přidat</button>
+          </div>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr style={{background:C.bg}}>
+                {["Datum","Stav (m³)","Spotřeba","Poznámka",""].map(h=><th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {hlavniOdecty.length===0&&<tr><td colSpan={5} style={{padding:16,textAlign:"center",color:C.dim,fontSize:13}}>Žádné odečty</td></tr>}
+                {[...hlavniOdecty].reverse().map((o,i,arr)=>{
+                  const prev=arr[i+1];
+                  // Spotřeba: pokud předchozí byl výměna, počítáme od stav_novy (počáteční stav nového)
+                  let diff=null;
+                  if(prev){
+                    if(prev.vymena&&prev.stav_novy!=null)diff=+(o.stav)-+(prev.stav_novy);
+                    else diff=+(o.stav)-+(prev.stav);
+                  }
+                  if(o.vymena){
+                    return <tr key={o.id} style={{borderBottom:`1px solid ${C.border}`,background:"#fff8e1"}}>
+                      <td style={{padding:"8px 10px",fontSize:13,whiteSpace:"nowrap"}}>{new Date(o.datum).toLocaleDateString("cs-CZ")}</td>
+                      <td style={{padding:"8px 10px",fontSize:12,fontWeight:700}}>
+                        <div style={{color:C.muted}}>🔧 {(+o.stav).toFixed(0)} → {o.stav_novy!=null?(+o.stav_novy).toFixed(0):"0"}</div>
+                      </td>
+                      <td style={{padding:"8px 10px",fontSize:12,color:diff!=null?C.orange:C.dim}}>{diff!=null?`+${diff.toFixed(0)} m³`:"—"}</td>
+                      <td style={{padding:"8px 10px",fontSize:11,color:"#b36a00",fontWeight:600}}>Výměna vodoměru{o.cislo_vodomeru?` (nový ${o.cislo_vodomeru})`:""}</td>
+                      <td style={{padding:"8px 6px",whiteSpace:"nowrap"}}>
+                        <button onClick={()=>smazOdecet(o.id)} style={{...btnC(C.red,true),padding:"2px 7px",fontSize:11}}>🗑</button>
+                      </td>
+                    </tr>;
+                  }
+                  return <tr key={o.id} style={{borderBottom:`1px solid ${C.border}`}}>
+                    <td style={{padding:"8px 10px",fontSize:13,whiteSpace:"nowrap"}}>{new Date(o.datum).toLocaleDateString("cs-CZ")}</td>
+                    <td style={{padding:"8px 10px",fontSize:13,fontWeight:700}}>{(+o.stav).toFixed(0)}</td>
+                    <td style={{padding:"8px 10px",fontSize:12,color:diff!=null?C.orange:C.dim}}>{diff!=null?`+${diff.toFixed(0)} m³`:"—"}</td>
+                    <td style={{padding:"8px 10px",fontSize:12,color:C.muted}}>{o.poznamka||""}</td>
+                    <td style={{padding:"8px 6px",whiteSpace:"nowrap"}}>
+                      <button onClick={()=>{setModalOdecet(o);setFormOdecet({datum:o.datum,stav:String(o.stav),poznamka:o.poznamka||""});}} style={{...btnC(C.accent,true),padding:"2px 7px",fontSize:11,marginRight:2}}>✏</button>
+                      <button onClick={()=>smazOdecet(o.id)} style={{...btnC(C.red,true),padding:"2px 7px",fontSize:11}}>🗑</button>
+                    </td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal faktura */}
+      {modalFak&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:440,boxShadow:"0 20px 60px rgba(0,0,0,.25)",maxHeight:"90vh",overflowY:"auto"}}>
+          <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modalFak==="nova"?"Nová faktura":"Upravit fakturu"}</h3>
+          {[
+            {l:"Číslo faktury",k:"cislo_faktury",t:"text"},
+            {l:"Datum vystavení",k:"datum_vystaveni",t:"date"},
+            {l:"Datum splatnosti",k:"datum_splatnosti",t:"date"},
+            {l:"Období od",k:"obdobi_od",t:"date"},
+            {l:"Období do",k:"obdobi_do",t:"date"},
+            {l:"Stav vodoměru na začátku (m³)",k:"stav_od",t:"number"},
+            {l:"Stav vodoměru na konci (m³)",k:"stav_do",t:"number"},
+            {l:"Částka k úhradě (Kč)",k:"castka",t:"number"},
+            {l:"Poznámka",k:"poznamka",t:"text"},
+          ].map(f=><div key={f.k} style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+            <input style={inp} type={f.t} value={formFak[f.k]} onChange={e=>setFormFak(p=>({...p,[f.k]:e.target.value}))}/>
+          </div>)}
+          <label style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,cursor:"pointer",fontSize:13}}>
+            <input type="checkbox" checked={formFak.zaplaceno} onChange={e=>setFormFak(p=>({...p,zaplaceno:e.target.checked}))}/>
+            Faktura zaplacena
+          </label>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={ulozFakturu} style={btnC()}>Uložit</button>
+            <button onClick={()=>setModalFak(null)} style={btnC(C.muted,true)}>Zrušit</button>
+          </div>
+        </div>
+      </div>}
+
+      {/* Modal odečet */}
+      {modalOdecet&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+          <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modalOdecet==="nova"?"Nový odečet hlavního":"Upravit odečet"}</h3>
+          {[{l:"Datum",k:"datum",t:"date"},{l:"Stav vodoměru (m³)",k:"stav",t:"number"},{l:"Poznámka",k:"poznamka",t:"text",ph:"volitelně..."}].map(f=><div key={f.k} style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+            <input style={inp} type={f.t} placeholder={f.ph||""} value={formOdecet[f.k]} onChange={e=>setFormOdecet(p=>({...p,[f.k]:e.target.value}))}/>
+          </div>)}
+          <div style={{display:"flex",gap:10,marginTop:16}}>
+            <button onClick={ulozOdecet} style={btnC()}>Uložit</button>
+            <button onClick={()=>setModalOdecet(null)} style={btnC(C.muted,true)}>Zrušit</button>
+          </div>
+        </div>
+      </div>}
+    </div>;
+  };
+
+  // ── PODRUŽNÝ ──
+  const PodruznyView=()=>{
+    const [modal,setModal]=useState(null);
+    const [form,setForm]=useState({datum:"",stav:"",poznamka:""});
+    const [kalkOd,setKalkOd]=useState("");
+    const [kalkDo,setKalkDo]=useState("");
+
+    const uloz=async()=>{
+      const data={datum:form.datum,typ:"podruzny",stav:parseFloat(form.stav),poznamka:form.poznamka||null};
+      if(modal==="nova")await sb.from("voda_odecty").insert(data);
+      else await sb.from("voda_odecty").update(data).eq("id",modal.id);
+      reloadOdecty();setModal(null);
+    };
+    const smaz=async(id)=>{if(!confirm("Smazat odečet?"))return;await sb.from("voda_odecty").delete().eq("id",id);reloadOdecty();};
+
+    // Měsíční přehled — od odečtu k 1. toho měsíce do odečtu k 1. dalšího měsíce
+    const mesicniPrehled=()=>{
+      const arr=podruznyOdecty;
+      if(arr.length<2)return[];
+      // Pro každý měsíc najdi odečet nejbližší k 1. dni (±4 dny)
+      const nejblizsi=(rok,mes)=>{
+        const cil=new Date(rok,mes-1,1);
+        const k=arr.filter(o=>Math.abs(new Date(o.datum)-cil)/(1000*60*60*24)<=4);
+        if(!k.length)return null;
+        return k.sort((a,b)=>Math.abs(new Date(a.datum)-cil)-Math.abs(new Date(b.datum)-cil))[0];
+      };
+      // Rozsah měsíců
+      const d0=new Date(arr[0].datum);
+      const d1=new Date(arr[arr.length-1].datum);
+      const result=[];
+      for(let y=d0.getFullYear();y<=d1.getFullYear();y++){
+        for(let m=1;m<=12;m++){
+          const od=nejblizsi(y,m);
+          if(!od)continue;
+          const nm=m===12?1:m+1; const ny=m===12?y+1:y;
+          const do_=nejblizsi(ny,nm);
+          if(!do_)continue; // konec ještě není
+          const stavOd=+(od.stav); const stavDo=+(do_.stav);
+          const spotreba=stavDo-stavOd;
+          const dny=Math.round((new Date(do_.datum)-new Date(od.datum))/(1000*60*60*24));
+          const odhadCena=spotreba*cenaM3+(pasualRocni/365*dny);
+          result.push({mesic:`${y}-${String(m).padStart(2,"0")}`,datumOd:od.datum,datumDo:do_.datum,stavOd,stavDo,spotreba,odhadCena,dny});
+        }
+      }
+      return result;
+    };
+
+    const prehled=mesicniPrehled();
+    const posledni=podruznyOdecty[podruznyOdecty.length-1];
+    const predposledni=podruznyOdecty[podruznyOdecty.length-2];
+    const aktSpotreba=posledni&&predposledni?+(posledni.stav)-+(predposledni.stav):null;
+
+    return <div>
+      {/* Aktuální stav */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
+        {[
+          {l:"Aktuální stav",v:posledni?`${(+posledni.stav).toFixed(3)} m³`:"—",c:C.blue,sub:posledni?new Date(posledni.datum).toLocaleDateString("cs-CZ"):""},
+          {l:"Spotřeba od posl. odečtu",v:aktSpotreba!=null?`${aktSpotreba.toFixed(3)} m³`:"—",c:aktSpotreba>0?C.orange:C.green},
+          {l:"Odhad ceny",v:aktSpotreba!=null?`${(aktSpotreba*cenaM3).toLocaleString("cs",{maximumFractionDigits:0})} Kč`:"—",c:C.accent},
+        ].map(k=><div key={k.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${k.c}`}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{k.l}</div>
+          <div style={{fontSize:18,fontWeight:800,color:k.c}}>{k.v}</div>
+          {k.sub&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{k.sub}</div>}
+        </div>)}
+      </div>
+
+      {/* Kalkulačka — výpočet z vybraných odečtů */}
+      {(()=>{
+        const odecetOd=podruznyOdecty.find(o=>o.id===kalkOd);
+        const odecetDo=podruznyOdecty.find(o=>o.id===kalkDo);
+        let vysledek=null;
+        if(odecetOd&&odecetDo){
+          const sp=+(odecetDo.stav)-+(odecetOd.stav);
+          const dny=Math.round((new Date(odecetDo.datum)-new Date(odecetOd.datum))/(1000*60*60*24));
+          vysledek={sp,dny,cenaVoda:sp*cenaM3,pausal:pasualRocni/365*dny,celkem:sp*cenaM3+(pasualRocni/365*Math.max(0,dny))};
+        }
+        return <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:14,padding:"16px 20px",marginBottom:20}}>
+          <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:.6,color:"#1a4fa8",marginBottom:12}}>🧮 Kalkulačka spotřeby — vyber odečty</div>
+          <div style={{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap",marginBottom:vysledek?14:0}}>
+            <div style={{flex:1,minWidth:160}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#1a4fa8",marginBottom:4}}>Od odečtu</div>
+              <select style={inp} value={kalkOd} onChange={e=>setKalkOd(e.target.value)}>
+                <option value="">— vyber —</option>
+                {podruznyOdecty.map(o=><option key={o.id} value={o.id}>{new Date(o.datum).toLocaleDateString("cs-CZ")} ({(+o.stav).toFixed(3)} m³)</option>)}
+              </select>
+            </div>
+            <div style={{flex:1,minWidth:160}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#1a4fa8",marginBottom:4}}>Do odečtu</div>
+              <select style={inp} value={kalkDo} onChange={e=>setKalkDo(e.target.value)}>
+                <option value="">— vyber —</option>
+                {podruznyOdecty.map(o=><option key={o.id} value={o.id}>{new Date(o.datum).toLocaleDateString("cs-CZ")} ({(+o.stav).toFixed(3)} m³)</option>)}
+              </select>
+            </div>
+          </div>
+          {vysledek&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:10}}>
+            {[
+              {l:"Období",v:`${vysledek.dny} dní`},
+              {l:"Spotřeba",v:`${vysledek.sp.toFixed(3)} m³`},
+              {l:"Vodné",v:`${vysledek.cenaVoda.toLocaleString("cs",{maximumFractionDigits:0})} Kč`},
+              {l:"Paušál (poměr)",v:`${vysledek.pausal.toLocaleString("cs",{maximumFractionDigits:0})} Kč`},
+            ].map(k=><div key={k.l} style={{background:"rgba(255,255,255,.7)",borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#3066b0",textTransform:"uppercase",letterSpacing:.4,marginBottom:2}}>{k.l}</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#0d2f66"}}>{k.v}</div>
+            </div>)}
+            <div style={{gridColumn:"1/-1",display:"flex",justifyContent:"space-between",alignItems:"center",background:"#1a4fa8",borderRadius:10,padding:"10px 16px",marginTop:4}}>
+              <span style={{fontSize:13,fontWeight:700,color:"#fff"}}>Celková cena</span>
+              <span style={{fontSize:20,fontWeight:800,color:"#fff"}}>{vysledek.celkem.toLocaleString("cs",{maximumFractionDigits:0})} Kč</span>
+            </div>
+          </div>}
+        </div>;
+      })()}
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        {/* Měsíční přehled */}
+        <div>
+          <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📅 Měsíční spotřeba</div>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr style={{background:C.bg}}>
+                {["Období","Stav od","Stav do","Spotřeba","Odhad ceny"].map(h=><th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {prehled.length===0&&<tr><td colSpan={5} style={{padding:16,textAlign:"center",color:C.dim}}>Žádná data</td></tr>}
+                {[...prehled].reverse().map((r,i)=><tr key={r.datumOd} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
+                  <td style={{padding:"9px 10px",fontWeight:600,fontSize:13,whiteSpace:"nowrap"}}>
+                    <div>{new Date(r.mesic+"-01").toLocaleDateString("cs-CZ",{month:"long",year:"numeric"})}</div>
+                    <div style={{color:C.dim,fontSize:10,fontWeight:400}}>{new Date(r.datumOd).toLocaleDateString("cs-CZ")} → {new Date(r.datumDo).toLocaleDateString("cs-CZ")}</div>
+                  </td>
+                  <td style={{padding:"9px 10px",fontSize:13,color:C.muted}}>{r.stavOd.toFixed(3)}</td>
+                  <td style={{padding:"9px 10px",fontSize:13,color:C.muted}}>{r.stavDo.toFixed(3)}</td>
+                  <td style={{padding:"9px 10px",fontSize:13,fontWeight:700,color:r.spotreba>20?C.red:r.spotreba>10?C.orange:C.green}}>{r.spotreba.toFixed(3)} m³</td>
+                  <td style={{padding:"9px 10px",fontSize:13,fontWeight:700,color:C.accent}}>{r.odhadCena.toLocaleString("cs",{maximumFractionDigits:0})} Kč</td>
+                </tr>)}
+              </tbody>
+              {prehled.length>0&&<tfoot><tr style={{background:C.bg,borderTop:`2px solid ${C.border}`}}>
+                <td style={{padding:"9px 10px",fontWeight:700,fontSize:13}}>CELKEM 2026</td>
+                <td colSpan={2}/>
+                <td style={{padding:"9px 10px",fontWeight:800,color:C.accent}}>
+                  {prehled.filter(r=>r.mesic.startsWith("2026")).reduce((a,r)=>a+r.spotreba,0).toFixed(3)} m³
+                </td>
+                <td style={{padding:"9px 10px",fontWeight:800,color:C.accent}}>
+                  {prehled.filter(r=>r.mesic.startsWith("2026")).reduce((a,r)=>a+r.odhadCena,0).toLocaleString("cs",{maximumFractionDigits:0})} Kč
+                </td>
+              </tr></tfoot>}
+            </table>
+          </div>
+        </div>
+
+        {/* Všechny odečty */}
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontWeight:700,fontSize:14}}>📋 Všechny odečty</div>
+            <button onClick={()=>{setForm({datum:new Date().toISOString().slice(0,10),stav:"",poznamka:""});setModal("nova");}} style={btnC()}>+ Zapsat</button>
+          </div>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",maxHeight:460,overflowY:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr style={{background:C.bg,position:"sticky",top:0}}>
+                {["Datum","Stav (m³)","Spotřeba","Pozn.",""].map(h=><th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {podruznyOdecty.length===0&&<tr><td colSpan={5} style={{padding:16,textAlign:"center",color:C.dim}}>Žádné odečty</td></tr>}
+                {[...podruznyOdecty].reverse().map((o,i,arr)=>{
+                  const prev=arr[i+1];
+                  const diff=prev?+(o.stav)-+(prev.stav):null;
+                  return <tr key={o.id} style={{borderBottom:`1px solid ${C.border}`}}>
+                    <td style={{padding:"8px 10px",fontSize:12,whiteSpace:"nowrap"}}>{new Date(o.datum).toLocaleDateString("cs-CZ")}</td>
+                    <td style={{padding:"8px 10px",fontSize:12,fontWeight:700}}>{(+o.stav).toFixed(3)}</td>
+                    <td style={{padding:"8px 10px",fontSize:12,color:diff!=null?(diff>0?C.orange:C.green):C.dim,fontWeight:diff!=null?600:400}}>{diff!=null?`+${diff.toFixed(3)}`:"—"}</td>
+                    <td style={{padding:"8px 10px",fontSize:11,color:C.muted,maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.poznamka||""}</td>
+                    <td style={{padding:"8px 6px",whiteSpace:"nowrap"}}>
+                      <button onClick={()=>{setModal(o);setForm({datum:o.datum,stav:String(o.stav),poznamka:o.poznamka||""});}} style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10,marginRight:2}}>✏</button>
+                      <button onClick={()=>smaz(o.id)} style={{...btnC(C.red,true),padding:"2px 6px",fontSize:10}}>🗑</button>
+                    </td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+          <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="nova"?"Nový odečet podružného":"Upravit odečet"}</h3>
+          {[{l:"Datum",k:"datum",t:"date"},{l:"Stav vodoměru (m³)",k:"stav",t:"number",ph:"0.000"},{l:"Poznámka",k:"poznamka",t:"text",ph:"volitelně..."}].map(f=><div key={f.k} style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+            <input style={inp} type={f.t} step={f.t==="number"?"0.001":undefined} placeholder={f.ph||""} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
+          </div>)}
+          <div style={{display:"flex",gap:10,marginTop:16}}>
+            <button onClick={uloz} style={btnC()}>Uložit</button>
+            <button onClick={()=>setModal(null)} style={btnC(C.muted,true)}>Zrušit</button>
+          </div>
+        </div>
+      </div>}
+    </div>;
+  };
+
+  // ── NASTAVENÍ ──
+  const NastaveniView=()=>{
+    const [form,setForm]=useState({cena_m3_bez_dph:nast.cena_m3_bez_dph||"71.60",cena_m3_s_dph:nast.cena_m3_s_dph||"80.19",pausal_rocni_bez_dph:nast.pausal_rocni_bez_dph||"1100",pausal_rocni_s_dph:nast.pausal_rocni_s_dph||"1232"});
+    const uloz=async()=>{
+      for(const[k,v]of Object.entries(form))await sb.from("voda_nastaveni").upsert({klic:k,hodnota:String(v)});
+      reloadNast();alert("Uloženo!");
+    };
+    return <div style={{maxWidth:400}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:20}}>
+        <h3 style={{margin:"0 0 16px",fontSize:15,fontWeight:800}}>Ceník BARACOM</h3>
+        {[{l:"Cena za m³ bez DPH (Kč)",k:"cena_m3_bez_dph"},{l:"Cena za m³ s DPH (Kč)",k:"cena_m3_s_dph"},{l:"Roční paušál bez DPH (Kč)",k:"pausal_rocni_bez_dph"},{l:"Roční paušál s DPH (Kč)",k:"pausal_rocni_s_dph"}].map(f=><div key={f.k} style={{marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>{f.l}</div>
+          <input style={inp} type="number" step="0.01" value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
+        </div>)}
+        <button onClick={uloz} style={btnC()}>Uložit ceník</button>
+      </div>
+    </div>;
+  };
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+      <h2 style={{margin:0,fontSize:22,fontWeight:800}}>🚰 Voda — Hoštice</h2>
+    </div>
+    <div style={{display:"flex",gap:4,marginBottom:24,borderBottom:`2px solid ${C.border}`}}>
+      {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
+    </div>
+    {zalozka==="fakturacni"&&<FakturacniView/>}
+    {zalozka==="podruzny"&&<PodruznyView/>}
+    {zalozka==="nastaveni"&&<NastaveniView/>}
+  </div>;
+}
+
 const TILES=[
   {id:"deti",     emoji:"👶", label:"Děti",      popis:"Profily a info",         barva:"#4f7ef0"},
   {id:"obleceni", emoji:"👕", label:"Oblečení",  popis:"Sklady a velikosti",     barva:"#3b6fd4"},
@@ -2682,6 +3151,7 @@ const TILES=[
   {id:"sklad",    emoji:"📦", label:"Sklad",     popis:"Zásoby doma",            barva:"#c87000"},
   {id:"ukoly",    emoji:"🔁", label:"Úkoly",     popis:"Pravidelná údržba",      barva:"#1a6fa8"},
   {id:"spotreba", emoji:"💧", label:"Spotřeba",  popis:"Voda, elektřina, plyn",  barva:"#1a7a4a"},
+  {id:"voda",     emoji:"🚰", label:"Voda",      popis:"Odečty, faktury, odhad", barva:"#0369a1"},
   {id:"finance",  emoji:"💰", label:"Finance",   popis:"Výdaje a příjmy",        barva:"#b8860b"},
   {id:"dum",      emoji:"🔧", label:"Dům",       popis:"Opravy a plánování",     barva:"#8B3A1A"},
   {id:"poznamky", emoji:"📝", label:"Poznámky",  popis:"Nápady a todolist",      barva:"#2ed8c8"},
@@ -2722,6 +3192,27 @@ function OdpocetWidget(){
       <div style={{fontWeight:800,fontSize:15,color:"#be185d",fontVariantNumeric:"tabular-nums"}}>{countdown}</div>
       <div style={{fontSize:10,color:"#9d174d"}}>{p.nazev}</div>
     </div>
+  </div>;
+}
+
+function VodaUpozorneniWidget({onKlikni}){
+  const {data:odecty}=useData(()=>sb.from("voda_odecty").select("datum,typ").eq("typ","podruzny").order("datum",{ascending:false}).limit(1));
+  const {data:faktury}=useData(()=>sb.from("voda_faktury").select("castka,zaplaceno").eq("zaplaceno",false));
+
+  const dnes=new Date();
+  const aktMesic=`${dnes.getFullYear()}-${String(dnes.getMonth()+1).padStart(2,"0")}`;
+  const posledniOdecet=odecty&&odecty[0]?odecty[0].datum?.slice(0,7):null;
+  const chybiOdecet=posledniOdecet!==aktMesic;
+  const nezaplaceno=(faktury||[]).reduce((a,f)=>a+f.castka,0);
+
+  if(!chybiOdecet&&nezaplaceno===0)return null;
+
+  return <div style={{background:"#fff8e1",border:"1px solid #f5c07a",borderRadius:12,padding:"12px 18px",marginBottom:16,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}} onClick={onKlikni}>
+    <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+      {chybiOdecet&&<span style={{fontSize:13,fontWeight:700,color:"#b36a00"}}>🚰 Nezadán odečet vodoměru za {dnes.toLocaleDateString("cs-CZ",{month:"long",year:"numeric"})}</span>}
+      {nezaplaceno>0&&<span style={{fontSize:13,fontWeight:700,color:"#b36a00"}}>💧 Nezaplacené faktury: {nezaplaceno.toLocaleString("cs")} Kč</span>}
+    </div>
+    <span style={{fontSize:12,color:"#b36a00"}}>→ Voda</span>
   </div>;
 }
 
@@ -2865,6 +3356,7 @@ export default function App() {
         {modul==="sklad"    && <SkladTab/>}
         {modul==="ukoly"    && <UkolyTab/>}
         {modul==="spotreba" && <SpotrebaTab/>}
+        {modul==="voda"     && <VodaTab/>}
         {modul==="finance"  && <FinanceTab/>}
         {modul==="dum"      && <DumTab/>}
         {modul==="poznamky" && <PoznamkyTab/>}
@@ -2925,6 +3417,8 @@ export default function App() {
     <div style={{maxWidth:1100,margin:"0 auto",padding:"32px 24px 60px"}}>
       {/* Widget — Tento týden */}
       <TydenWidget/>
+      {/* Upozornění voda */}
+      <VodaUpozorneniWidget onKlikni={()=>setModul("voda")}/>
       {upravy&&<div style={{background:C.orangeS,border:`1px solid ${C.orange}`,borderRadius:12,padding:"12px 18px",marginBottom:20,fontSize:13,color:C.orange,fontWeight:600}}>
         ✋ Režim úprav — přetáhni dlaždice pro změnu pořadí. Pořadí se uloží automaticky.
       </div>}
