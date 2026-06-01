@@ -2725,34 +2725,41 @@ function VodaTab(){
     const odhad=()=>{
       if(!posledniF||posledniF.stav_do==null)return null;
       const datumPosledniF=new Date(posledniF.obdobi_do);
+      const stavPosledniF=+(posledniF.stav_do);
 
-      // Zjisti jestli od poslední faktury proběhla výměna vodoměru
+      // Zjisti výměnu vodoměru po poslední faktuře
       const vymena=hlavniOdecty.find(o=>o.vymena&&new Date(o.datum)>datumPosledniF);
 
-      let stavZakladu, datumZakladu, popisZakladu;
+      let spotrebaStaryHlavni=0;
+      let spotrebaNovaHlavni=0;
+      let popisZakladu="";
+
       if(vymena){
-        // Po výměně — odhadovaný stav = stav_novy (počáteční stav nového) + spotřeba podružného od výměny
-        stavZakladu=+(vymena.stav_novy||0);
-        datumZakladu=new Date(vymena.datum);
-        popisZakladu=`Po výměně ${new Date(vymena.datum).toLocaleDateString("cs-CZ")} (nový = ${stavZakladu} m³)`;
+        // Spotřeba starého vodoměru = konečný stav starého - stav při poslední faktuře
+        spotrebaStaryHlavni=+(vymena.stav)-stavPosledniF;
+        // Spotřeba nového vodoměru = spotřeba podružného od data výměny
+        const datumVymeny=new Date(vymena.datum);
+        const predVymenou=podruznyOdecty.filter(o=>new Date(o.datum)<=datumVymeny);
+        const stavPodruznyPredVymenou=predVymenou.length>0?+(predVymenou[predVymenou.length-1].stav):null;
+        const stavPodruznyNyn=podruznyOdecty.length>0?+(podruznyOdecty[podruznyOdecty.length-1].stav):null;
+        const spotrebaPodruznyOdVymeny=stavPodruznyPredVymenou!=null&&stavPodruznyNyn!=null?stavPodruznyNyn-stavPodruznyPredVymenou:0;
+        spotrebaNovaHlavni=spotrebaPodruznyOdVymeny;
+        popisZakladu=`Starý: ${spotrebaStaryHlavni.toFixed(0)} m³ + Nový (dle podr.): ${spotrebaNovaHlavni.toFixed(3)} m³`;
       } else {
-        // Bez výměny — odhadovaný stav = stav při faktuře + spotřeba podružného od faktury
-        stavZakladu=+(posledniF.stav_do);
-        datumZakladu=datumPosledniF;
-        popisZakladu=`Stav při faktuře (${stavZakladu} m³)`;
+        // Bez výměny — spotřeba dle podružného od poslední faktury
+        const predFakturou=podruznyOdecty.filter(o=>new Date(o.datum)<=datumPosledniF);
+        const stavPred=predFakturou.length>0?+(predFakturou[predFakturou.length-1].stav):null;
+        const stavNyn=podruznyOdecty.length>0?+(podruznyOdecty[podruznyOdecty.length-1].stav):null;
+        spotrebaNovaHlavni=stavPred!=null&&stavNyn!=null?stavNyn-stavPred:0;
+        popisZakladu=`Dle podružného od ${new Date(datumPosledniF).toLocaleDateString("cs-CZ")}`;
       }
 
-      // Spotřeba podružného od datumZakladu
-      const predZakladem=podruznyOdecty.filter(o=>new Date(o.datum)<=datumZakladu);
-      const stavPred=predZakladem.length>0?+(predZakladem[predZakladem.length-1].stav):null;
-      const stavNyn=podruznyOdecty.length>0?+(podruznyOdecty[podruznyOdecty.length-1].stav):null;
-      const spotrebaPodruzny=stavPred!=null&&stavNyn!=null?stavNyn-stavPred:null;
-
-      const odhadStavHlavni=spotrebaPodruzny!=null?stavZakladu+spotrebaPodruzny:null;
+      const spotrebaCelkem=spotrebaStaryHlavni+spotrebaNovaHlavni;
+      const odhadStavNoveho=vymena?+(vymena.stav_novy||0)+spotrebaNovaHlavni:stavPosledniF+spotrebaCelkem;
       const dny=Math.round((new Date()-datumPosledniF)/(1000*60*60*24));
-      const odhadCena=spotrebaPodruzny!=null?spotrebaPodruzny*cenaM3+(pasualRocni/365*dny):null;
+      const odhadCena=spotrebaCelkem*cenaM3+(pasualRocni/365*dny);
 
-      return{stavPosledniF:+(posledniF.stav_do),datumOd:posledniF.obdobi_do,spotrebaPodruzny,odhadStavHlavni,dny,odhadCena,vymena:!!vymena,popisZakladu};
+      return{stavPosledniF,datumOd:posledniF.obdobi_do,spotrebaCelkem,spotrebaStaryHlavni,spotrebaNovaHlavni,odhadStavNoveho,dny,odhadCena,vymena:!!vymena,popisZakladu};
     };
     const o=odhad();
 
@@ -2764,10 +2771,15 @@ function VodaTab(){
           {[
             {l:"Od data (poslední faktura)",v:new Date(o.datumOd).toLocaleDateString("cs-CZ")},
             {l:"Dní od faktury",v:`${o.dny} dní`},
-            {l:"Základ výpočtu",v:o.popisZakladu},
-            {l:"Spotřeba dle podružného",v:o.spotrebaPodruzny!=null?`${o.spotrebaPodruzny.toFixed(3)} m³`:"—"},
+            ...(o.vymena?[
+              {l:"Starý vodoměr (do výměny)",v:`${o.spotrebaStaryHlavni.toFixed(0)} m³`},
+              {l:"Nový vodoměr (dle podr.)",v:`${o.spotrebaNovaHlavni.toFixed(3)} m³`},
+            ]:[
+              {l:"Spotřeba dle podružného",v:`${o.spotrebaCelkem.toFixed(3)} m³`},
+            ]),
+            {l:"Celková spotřeba",v:`${o.spotrebaCelkem.toFixed(3)} m³`},
             {l:"Datum posl. odečtu podr.",v:podruznyOdecty.length>0?new Date(podruznyOdecty[podruznyOdecty.length-1].datum).toLocaleDateString("cs-CZ"):"—"},
-            {l:"Odhadovaný stav hlavního",v:o.odhadStavHlavni!=null?`~${o.odhadStavHlavni.toFixed(0)} m³`:"—"},
+            {l:"Odhadovaný stav nového",v:`~${o.odhadStavNoveho.toFixed(0)} m³`},
           ].map(k=><div key={k.l} style={{background:"rgba(255,255,255,.6)",borderRadius:8,padding:"8px 10px"}}>
             <div style={{fontSize:10,fontWeight:700,color:"#388e3c",textTransform:"uppercase",letterSpacing:.4,marginBottom:2}}>{k.l}</div>
             <div style={{fontSize:14,fontWeight:700,color:"#1b5e20"}}>{k.v}</div>
