@@ -754,13 +754,17 @@ function SpotrebaTab(){
 function FinanceTab(){
   const [zalozka,setZalozka]=useState("dashboard");
   const {data:ucty,reload:reloadUcty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
+  const {data:typy_db,reload:reloadTypy}=useData(()=>sb.from("fin_typy_uctu").select("*").order("poradi"));
   const {data:kategorie,reload:reloadKat}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
   const {data:transakce,reload:reloadTrans}=useData(()=>sb.from("fin_transakce").select("*").order("datum",{ascending:false}).limit(500));
   const {data:plan,reload:reloadPlan}=useData(()=>sb.from("fin_cashflow_plan").select("*").order("mesic").order("castka"));
-  const {data:stavy,reload:reloadStavy}=useData(()=>sb.from("fin_stavy").select("*").order("rok").order("mesic"));
+  const {data:stavy,reload:reloadStavy}=useData(()=>sb.from("fin_stavy").select("*").order("rok").order("mesic").limit(2000));
 
-  const typy={bezny:"Běžný",sporici:"Spořící",podnikatelsky:"Podnikatelský",investicni:"Investiční",hotovost:"Hotovost",cizi_mena:"Cizí měna"};
-  const typBarvy={bezny:C.accent,sporici:C.green,podnikatelsky:"#e8922a",investicni:"#9b7ef5",hotovost:"#2ed8c8",cizi_mena:"#e05555"};
+  const typy=Object.fromEntries((typy_db||[]).map(t=>[t.klic,t.nazev]));
+  const typBarvy=Object.fromEntries((typy_db||[]).map(t=>[t.klic,t.barva]));
+  // Fallback pokud se typy ještě nenačetly
+  const typyFallback=Object.keys(typy).length>0?typy:{bezny:"Běžný",sporici:"Spořící",podnikatelsky:"Podnikatelský",investicni:"Investiční",hotovost:"Hotovost",cizi_mena:"Cizí měna",deti:"Děti"};
+  const typBarvyFallback=Object.keys(typBarvy).length>0?typBarvy:{bezny:C.accent,sporici:C.green,podnikatelsky:"#e8922a",investicni:"#9b7ef5",hotovost:"#2ed8c8",cizi_mena:"#e05555",deti:"#f5c07a"};
 
   const celkovyStav=(ucty||[]).filter(u=>u.typ!=="cizi_mena").reduce((a,u)=>{
     const stavUctu=(stavy||[]).filter(s=>s.ucet_id===u.id).sort((a,b)=>b.rok-a.rok||b.mesic-a.mesic)[0];
@@ -773,12 +777,13 @@ function FinanceTab(){
     {id:"cashflow",l:"📋 Cashflow plán"},
     {id:"transakce",l:"💸 Transakce"},
     {id:"kategorie",l:"🏷 Kategorie"},
+    {id:"typy",l:"🗂 Typy účtů"},
   ];
 
   // ── DASHBOARD ──
   const DashboardView=()=>{
     const dnes=new Date();
-    const [filtrTyp,setFiltrTyp]=useState("vse");
+    const [filtrTypy,setFiltrTypy]=useState([]);
     const [filtrUcetIds,setFiltrUcetIds]=useState([]);
     const [odRok,setOdRok]=useState(2023);
     const [odMesic,setOdMesic]=useState(1);
@@ -787,16 +792,17 @@ function FinanceTab(){
     const [stavModal,setStavModal]=useState(null);
     const [stavForm,setStavForm]=useState({rok:dnes.getFullYear(),mesic:dnes.getMonth()+2>12?1:dnes.getMonth()+2,stav:""});
 
+    const toggleTyp=(k)=>setFiltrTypy(prev=>prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]);
+    const toggleUcet=(id)=>setFiltrUcetIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+
     const mesiceNazvy=["Leden","Únor","Březen","Duben","Květen","Červen","Červenec","Srpen","Září","Říjen","Listopad","Prosinec"];
     const mesiceKratke=["Led","Úno","Bře","Dub","Kvě","Čvn","Čvc","Srp","Zář","Říj","Lis","Pro"];
 
     const filtrUcty2=(ucty||[]).filter(u=>
-      (filtrTyp==="vse"||u.typ===filtrTyp)&&
+      (filtrTypy.length===0||filtrTypy.includes(u.typ))&&
       (filtrUcetIds.length===0||filtrUcetIds.includes(u.id))&&
       u.typ!=="cizi_mena"
     );
-
-    const toggleUcet=(id)=>setFiltrUcetIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
 
     const sumaMesic=(rok,mesic)=>filtrUcty2.reduce((a,u)=>{
       const s=(stavy||[]).find(s=>s.ucet_id===u.id&&s.rok===rok&&s.mesic===mesic);
@@ -857,14 +863,14 @@ function FinanceTab(){
         <div style={{marginBottom:12}}>
           <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Typ účtu</div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            <button onClick={()=>setFiltrTyp("vse")} style={{...btnC(filtrTyp==="vse"?C.accent:C.muted,filtrTyp!=="vse"),padding:"4px 12px",fontSize:12}}>Vše</button>
-            {Object.entries(typy).filter(([k])=>k!=="cizi_mena").map(([k,v])=><button key={k} onClick={()=>setFiltrTyp(k)} style={{...btnC(filtrTyp===k?typBarvy[k]:C.muted,filtrTyp!==k),padding:"4px 12px",fontSize:12}}>{v}</button>)}
+            <button onClick={()=>setFiltrTypy([])} style={{...btnC(filtrTypy.length===0?C.accent:C.muted,filtrTypy.length>0),padding:"4px 12px",fontSize:12}}>Vše</button>
+            {Object.entries(typy).filter(([k])=>k!=="cizi_mena").map(([k,v])=><button key={k} onClick={()=>toggleTyp(k)} style={{...btnC(filtrTypy.includes(k)?typBarvy[k]||C.accent:C.muted,!filtrTypy.includes(k)),padding:"4px 12px",fontSize:12}}>{v}</button>)}
           </div>
         </div>
         <div>
           <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Konkrétní účty (nezvoleno = vše)</div>
           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-            {(ucty||[]).filter(u=>filtrTyp==="vse"||u.typ===filtrTyp).map(u=><button key={u.id} onClick={()=>toggleUcet(u.id)} style={{...btnC(filtrUcetIds.includes(u.id)?typBarvy[u.typ]||C.accent:C.muted,!filtrUcetIds.includes(u.id)),padding:"3px 10px",fontSize:11}}>{u.nazev}</button>)}
+            {(ucty||[]).filter(u=>filtrTypy.length===0||filtrTypy.includes(u.typ)).map(u=><button key={u.id} onClick={()=>toggleUcet(u.id)} style={{...btnC(filtrUcetIds.includes(u.id)?typBarvy[u.typ]||C.accent:C.muted,!filtrUcetIds.includes(u.id)),padding:"3px 10px",fontSize:11}}>{u.nazev}</button>)}
           </div>
         </div>
       </div>
@@ -948,7 +954,7 @@ function FinanceTab(){
               </select>
             </div>
           </div>
-          <MultiStavForm ucty={filtrTyp==="vse"?(ucty||[]):(ucty||[]).filter(u=>u.typ===filtrTyp)} rok={stavForm.rok} mesic={stavForm.mesic} stavy={stavy||[]} onSave={async(updates)=>{
+          <MultiStavForm ucty={filtrTypy.length===0?(ucty||[]):(ucty||[]).filter(u=>filtrTypy.includes(u.typ))} rok={stavForm.rok} mesic={stavForm.mesic} stavy={stavy||[]} onSave={async(updates)=>{
             for(const {ucet_id,stav} of updates){
               if(stav===""||stav==null)continue;
               await sb.from("fin_stavy").upsert({ucet_id,rok:stavForm.rok,mesic:stavForm.mesic,stav:+stav},{onConflict:"ucet_id,rok,mesic"});
@@ -1023,7 +1029,7 @@ function FinanceTab(){
       return s!=null?+(s.stav):null;
     };
 
-    const filtrUcty=(ucty||[]).filter(u=>filtrTyp==="vse"||u.typ===filtrTyp);
+    const filtrUcty=(ucty||[]).filter(u=>(filtrTyp==="vse"||u.typ===filtrTyp));
     const skupiny=Object.entries(typy).map(([k,v])=>({typ:k,label:v,ucty:filtrUcty.filter(u=>u.typ===k)})).filter(g=>g.ucty.length>0);
 
     const roky=[2018,2019,2020,2021,2022,2023,2024,2025,2026];
@@ -1191,7 +1197,7 @@ function FinanceTab(){
     const [rok,setRok]=useState(dnes.getFullYear());
     const [mesic,setMesic]=useState(dnes.getMonth()+1);
     const [modal,setModal]=useState(null);
-    const [form,setForm]=useState({nazev:"",castka:"",kategorie_id:"",opakovani:"jednorazove",poznamka:""});
+    const [form,setForm]=useState({nazev:"",castka:"",kategorie_id:"",opakovani:"jednorazove",datum_do:"",poznamka:""});
 
     const nazvy=["Leden","Únor","Březen","Duben","Květen","Červen","Červenec","Srpen","Září","Říjen","Listopad","Prosinec"];
 
@@ -1200,7 +1206,7 @@ function FinanceTab(){
     const vydaje=planMesice.filter(p=>+(p.castka)<0).reduce((a,p)=>a+Math.abs(+p.castka),0);
 
     const uloz=async()=>{
-      const data={rok,mesic,nazev:form.nazev,castka:+form.castka,kategorie_id:form.kategorie_id||null,opakovani:form.opakovani,poznamka:form.poznamka||null};
+      const data={rok,mesic,nazev:form.nazev,castka:+form.castka,kategorie_id:form.kategorie_id||null,opakovani:form.opakovani,datum_do:form.datum_do||null,poznamka:form.poznamka||null};
       if(modal==="nova")await sb.from("fin_cashflow_plan").insert(data);
       else await sb.from("fin_cashflow_plan").update(data).eq("id",modal.id);
       reloadPlan();setModal(null);
@@ -1212,11 +1218,17 @@ function FinanceTab(){
       const nr=mesic===12?rok+1:rok;
       if(!confirm(`Zkopírovat plán ${nazvy[mesic-1]} → ${nazvy[nm-1]}?`))return;
       const existujici=(plan||[]).filter(p=>p.rok===nr&&p.mesic===nm).map(p=>p.nazev);
-      const kNovym=planMesice.filter(p=>!existujici.includes(p.nazev));
+      // Přeskočit položky s prošlým datum_do
+      const cilDatum=new Date(nr,nm-1,1);
+      const kNovym=planMesice.filter(p=>{
+        if(existujici.includes(p.nazev))return false;
+        if(p.datum_do&&new Date(p.datum_do)<cilDatum)return false;
+        return true;
+      });
       for(const p of kNovym){
-        await sb.from("fin_cashflow_plan").insert({rok:nr,mesic:nm,nazev:p.nazev,castka:p.castka,kategorie_id:p.kategorie_id,opakovani:p.opakovani,poznamka:p.poznamka});
+        await sb.from("fin_cashflow_plan").insert({rok:nr,mesic:nm,nazev:p.nazev,castka:p.castka,kategorie_id:p.kategorie_id,opakovani:p.opakovani,datum_do:p.datum_do||null,poznamka:p.poznamka});
       }
-      reloadPlan();alert(`Zkopírováno ${kNovym.length} položek do ${nazvy[nm-1]}`);
+      reloadPlan();alert(`Zkopírováno ${kNovym.length} položek do ${nazvy[nm-1]} (přeskočeno ${planMesice.length-kNovym.length-existujici.filter(e=>planMesice.find(p=>p.nazev===e)).length} ukončených)`);
     };
 
     return <div>
@@ -1228,7 +1240,7 @@ function FinanceTab(){
           <button onClick={()=>{if(mesic===12){setMesic(1);setRok(r=>r+1);}else setMesic(m=>m+1);}} style={{...btnC(C.muted,true),padding:"6px 12px"}}>→</button>
         </div>
         <div style={{display:"flex",gap:8}}>
-          <button onClick={kopirujMesic} style={{...btnC(C.muted,true),fontSize:12,padding:"6px 14px"}}>📋 Kopírovat do dalšího měsíce</button>
+          <button onClick={kopirujMesic} style={{...btnC(C.muted,true),fontSize:12,padding:"6px 12px"}}>📋 Kopírovat →</button>
           <button onClick={()=>{setForm({nazev:"",castka:"",kategorie_id:(kategorie||[]).find(k=>k.typ==="vydaj")?.id||"",opakovani:"jednorazove",poznamka:""});setModal("nova");}} style={btnC()}>+ Přidat položku</button>
         </div>
       </div>
@@ -1261,10 +1273,11 @@ function FinanceTab(){
                   {kat&&<div style={{fontSize:11,color:C.muted}}>{kat.nazev}</div>}
                 </div>
                 {p.opakovani!=="jednorazove"&&<span style={{fontSize:10,background:C.accentS,color:C.accent,borderRadius:99,padding:"2px 8px",fontWeight:700}}>🔄 {p.opakovani==="mesicni"?"měsíčně":"ročně"}</span>}
+                {p.datum_do&&<span style={{fontSize:10,background:"#fff3e0",color:"#b36a00",borderRadius:99,padding:"2px 8px",fontWeight:700}}>do {new Date(p.datum_do).toLocaleDateString("cs-CZ",{month:"numeric",year:"numeric"})}</span>}
                 <div style={{fontWeight:800,fontSize:15,color:+(p.castka)>0?C.green:C.red}}>
                   {+(p.castka)>0?"+":""}{(+p.castka).toLocaleString("cs")} Kč
                 </div>
-                <button onClick={()=>{setModal(p);setForm({nazev:p.nazev,castka:String(p.castka),kategorie_id:p.kategorie_id||"",opakovani:p.opakovani,poznamka:p.poznamka||""}); }} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
+                <button onClick={()=>{setModal(p);setForm({nazev:p.nazev,castka:String(p.castka),kategorie_id:p.kategorie_id||"",opakovani:p.opakovani,datum_do:p.datum_do||"",poznamka:p.poznamka||""}); }} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
                 <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
               </div>;
             })}
@@ -1299,6 +1312,10 @@ function FinanceTab(){
               <option value="mesicni">Měsíční</option>
               <option value="rocni">Roční</option>
             </select>
+          </div>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Platí do (volitelně — při kopírování se přeskočí)</div>
+            <input style={inp} type="month" value={form.datum_do?form.datum_do.slice(0,7):""} onChange={e=>setForm(p=>({...p,datum_do:e.target.value?e.target.value+"-01":""}))}/>
           </div>
           <div style={{display:"flex",gap:10}}>
             <button onClick={uloz} style={btnC()}>Uložit</button>
@@ -1479,18 +1496,91 @@ function FinanceTab(){
     </div>;
   };
 
+  // ── TYPY ÚČTŮ ──
+  const TypyUctuView=()=>{
+    const [modal,setModal]=useState(null);
+    const [form,setForm]=useState({klic:"",nazev:"",barva:"#4f7ef0",poradi:0});
+
+    const uloz=async()=>{
+      if(!form.klic.trim()||!form.nazev.trim())return;
+      if(modal==="novy")await sb.from("fin_typy_uctu").insert({klic:form.klic,nazev:form.nazev,barva:form.barva,poradi:+(form.poradi)||((typy_db||[]).length)});
+      else await sb.from("fin_typy_uctu").update({nazev:form.nazev,barva:form.barva,poradi:+(form.poradi)}).eq("id",modal.id);
+      reloadTypy();setModal(null);
+    };
+    const smaz=async(t)=>{
+      const pocet=(ucty||[]).filter(u=>u.typ===t.klic).length;
+      if(pocet>0){alert(`Nelze smazat — ${pocet} účtů používá tento typ.`);return;}
+      if(!confirm(`Smazat typ "${t.nazev}"?`))return;
+      await sb.from("fin_typy_uctu").delete().eq("id",t.id);
+      reloadTypy();
+    };
+
+    return <div>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
+        <button onClick={()=>{setForm({klic:"",nazev:"",barva:"#4f7ef0",poradi:(typy_db||[]).length});setModal("novy");}} style={btnC()}>+ Přidat typ</button>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10}}>
+        {(typy_db||[]).map(t=>{
+          const pocet=(ucty||[]).filter(u=>u.typ===t.klic).length;
+          return <div key={t.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderLeft:`4px solid ${t.barva}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{fontWeight:700,fontSize:14}}>{t.nazev}</div>
+              <div style={{display:"flex",gap:4}}>
+                <button onClick={()=>{setModal(t);setForm({klic:t.klic,nazev:t.nazev,barva:t.barva,poradi:t.poradi});}} style={{...btnC(C.accent,true),padding:"2px 8px",fontSize:11}}>✏</button>
+                <button onClick={()=>smaz(t)} style={{...btnC(C.red,true),padding:"2px 8px",fontSize:11}}>🗑</button>
+              </div>
+            </div>
+            <div style={{fontSize:11,color:C.muted}}>
+              <span style={{background:t.barva+"22",color:t.barva,borderRadius:4,padding:"1px 6px",fontWeight:600,marginRight:6}}>{t.klic}</span>
+              {pocet} {pocet===1?"účet":"účtů"}
+            </div>
+          </div>;
+        })}
+      </div>
+      {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+          <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="novy"?"Nový typ účtu":"Upravit typ"}</h3>
+          {modal==="novy"&&<div style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Klíč (anglicky, bez mezer)</div>
+            <input style={inp} value={form.klic} onChange={e=>setForm(p=>({...p,klic:e.target.value.toLowerCase().replace(/\s/g,"_")}))} placeholder="napr. deti"/>
+            <div style={{fontSize:11,color:C.dim,marginTop:3}}>Klíč nelze změnit po vytvoření</div>
+          </div>}
+          <div style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Název</div>
+            <input style={inp} value={form.nazev} onChange={e=>setForm(p=>({...p,nazev:e.target.value}))} placeholder="napr. Děti"/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Barva</div>
+              <input style={inp} type="color" value={form.barva} onChange={e=>setForm(p=>({...p,barva:e.target.value}))}/>
+            </div>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Pořadí</div>
+              <input style={inp} type="number" value={form.poradi} onChange={e=>setForm(p=>({...p,poradi:e.target.value}))}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={uloz} style={btnC()}>Uložit</button>
+            <button onClick={()=>setModal(null)} style={btnC(C.muted,true)}>Zrušit</button>
+          </div>
+        </div>
+      </div>}
+    </div>;
+  };
+
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:800}}>💰 Finance</h2>
     </div>
-    <div style={{display:"flex",gap:4,marginBottom:24,borderBottom:`2px solid ${C.border}`}}>
-      {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{t.l}</button>)}
+    <div style={{display:"flex",gap:2,marginBottom:24,borderBottom:`2px solid ${C.border}`,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+      {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 14px",border:"none",background:"none",cursor:"pointer",fontSize:12,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap",flexShrink:0}}>{t.l}</button>)}
     </div>
     {zalozka==="dashboard"&&<DashboardView/>}
     {zalozka==="ucty"&&<UctyView/>}
     {zalozka==="cashflow"&&<CashflowView/>}
     {zalozka==="transakce"&&<TransakceView/>}
     {zalozka==="kategorie"&&<KategorieView/>}
+    {zalozka==="typy"&&<TypyUctuView/>}
   </div>;
 }
 
@@ -3152,7 +3242,7 @@ function AlimentyTab(){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:800}}>⚖️ Alimenty — Šíma</h2>
     </div>
-    <div style={{display:"flex",gap:4,marginBottom:24,borderBottom:`2px solid ${C.border}`}}>
+    <div style={{display:"flex",gap:2,marginBottom:24,borderBottom:`2px solid ${C.border}`,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
       {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,transition:"all .15s"}}>{t.l}</button>)}
     </div>
     {zalozka==="prehled"&&<PrehledView/>}
@@ -3834,7 +3924,7 @@ function VodaTab(){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:800}}>🚰 Voda — Hoštice</h2>
     </div>
-    <div style={{display:"flex",gap:4,marginBottom:24,borderBottom:`2px solid ${C.border}`}}>
+    <div style={{display:"flex",gap:2,marginBottom:24,borderBottom:`2px solid ${C.border}`,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
       {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
     </div>
     {zalozka==="fakturacni"&&<FakturacniView/>}
@@ -4110,7 +4200,7 @@ export default function App() {
             <span style={{fontWeight:700,fontSize:14,color:C.accent}}>{aktivniTile.emoji} {aktivniTile.label}</span></>}
         </div>
       </div>
-      <div style={{maxWidth:1100,margin:"0 auto",padding:"28px 24px 60px"}}>
+      <div style={{maxWidth:1100,margin:"0 auto",padding:"20px 12px 60px"}}>
         {modul==="deti"     && <DetiTab/>}
         {modul==="obleceni" && <ObleceniTab/>}
         {modul==="boty"     && <BotyTab/>}
