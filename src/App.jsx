@@ -1070,7 +1070,10 @@ function FinanceTab(){
             const zmena=stav!=null&&pocatecni!=null?stav-pocatecni:null;
             return <div key={u.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderLeft:`4px solid ${typBarvy[typ]||C.accent}`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{u.nazev}</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  {u.logo_url&&<img src={u.logo_url} alt="" style={{width:20,height:20,objectFit:"contain",borderRadius:4}} onError={e=>e.target.style.display="none"}/>}
+                  <div style={{fontWeight:700,fontSize:14,color:C.text}}>{u.nazev}</div>
+                </div>
                 <div style={{display:"flex",gap:4}}>
                   <button onClick={()=>{setStavModal(u);setStavForm({rok:new Date().getFullYear(),mesic:new Date().getMonth()+1,stav:stav!=null?String(stav):""});}} style={{...btnC(C.green,true),padding:"2px 8px",fontSize:11}}>Stav</button>
                   <button onClick={()=>{setModal(u);setForm({nazev:u.nazev,typ:u.typ,mena:u.mena,poznamka:u.poznamka||"",poradi:u.poradi});}} style={{...btnC(C.accent,true),padding:"2px 8px",fontSize:11}}>✏</button>
@@ -1106,8 +1109,11 @@ function FinanceTab(){
                 if(!maData)return null;
                 return <tr key={u.id} style={{background:ui%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
                   <td style={{padding:"9px 12px",fontWeight:600,fontSize:13,whiteSpace:"nowrap",position:"sticky",left:0,background:ui%2===0?C.surface:"#fafbff",borderRight:`1px solid ${C.border}`}}>
-                    <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:typBarvy[u.typ]||C.muted,marginRight:6}}/>
-                    {u.nazev}
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      {u.logo_url&&<img src={u.logo_url} alt="" style={{width:16,height:16,objectFit:"contain",borderRadius:3}} onError={e=>e.target.style.display="none"}/>}
+                      <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:typBarvy[u.typ]||C.muted}}/>
+                      {u.nazev}
+                    </div>
                   </td>
                   {radekStavy.map((s,i)=><td key={i} style={{padding:"9px 10px",textAlign:"right",fontSize:12,color:s!=null?(s<0?C.red:C.text):C.dim,fontWeight:s!=null?600:400}}>
                     {s!=null?s.toLocaleString("cs"):"—"}
