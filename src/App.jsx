@@ -8,50 +8,11 @@ const APP_EMOJI = "🏡";
 const SUPA_URL = import.meta.env.VITE_SUPA_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPA_KEY;
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const GOOGLE_REDIRECT = window.location.origin;
-const GOOGLE_SCOPES = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/userinfo.email";
+const GOOGLE_REDIRECT = window.location.origin+"/auth/callback";
+const GOOGLE_SCOPES = "https://www.googleapis.com/auth/calendar.readonly";
 const sb = createClient(SUPA_URL, SUPA_KEY, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 });
-
-// ── Povolení uživatelé ────────────────────────────────────────────────────────
-// ── PIN ochrana ────────────────────────────────────────────────────────────────────────────────
-const SPRAVNY_PIN = "780519";
-
-function useAuth(){
-  const [odemceno,setOdemceno]=useState(()=>sessionStorage.getItem("mujdomov_pin")==="ok");
-  const prihlasit=(pin)=>{
-    if(pin===SPRAVNY_PIN){sessionStorage.setItem("mujdomov_pin","ok");setOdemceno(true);return true;}
-    return false;
-  };
-  const odhlasit=()=>{sessionStorage.removeItem("mujdomov_pin");setOdemceno(false);};
-  return {user:odemceno?{name:"Jirka"}:null,loading:false,prihlasit,odhlasit};
-}
-
-function LoginScreen({onLogin}){
-  const [pin,setPin]=useState("");
-  const [chyba,setChyba]=useState(false);
-  const pokus=()=>{
-    if(!onLogin(pin)){setChyba(true);setPin("");setTimeout(()=>setChyba(false),2000);}
-  };
-  return <div style={{minHeight:"100vh",background:"#f0f2f7",display:"flex",alignItems:"center",justifyContent:"center"}}>
-    <div style={{background:"#fff",borderRadius:24,padding:"48px 40px",maxWidth:340,width:"100%",textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.1)"}}>
-      <div style={{fontSize:56,marginBottom:16}}>🏡</div>
-      <h1 style={{fontSize:24,fontWeight:800,margin:"0 0 8px",color:"#1a1a2e"}}>{APP_NAME}</h1>
-      <p style={{color:"#6b7280",marginBottom:32,fontSize:14}}>Zadej PIN pro přístup</p>
-      <input
-        type="password" inputMode="numeric" maxLength={6}
-        value={pin} onChange={e=>setPin(e.target.value)}
-        onKeyDown={e=>e.key==="Enter"&&pokus()}
-        placeholder="......"
-        style={{width:"100%",textAlign:"center",fontSize:24,letterSpacing:8,padding:"12px 16px",borderRadius:12,border:`2px solid ${chyba?"#e05555":"#e5e7eb"}`,outline:"none",boxSizing:"border-box",marginBottom:12,transition:"border-color .2s"}}
-        autoFocus
-      />
-      {chyba&&<div style={{color:"#e05555",fontSize:13,marginBottom:8}}>Spatny PIN, zkus znovu</div>}
-      <button onClick={pokus} style={{background:"#3b6fd4",color:"#fff",border:"none",borderRadius:12,padding:"12px",width:"100%",fontSize:15,fontWeight:700,cursor:"pointer"}}>Prihlasit se</button>
-    </div>
-  </div>;
-}
 
 // Google Calendar IDs
 const KALENDARE = [
@@ -790,35 +751,48 @@ function SpotrebaTab(){
 // ══════════════════════════════════════════════════════════════════════════════
 // FINANCE
 // ══════════════════════════════════════════════════════════════════════════════
-// ── MULTI STAV FORM ──────────────────────────────────────────────────────────
-function MultiStavForm({ucty:uArr,rok,mesic,stavy:stavyArr,typBarvy,onSave,onClose}){
-  const init=Object.fromEntries((uArr||[]).map(u=>{
-    const s=(stavyArr||[]).find(s=>s.ucet_id===u.id&&s.rok===rok&&s.mesic===mesic);
-    return [u.id,s!=null?String(s.stav):""];
-  }));
-  const [vals,setVals]=useState(init);
-  useEffect(()=>{
-    const nw=Object.fromEntries((uArr||[]).map(u=>{
-      const s=(stavyArr||[]).find(s=>s.ucet_id===u.id&&s.rok===rok&&s.mesic===mesic);
-      return [u.id,s!=null?String(s.stav):""];
-    }));
-    setVals(nw);
-  },[rok,mesic]);
-  const typy2={bezny:"Běžný",sporici:"Spořící",podnikatelsky:"Podnikatelský",investicni:"Investiční",hotovost:"Hotovost",cizi_mena:"Cizí měna",deti:"Děti"};
-  const tb=typBarvy||{};
-  const skupiny=Object.keys(typy2).map(t=>({typ:t,ucty:(uArr||[]).filter(u=>u.typ===t)})).filter(g=>g.ucty.length>0);
-  return <div>
-    {skupiny.map(({typ,ucty:uArr2})=><div key={typ} style={{marginBottom:16}}>
-      <div style={{fontSize:11,fontWeight:700,color:tb[typ]||C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:8}}>{typy2[typ]}</div>
-      {uArr2.map(u=><div key={u.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-        <div style={{flex:1,fontSize:13,fontWeight:600}}>{u.nazev}</div>
-        <input style={{...inp,width:130,textAlign:"right"}} type="number" step="0.01" placeholder="—" value={vals[u.id]||""} onChange={e=>setVals(p=>({...p,[u.id]:e.target.value}))}/>
-        <span style={{fontSize:11,color:C.muted,width:30}}>{u.mena}</span>
-      </div>)}
-    </div>)}
-    <div style={{display:"flex",gap:10,marginTop:16,borderTop:`1px solid ${C.border}`,paddingTop:16}}>
-      <button onClick={()=>onSave(Object.entries(vals).map(([ucet_id,stav])=>({ucet_id,stav})))} style={btnC()}>Uložit vše</button>
-      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+// ── FINANCE PIN GATE ─────────────────────────────────────────────────────────
+const FINANCE_PIN = "780519";
+
+function FinancePinGate(){
+  const [odemceno,setOdemceno]=useState(()=>sessionStorage.getItem("finance_pin")==="ok");
+  const [pin,setPin]=useState("");
+  const [chyba,setChyba]=useState(false);
+
+  const pokus=()=>{
+    if(pin===FINANCE_PIN){
+      sessionStorage.setItem("finance_pin","ok");
+      setOdemceno(true);
+    } else {
+      setChyba(true);
+      setPin("");
+      setTimeout(()=>setChyba(false),2000);
+    }
+  };
+
+  if(odemceno)return <FinanceTab/>;
+
+  return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:400}}>
+    <div style={{background:"#fff",borderRadius:20,padding:"40px 36px",maxWidth:320,width:"100%",textAlign:"center",boxShadow:"0 8px 32px rgba(0,0,0,.1)"}}>
+      <div style={{fontSize:48,marginBottom:12}}>🔒</div>
+      <h2 style={{fontSize:20,fontWeight:800,margin:"0 0 6px"}}>Finance</h2>
+      <p style={{color:"#6b7280",fontSize:13,marginBottom:24}}>Zadej PIN pro přístup</p>
+      <input
+        type="password"
+        inputMode="numeric"
+        maxLength={6}
+        value={pin}
+        onChange={e=>setPin(e.target.value)}
+        onKeyDown={e=>e.key==="Enter"&&pokus()}
+        placeholder="• • • • • •"
+        autoFocus
+        style={{width:"100%",textAlign:"center",fontSize:22,letterSpacing:6,padding:"12px",borderRadius:10,border:`2px solid ${chyba?"#e05555":"#e2e6f0"}`,outline:"none",boxSizing:"border-box",marginBottom:8,transition:"border-color .2s"}}
+      />
+      {chyba&&<div style={{color:"#e05555",fontSize:12,marginBottom:8}}>Špatný PIN, zkus znovu</div>}
+      <button
+        onClick={pokus}
+        style={{background:"#3b6fd4",color:"#fff",border:"none",borderRadius:10,padding:"11px",width:"100%",fontSize:14,fontWeight:700,cursor:"pointer",marginTop:4}}
+      >Přihlásit se</button>
     </div>
   </div>;
 }
@@ -1026,7 +1000,7 @@ function FinanceTab(){
               </select>
             </div>
           </div>
-          <MultiStavForm ucty={filtrTypy.length===0?(ucty||[]):(ucty||[]).filter(u=>filtrTypy.includes(u.typ))} rok={stavForm.rok} mesic={stavForm.mesic} stavy={stavy||[]} typBarvy={typBarvy} onSave={async(updates)=>{
+          <MultiStavForm ucty={filtrTypy.length===0?(ucty||[]):(ucty||[]).filter(u=>filtrTypy.includes(u.typ))} rok={stavForm.rok} mesic={stavForm.mesic} stavy={stavy||[]} onSave={async(updates)=>{
             for(const {ucet_id,stav} of updates){
               if(stav===""||stav==null)continue;
               await sb.from("fin_stavy").upsert({ucet_id,rok:stavForm.rok,mesic:stavForm.mesic,stav:+stav},{onConflict:"ucet_id,rok,mesic"});
@@ -1039,6 +1013,37 @@ function FinanceTab(){
   };
 
   // Helper — multi stav form
+  function MultiStavForm({ucty:uArr,rok,mesic,stavy:stavyArr,onSave,onClose}){
+    const init=Object.fromEntries((uArr||[]).map(u=>{
+      const s=stavyArr.find(s=>s.ucet_id===u.id&&s.rok===rok&&s.mesic===mesic);
+      return [u.id,s!=null?String(s.stav):""];
+    }));
+    const [vals,setVals]=useState(init);
+    useEffect(()=>{
+      const nw=Object.fromEntries((uArr||[]).map(u=>{
+        const s=stavyArr.find(s=>s.ucet_id===u.id&&s.rok===rok&&s.mesic===mesic);
+        return [u.id,s!=null?String(s.stav):""];
+      }));
+      setVals(nw);
+    },[rok,mesic]);
+    const typy2={bezny:"Běžný",sporici:"Spořící",podnikatelsky:"Podnikatelský",investicni:"Investiční",hotovost:"Hotovost",cizi_mena:"Cizí měna"};
+    const skupiny=Object.keys(typy2).map(t=>({typ:t,ucty:(uArr||[]).filter(u=>u.typ===t)})).filter(g=>g.ucty.length>0);
+    return <div>
+      {skupiny.map(({typ,ucty:uArr2})=><div key={typ} style={{marginBottom:16}}>
+        <div style={{fontSize:11,fontWeight:700,color:typBarvy[typ]||C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:8}}>{typy2[typ]}</div>
+        {uArr2.map(u=><div key={u.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <div style={{flex:1,fontSize:13,fontWeight:600}}>{u.nazev}</div>
+          <input style={{...inp,width:130,textAlign:"right"}} type="number" step="0.01" placeholder="—" value={vals[u.id]||""} onChange={e=>setVals(p=>({...p,[u.id]:e.target.value}))}/>
+          <span style={{fontSize:11,color:C.muted,width:30}}>{u.mena}</span>
+        </div>)}
+      </div>)}
+      <div style={{display:"flex",gap:10,marginTop:16,borderTop:`1px solid ${C.border}`,paddingTop:16}}>
+        <button onClick={()=>onSave(Object.entries(vals).map(([ucet_id,stav])=>({ucet_id,stav})))} style={btnC()}>Uložit vše</button>
+        <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+      </div>
+    </div>;
+  }
+
   // ── ÚČTY ──
   const UctyView=()=>{
     const [modal,setModal]=useState(null);
@@ -4164,16 +4169,12 @@ function TydenWidget(){
 }
 
 export default function App() {
-  const {user,loading:authLoading,prihlasit,odhlasit}=useAuth();
   const [modul,setModul]=useState(null);
   const [upravy,setUpravy]=useState(false);
-  const [poradi,setPoradi]=useState(null);
+  const [poradi,setPoradi]=useState(null); // null = načítám
   const [dragId,setDragId]=useState(null);
   const [dragOver,setDragOver]=useState(null);
   const dragNode=useRef(null);
-
-  if(authLoading)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#f0f2f7"}}><div style={{fontSize:32}}>🏡</div></div>;
-  if(!user)return <LoginScreen onLogin={prihlasit}/>;
 
   // Načti pořadí ze Supabase
   useEffect(()=>{
@@ -4259,7 +4260,7 @@ export default function App() {
         {modul==="ukoly"    && <UkolyTab/>}
         {modul==="spotreba" && <SpotrebaTab/>}
         {modul==="voda"     && <VodaTab/>}
-        {modul==="finance"  && <FinanceTab/>}
+        {modul==="finance"  && <FinancePinGate/>}
         {modul==="dum"      && <DumTab/>}
         {modul==="poznamky" && <PoznamkyTab/>}
         {modul==="projekty" && <ProjektyTab/>}
@@ -4311,8 +4312,6 @@ export default function App() {
             </div>
             <span style={{fontSize:13,fontWeight:700,color:upravy?C.orange:C.muted}}>Upravit dlaždice</span>
           </button>
-          {/* Odhlásit */}
-          <button onClick={odhlasit} style={{fontSize:12,color:C.muted,background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"4px 10px",cursor:"pointer"}}>🔒 Odhlásit</button>
         </div>
       </div>
     </div>
