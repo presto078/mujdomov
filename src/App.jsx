@@ -22,37 +22,34 @@ const POVOLENE_EMAILY = [
 
 // ── Auth hook ─────────────────────────────────────────────────────────────────
 function useAuth(){
-  const [user,setUser]=useState(null); // {email, name, picture}
+  const [user,setUser]=useState(()=>{
+    try{const s=sessionStorage.getItem("mujdomov_user");return s?JSON.parse(s):null;}catch{return null;}
+  });
   const [loading,setLoading]=useState(true);
 
   useEffect(()=>{
-    // Zkontroluj uložený token
-    const saved=sessionStorage.getItem("mujdomov_user");
-    if(saved){try{setUser(JSON.parse(saved));}catch{}}
-    
-    // Zpracuj OAuth callback
     const url=new URL(window.location.href);
     const code=url.searchParams.get("code");
     const state=url.searchParams.get("state");
     if(code&&state==="auth_login"){
       window.history.replaceState({},"","/");
+      const clientSecret=import.meta.env.VITE_GOOGLE_CLIENT_SECRET;
       fetch("https://oauth2.googleapis.com/token",{
         method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},
-        body:new URLSearchParams({code,client_id:GOOGLE_CLIENT_ID,client_secret:import.meta.env.VITE_GOOGLE_CLIENT_SECRET,redirect_uri:GOOGLE_REDIRECT,grant_type:"authorization_code"})
+        body:new URLSearchParams({code,client_id:GOOGLE_CLIENT_ID,client_secret:clientSecret,redirect_uri:GOOGLE_REDIRECT,grant_type:"authorization_code"})
       }).then(r=>r.json()).then(async d=>{
         if(d.access_token){
-          // Načti info o uživateli
           const info=await fetch("https://www.googleapis.com/oauth2/v2/userinfo",{headers:{Authorization:`Bearer ${d.access_token}`}}).then(r=>r.json());
           if(POVOLENE_EMAILY.includes(info.email)){
             const u={email:info.email,name:info.name,picture:info.picture,token:d.access_token};
-            sessionStorage.setItem("mujdomov_user",JSON.stringify(u));
+            try{sessionStorage.setItem("mujdomov_user",JSON.stringify(u));}catch{}
             setUser(u);
           } else {
             alert(`Přístup odepřen. Email ${info.email} není povolen.`);
           }
         }
         setLoading(false);
-      });
+      }).catch(()=>setLoading(false));
     } else {
       setLoading(false);
     }
@@ -60,16 +57,19 @@ function useAuth(){
 
   const prihlasit=()=>{
     const params=new URLSearchParams({
-      client_id:GOOGLE_CLIENT_ID,redirect_uri:GOOGLE_REDIRECT,
-      response_type:"code",scope:GOOGLE_SCOPES,
-      access_type:"offline",prompt:"select_account",
+      client_id:GOOGLE_CLIENT_ID,
+      redirect_uri:GOOGLE_REDIRECT,
+      response_type:"code",
+      scope:GOOGLE_SCOPES,
+      access_type:"offline",
+      prompt:"select_account",
       state:"auth_login",
     });
     window.location.href="https://accounts.google.com/o/oauth2/v2/auth?"+params;
   };
 
   const odhlasit=()=>{
-    sessionStorage.removeItem("mujdomov_user");
+    try{sessionStorage.removeItem("mujdomov_user");}catch{}
     setUser(null);
   };
 
