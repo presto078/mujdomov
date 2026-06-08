@@ -8,7 +8,7 @@ const APP_EMOJI = "🏡";
 const SUPA_URL = import.meta.env.VITE_SUPA_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPA_KEY;
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const GOOGLE_REDIRECT = window.location.origin+"/auth/callback";
+const GOOGLE_REDIRECT = window.location.origin;
 const GOOGLE_SCOPES = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/userinfo.email";
 const sb = createClient(SUPA_URL, SUPA_KEY, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
