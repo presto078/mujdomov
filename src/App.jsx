@@ -804,7 +804,10 @@ function FinanceTab(){
   const {data:kategorie,reload:reloadKat}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
   const {data:transakce,reload:reloadTrans}=useData(()=>sb.from("fin_transakce").select("*").order("datum",{ascending:false}).limit(500));
   const {data:plan,reload:reloadPlan}=useData(()=>sb.from("fin_cashflow_plan").select("*").order("mesic").order("castka"));
-  const {data:stavy,reload:reloadStavy}=useData(()=>sb.from("fin_stavy").select("*").order("rok").order("mesic").limit(2000));
+  const {data:stavy1}=useData(()=>sb.from("fin_stavy").select("*").lte("rok",2021).limit(2000));
+  const {data:stavy2}=useData(()=>sb.from("fin_stavy").select("*").gte("rok",2022).limit(2000));
+  const stavy=[...(stavy1||[]),...(stavy2||[])];
+  const reloadStavy=()=>{};
 
   const typy=Object.fromEntries((typy_db||[]).map(t=>[t.klic,t.nazev]));
   const typBarvy=Object.fromEntries((typy_db||[]).map(t=>[t.klic,t.barva]));
@@ -4047,6 +4050,386 @@ function SvgLineChart({data,color="#4f7ef0"}){
   </div>;
 }
 
+// ── AUTA TAB ─────────────────────────────────────────────────────────────────
+function AutaTab(){
+  const [aktivniAuto,setAktivniAuto]=useState(null);
+  const {data:auta,reload:reloadAuta}=useData(()=>sb.from("auta").select("*").eq("stav","aktivni").order("poradi"));
+
+  if(aktivniAuto)return <AutoDetail auto={aktivniAuto} onBack={()=>setAktivniAuto(null)} reloadAuta={reloadAuta}/>;
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+      <h2 style={{margin:0,fontSize:22,fontWeight:800}}>🚗 Auta</h2>
+      <button onClick={()=>setAktivniAuto("nove")} style={btnC()}>+ Přidat auto</button>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:16}}>
+      {(auta||[]).map(a=><AutoKarta key={a.id} auto={a} onClick={()=>setAktivniAuto(a)}/>)}
+    </div>
+  </div>;
+}
+
+function AutoKarta({auto:a,onClick}){
+  const {data:servisy}=useData(()=>sb.from("auta_servis").select("typ,dalsi_servis_datum").eq("auto_id",a.id).order("datum",{ascending:false}));
+  const {data:km}=useData(()=>sb.from("auta_kilometry").select("stav_km,datum").eq("auto_id",a.id).order("datum",{ascending:false}).limit(1));
+
+  const typBarva={vlastni:C.green,leasing:"#9b7ef5",operativni_leasing:"#e8922a"};
+  const typLabel={vlastni:"Vlastní",leasing:"Leasing",operativni_leasing:"Operativní leasing"};
+
+  // Nejbližší servis
+  const dnes=new Date();
+  const blizkyServis=(servisy||[]).filter(s=>s.dalsi_servis_datum).map(s=>new Date(s.dalsi_servis_datum)).filter(d=>d>dnes).sort((a,b)=>a-b)[0];
+  const dnuDoServisu=blizkyServis?Math.round((blizkyServis-dnes)/(1000*60*60*24)):null;
+
+  return <div onClick={onClick} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,padding:20,cursor:"pointer",transition:"all .2s",borderTop:`4px solid ${typBarva[a.typ_vlastnictvi]||C.accent}`}}
+    onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.1)"}
+    onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+      <div>
+        <div style={{fontWeight:800,fontSize:18}}>{a.nazev}</div>
+        {a.spz&&<div style={{fontSize:12,color:C.muted,fontFamily:"monospace",background:C.bg,padding:"2px 8px",borderRadius:4,display:"inline-block",marginTop:4}}>{a.spz}</div>}
+      </div>
+      <span style={{fontSize:11,fontWeight:700,color:typBarva[a.typ_vlastnictvi],background:typBarva[a.typ_vlastnictvi]+"22",borderRadius:99,padding:"3px 10px"}}>{typLabel[a.typ_vlastnictvi]}</span>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+      <div style={{background:C.bg,borderRadius:8,padding:"8px 10px"}}>
+        <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Km</div>
+        <div style={{fontSize:16,fontWeight:700}}>{km&&km[0]?`${km[0].stav_km.toLocaleString("cs")} km`:"—"}</div>
+      </div>
+      <div style={{background:C.bg,borderRadius:8,padding:"8px 10px"}}>
+        <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Příští servis</div>
+        <div style={{fontSize:14,fontWeight:700,color:dnuDoServisu!=null?(dnuDoServisu<30?C.red:dnuDoServisu<90?C.orange:C.green):C.dim}}>
+          {dnuDoServisu!=null?`za ${dnuDoServisu} dní`:"—"}
+        </div>
+      </div>
+    </div>
+    {a.leasing_do&&<div style={{fontSize:12,color:C.muted}}>Leasing do: {new Date(a.leasing_do).toLocaleDateString("cs-CZ")}</div>}
+  </div>;
+}
+
+function AutoDetail({auto,onBack,reloadAuta}){
+  const [zalozka,setZalozka]=useState("prehled");
+  const [editModal,setEditModal]=useState(false);
+  const {data:servisy,reload:reloadServisy}=useData(()=>sb.from("auta_servis").select("*").eq("auto_id",auto.id).order("datum",{ascending:false}));
+  const {data:kilometry,reload:reloadKm}=useData(()=>sb.from("auta_kilometry").select("*").eq("auto_id",auto.id).order("datum",{ascending:false}));
+  const {data:naklady,reload:reloadNaklady}=useData(()=>sb.from("auta_naklady").select("*").eq("auto_id",auto.id).order("datum",{ascending:false}));
+
+  const tabs=[{id:"prehled",l:"📊 Přehled"},{id:"servis",l:"🔧 Servisní kniha"},{id:"km",l:"📍 Kilometry"},{id:"naklady",l:"💰 Náklady"},{id:"nastaveni",l:"⚙️ Nastavení"}];
+
+  const celkemNaklady=(naklady||[]).reduce((a,n)=>a+(+n.castka),0);
+  const celkemServis=(servisy||[]).reduce((a,s)=>a+(+s.cena||0),0);
+  const posledniKm=(kilometry||[])[0];
+
+  return <div>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+      <button onClick={onBack} style={{...btnC(C.muted,true),padding:"6px 14px"}}>← Zpět</button>
+      <h2 style={{margin:0,fontSize:20,fontWeight:800}}>{auto.nazev}</h2>
+      {auto.spz&&<span style={{fontSize:12,fontFamily:"monospace",background:C.bg,border:`1px solid ${C.border}`,padding:"3px 10px",borderRadius:6}}>{auto.spz}</span>}
+    </div>
+
+    <div style={{display:"flex",gap:2,marginBottom:24,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
+      {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 14px",border:"none",background:"none",cursor:"pointer",fontSize:12,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap",flexShrink:0}}>{t.l}</button>)}
+    </div>
+
+    {zalozka==="prehled"&&<AutoPrehled auto={auto} servisy={servisy||[]} kilometry={kilometry||[]} naklady={naklady||[]} celkemNaklady={celkemNaklady} celkemServis={celkemServis} posledniKm={posledniKm}/>}
+    {zalozka==="servis"&&<AutoServis autoId={auto.id} servisy={servisy||[]} reload={reloadServisy}/>}
+    {zalozka==="km"&&<AutoKilometry autoId={auto.id} kilometry={kilometry||[]} reload={reloadKm}/>}
+    {zalozka==="naklady"&&<AutoNaklady autoId={auto.id} naklady={naklady||[]} reload={reloadNaklady}/>}
+    {zalozka==="nastaveni"&&<AutoNastaveni auto={auto} reload={reloadAuta} onBack={onBack}/>}
+  </div>;
+}
+
+function AutoPrehled({auto,servisy,kilometry,naklady,celkemNaklady,celkemServis,posledniKm}){
+  const dnes=new Date();
+  const terminy=[
+    {typ:"STK",label:"STK"},
+    {typ:"olej",label:"Výměna oleje"},
+    {typ:"pneumatiky",label:"Pneumatiky"},
+    {typ:"stk",label:"STK"},
+  ];
+  const blizkeTerminy=servisy.filter(s=>s.dalsi_servis_datum&&new Date(s.dalsi_servis_datum)>dnes)
+    .map(s=>({...s,dnu:Math.round((new Date(s.dalsi_servis_datum)-dnes)/(1000*60*60*24))}))
+    .sort((a,b)=>a.dnu-b.dnu).slice(0,5);
+
+  return <div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:20}}>
+      {[
+        {l:"Aktuální km",v:posledniKm?`${posledniKm.stav_km.toLocaleString("cs")} km`:"—",c:C.accent},
+        {l:"Celkem servis",v:`${celkemServis.toLocaleString("cs")} Kč`,c:C.orange},
+        {l:"Ostatní náklady",v:`${celkemNaklady.toLocaleString("cs")} Kč`,c:C.red},
+        {l:"Celkem náklady",v:`${(celkemServis+celkemNaklady).toLocaleString("cs")} Kč`,c:C.red},
+      ].map(k=><div key={k.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${k.c}`}}>
+        <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{k.l}</div>
+        <div style={{fontSize:16,fontWeight:800,color:k.c}}>{k.v}</div>
+      </div>)}
+    </div>
+
+    {blizkeTerminy.length>0&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",marginBottom:16}}>
+      <div style={{padding:"12px 16px",fontWeight:700,fontSize:14,borderBottom:`1px solid ${C.border}`}}>⏰ Nadcházející termíny</div>
+      {blizkeTerminy.map(s=><div key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderBottom:`1px solid ${C.border}`}}>
+        <div>
+          <div style={{fontWeight:600,fontSize:13}}>{s.popis||s.typ}</div>
+          <div style={{fontSize:11,color:C.muted}}>{new Date(s.dalsi_servis_datum).toLocaleDateString("cs-CZ")}</div>
+        </div>
+        <span style={{fontWeight:700,fontSize:13,color:s.dnu<30?C.red:s.dnu<90?C.orange:C.green}}>za {s.dnu} dní</span>
+      </div>)}
+    </div>}
+
+    {auto.typ_vlastnictvi==="operativni_leasing"&&auto.leasing_do&&<div style={{background:"#fff8e1",border:"1px solid #f5c07a",borderRadius:12,padding:"14px 16px"}}>
+      <div style={{fontWeight:700,fontSize:13,color:"#b36a00",marginBottom:4}}>📋 Operativní leasing</div>
+      <div style={{fontSize:13,color:C.muted}}>
+        Od: {auto.leasing_od?new Date(auto.leasing_od).toLocaleDateString("cs-CZ"):"—"} &nbsp;|&nbsp;
+        Do: {new Date(auto.leasing_do).toLocaleDateString("cs-CZ")} &nbsp;|&nbsp;
+        {auto.leasing_mesicni_splatka&&`${(+auto.leasing_mesicni_splatka).toLocaleString("cs")} Kč/měs`}
+      </div>
+    </div>}
+  </div>;
+}
+
+function AutoServis({autoId,servisy,reload}){
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({datum:new Date().toISOString().slice(0,10),typ:"jine",popis:"",cena:"",kde:"",km_pri_servisu:"",dalsi_servis_datum:"",dalsi_servis_km:""});
+  const typy={stk:"🔍 STK",olej:"🛢 Olej",pneumatiky:"🔄 Pneumatiky",brzdy:"🛑 Brzdy",jine:"🔧 Jiné"};
+
+  const uloz=async()=>{
+    const data={auto_id:autoId,datum:form.datum,typ:form.typ,popis:form.popis||null,cena:form.cena?+form.cena:null,kde:form.kde||null,km_pri_servisu:form.km_pri_servisu?+form.km_pri_servisu:null,dalsi_servis_datum:form.dalsi_servis_datum||null,dalsi_servis_km:form.dalsi_servis_km?+form.dalsi_servis_km:null};
+    if(modal==="novy")await sb.from("auta_servis").insert(data);
+    else await sb.from("auta_servis").update(data).eq("id",modal.id);
+    reload();setModal(null);
+  };
+  const smaz=async(id)=>{if(!confirm("Smazat záznam?"))return;await sb.from("auta_servis").delete().eq("id",id);reload();};
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
+      <button onClick={()=>{setForm({datum:new Date().toISOString().slice(0,10),typ:"jine",popis:"",cena:"",kde:"",km_pri_servisu:"",dalsi_servis_datum:"",dalsi_servis_km:""});setModal("novy");}} style={btnC()}>+ Přidat servis</button>
+    </div>
+    {servisy.length===0&&<div style={{textAlign:"center",padding:40,color:C.dim}}>Žádné záznamy o servisu</div>}
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {servisy.map(s=><div key={s.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+          <div>
+            <span style={{fontSize:13,fontWeight:700,marginRight:8}}>{typy[s.typ]||s.typ}</span>
+            <span style={{fontSize:13,fontWeight:600}}>{s.popis}</span>
+          </div>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            {s.cena&&<span style={{fontWeight:800,color:C.orange}}>{(+s.cena).toLocaleString("cs")} Kč</span>}
+            <button onClick={()=>{setModal(s);setForm({datum:s.datum,typ:s.typ,popis:s.popis||"",cena:s.cena?String(s.cena):"",kde:s.kde||"",km_pri_servisu:s.km_pri_servisu?String(s.km_pri_servisu):"",dalsi_servis_datum:s.dalsi_servis_datum||"",dalsi_servis_km:s.dalsi_servis_km?String(s.dalsi_servis_km):""});}} style={{...btnC(C.accent,true),padding:"2px 8px",fontSize:11}}>✏</button>
+            <button onClick={()=>smaz(s.id)} style={{...btnC(C.red,true),padding:"2px 8px",fontSize:11}}>🗑</button>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,flexWrap:"wrap"}}>
+          <span>📅 {new Date(s.datum).toLocaleDateString("cs-CZ")}</span>
+          {s.kde&&<span>📍 {s.kde}</span>}
+          {s.km_pri_servisu&&<span>🛣 {s.km_pri_servisu.toLocaleString("cs")} km</span>}
+          {s.dalsi_servis_datum&&<span style={{color:C.green}}>🔔 Příští: {new Date(s.dalsi_servis_datum).toLocaleDateString("cs-CZ")}</span>}
+          {s.dalsi_servis_km&&<span style={{color:C.green}}>🔔 Příští: {s.dalsi_servis_km.toLocaleString("cs")} km</span>}
+        </div>
+      </div>)}
+    </div>
+
+    {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:460,boxShadow:"0 20px 60px rgba(0,0,0,.25)",maxHeight:"90vh",overflowY:"auto"}}>
+        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="novy"?"Nový servisní záznam":"Upravit záznam"}</h3>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:11}}>
+          <div><div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Datum</div><input style={inp} type="date" value={form.datum} onChange={e=>setForm(p=>({...p,datum:e.target.value}))}/></div>
+          <div><div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Typ</div>
+            <select style={inp} value={form.typ} onChange={e=>setForm(p=>({...p,typ:e.target.value}))}>
+              {Object.entries(typy).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+        </div>
+        {[{l:"Popis",k:"popis",t:"text"},{l:"Kde (servis, adresa)",k:"kde",t:"text"},{l:"Cena (Kč)",k:"cena",t:"number"},{l:"Km při servisu",k:"km_pri_servisu",t:"number"},{l:"Příští servis — datum",k:"dalsi_servis_datum",t:"date"},{l:"Příští servis — km",k:"dalsi_servis_km",t:"number"}].map(f=><div key={f.k} style={{marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+          <input style={inp} type={f.t} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
+        </div>)}
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          <button onClick={uloz} style={btnC()}>Uložit</button>
+          <button onClick={()=>setModal(null)} style={btnC(C.muted,true)}>Zrušit</button>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
+function AutoKilometry({autoId,kilometry,reload}){
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({datum:new Date().toISOString().slice(0,10),stav_km:"",poznamka:""});
+
+  const uloz=async()=>{
+    const data={auto_id:autoId,datum:form.datum,stav_km:+form.stav_km,poznamka:form.poznamka||null};
+    if(modal==="novy")await sb.from("auta_kilometry").insert(data);
+    else await sb.from("auta_kilometry").update(data).eq("id",modal.id);
+    reload();setModal(null);
+  };
+  const smaz=async(id)=>{if(!confirm("Smazat?"))return;await sb.from("auta_kilometry").delete().eq("id",id);reload();};
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
+      <button onClick={()=>{setForm({datum:new Date().toISOString().slice(0,10),stav_km:"",poznamka:""});setModal("novy");}} style={btnC()}>+ Zapsat km</button>
+    </div>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead><tr style={{background:C.bg}}>
+          {["Datum","Stav (km)","Přírůstek","Poznámka",""].map(h=><th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+        </tr></thead>
+        <tbody>
+          {kilometry.length===0&&<tr><td colSpan={5} style={{padding:24,textAlign:"center",color:C.dim}}>Žádné záznamy</td></tr>}
+          {kilometry.map((k,i)=>{
+            const prev=kilometry[i+1];
+            const diff=prev?k.stav_km-prev.stav_km:null;
+            return <tr key={k.id} style={{borderBottom:`1px solid ${C.border}`}}>
+              <td style={{padding:"10px 14px",fontSize:13}}>{new Date(k.datum).toLocaleDateString("cs-CZ")}</td>
+              <td style={{padding:"10px 14px",fontSize:14,fontWeight:700}}>{k.stav_km.toLocaleString("cs")} km</td>
+              <td style={{padding:"10px 14px",fontSize:13,color:diff?C.green:C.dim}}>{diff?`+${diff.toLocaleString("cs")} km`:"—"}</td>
+              <td style={{padding:"10px 14px",fontSize:12,color:C.muted}}>{k.poznamka||""}</td>
+              <td style={{padding:"10px 10px",whiteSpace:"nowrap"}}>
+                <button onClick={()=>{setModal(k);setForm({datum:k.datum,stav_km:String(k.stav_km),poznamka:k.poznamka||""});}} style={{...btnC(C.accent,true),padding:"2px 8px",fontSize:11,marginRight:4}}>✏</button>
+                <button onClick={()=>smaz(k.id)} style={{...btnC(C.red,true),padding:"2px 8px",fontSize:11}}>🗑</button>
+              </td>
+            </tr>;
+          })}
+        </tbody>
+      </table>
+    </div>
+
+    {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="novy"?"Zapsat kilometry":"Upravit"}</h3>
+        {[{l:"Datum",k:"datum",t:"date"},{l:"Stav tachometru (km)",k:"stav_km",t:"number"},{l:"Poznámka",k:"poznamka",t:"text"}].map(f=><div key={f.k} style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+          <input style={inp} type={f.t} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
+        </div>)}
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          <button onClick={uloz} style={btnC()}>Uložit</button>
+          <button onClick={()=>setModal(null)} style={btnC(C.muted,true)}>Zrušit</button>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
+function AutoNaklady({autoId,naklady,reload}){
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({datum:new Date().toISOString().slice(0,10),typ:"jine",castka:"",poznamka:""});
+  const typy={pohonne_hmoty:"⛽ Pohonné hmoty",pojistka:"🛡 Pojistka",dalnice:"🛣 Dálniční poplatek",parkovani:"🅿 Parkování",umyti:"🚿 Mytí",jine:"💰 Jiné"};
+
+  const uloz=async()=>{
+    const data={auto_id:autoId,datum:form.datum,typ:form.typ,castka:+form.castka,poznamka:form.poznamka||null};
+    if(modal==="novy")await sb.from("auta_naklady").insert(data);
+    else await sb.from("auta_naklady").update(data).eq("id",modal.id);
+    reload();setModal(null);
+  };
+  const smaz=async(id)=>{if(!confirm("Smazat?"))return;await sb.from("auta_naklady").delete().eq("id",id);reload();};
+
+  const celkem=naklady.reduce((a,n)=>a+(+n.castka),0);
+  const podleTypu=Object.entries(typy).map(([k,v])=>({typ:k,label:v,suma:naklady.filter(n=>n.typ===k).reduce((a,n)=>a+(+n.castka),0)})).filter(t=>t.suma>0);
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <div style={{fontWeight:800,fontSize:16}}>Celkem: {celkem.toLocaleString("cs")} Kč</div>
+      <button onClick={()=>{setForm({datum:new Date().toISOString().slice(0,10),typ:"jine",castka:"",poznamka:""});setModal("novy");}} style={btnC()}>+ Přidat náklad</button>
+    </div>
+
+    {podleTypu.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:8,marginBottom:16}}>
+      {podleTypu.map(t=><div key={t.typ} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px"}}>
+        <div style={{fontSize:11,color:C.muted,marginBottom:2}}>{t.label}</div>
+        <div style={{fontWeight:700,fontSize:14}}>{t.suma.toLocaleString("cs")} Kč</div>
+      </div>)}
+    </div>}
+
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead><tr style={{background:C.bg}}>
+          {["Datum","Typ","Částka","Poznámka",""].map(h=><th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+        </tr></thead>
+        <tbody>
+          {naklady.length===0&&<tr><td colSpan={5} style={{padding:24,textAlign:"center",color:C.dim}}>Žádné náklady</td></tr>}
+          {naklady.map((n,i)=><tr key={n.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
+            <td style={{padding:"9px 14px",fontSize:13}}>{new Date(n.datum).toLocaleDateString("cs-CZ")}</td>
+            <td style={{padding:"9px 14px",fontSize:13}}>{typy[n.typ]||n.typ}</td>
+            <td style={{padding:"9px 14px",fontSize:13,fontWeight:700,color:C.orange}}>{(+n.castka).toLocaleString("cs")} Kč</td>
+            <td style={{padding:"9px 14px",fontSize:12,color:C.muted}}>{n.poznamka||""}</td>
+            <td style={{padding:"9px 10px",whiteSpace:"nowrap"}}>
+              <button onClick={()=>{setModal(n);setForm({datum:n.datum,typ:n.typ,castka:String(n.castka),poznamka:n.poznamka||""});}} style={{...btnC(C.accent,true),padding:"2px 8px",fontSize:11,marginRight:4}}>✏</button>
+              <button onClick={()=>smaz(n.id)} style={{...btnC(C.red,true),padding:"2px 8px",fontSize:11}}>🗑</button>
+            </td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+
+    {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="novy"?"Nový náklad":"Upravit náklad"}</h3>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:11}}>
+          <div><div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Datum</div><input style={inp} type="date" value={form.datum} onChange={e=>setForm(p=>({...p,datum:e.target.value}))}/></div>
+          <div><div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Typ</div>
+            <select style={inp} value={form.typ} onChange={e=>setForm(p=>({...p,typ:e.target.value}))}>
+              {Object.entries(typy).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+        </div>
+        {[{l:"Částka (Kč)",k:"castka",t:"number"},{l:"Poznámka",k:"poznamka",t:"text"}].map(f=><div key={f.k} style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+          <input style={inp} type={f.t} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
+        </div>)}
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          <button onClick={uloz} style={btnC()}>Uložit</button>
+          <button onClick={()=>setModal(null)} style={btnC(C.muted,true)}>Zrušit</button>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
+function AutoNastaveni({auto,reload,onBack}){
+  const [form,setForm]=useState({nazev:auto.nazev,znacka:auto.znacka||"",model:auto.model||"",spz:auto.spz||"",rok_vyroby:auto.rok_vyroby||"",barva:auto.barva||"",typ_vlastnictvi:auto.typ_vlastnictvi||"vlastni",leasing_od:auto.leasing_od||"",leasing_do:auto.leasing_do||"",leasing_mesicni_splatka:auto.leasing_mesicni_splatka||"",poznamka:auto.poznamka||""});
+  const [saving,setSaving]=useState(false);
+
+  const uloz=async()=>{
+    setSaving(true);
+    await sb.from("auta").update({...form,rok_vyroby:form.rok_vyroby?+form.rok_vyroby:null,leasing_mesicni_splatka:form.leasing_mesicni_splatka?+form.leasing_mesicni_splatka:null,leasing_od:form.leasing_od||null,leasing_do:form.leasing_do||null}).eq("id",auto.id);
+    setSaving(false);reload();alert("Uloženo!");
+  };
+  const prodej=async()=>{
+    if(!confirm(`Označit "${auto.nazev}" jako prodané/vrácené?`))return;
+    await sb.from("auta").update({stav:"prodano"}).eq("id",auto.id);
+    reload();onBack();
+  };
+
+  const typy={vlastni:"Vlastní",leasing:"Leasing",operativni_leasing:"Operativní leasing"};
+  return <div style={{maxWidth:500}}>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:20,marginBottom:16}}>
+      <h3 style={{margin:"0 0 16px",fontSize:15,fontWeight:800}}>Základní informace</h3>
+      {[{l:"Název",k:"nazev"},{l:"Značka",k:"znacka"},{l:"Model",k:"model"},{l:"SPZ",k:"spz"},{l:"Rok výroby",k:"rok_vyroby",t:"number"},{l:"Barva",k:"barva"}].map(f=><div key={f.k} style={{marginBottom:11}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+        <input style={inp} type={f.t||"text"} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
+      </div>)}
+      <div style={{marginBottom:11}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Typ vlastnictví</div>
+        <select style={inp} value={form.typ_vlastnictvi} onChange={e=>setForm(p=>({...p,typ_vlastnictvi:e.target.value}))}>
+          {Object.entries(typy).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+        </select>
+      </div>
+      {(form.typ_vlastnictvi==="leasing"||form.typ_vlastnictvi==="operativni_leasing")&&<>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:11}}>
+          <div><div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Leasing od</div><input style={inp} type="date" value={form.leasing_od} onChange={e=>setForm(p=>({...p,leasing_od:e.target.value}))}/></div>
+          <div><div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Leasing do</div><input style={inp} type="date" value={form.leasing_do} onChange={e=>setForm(p=>({...p,leasing_do:e.target.value}))}/></div>
+        </div>
+        <div style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Měsíční splátka (Kč)</div>
+          <input style={inp} type="number" value={form.leasing_mesicni_splatka} onChange={e=>setForm(p=>({...p,leasing_mesicni_splatka:e.target.value}))}/>
+        </div>
+      </>}
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Poznámka</div>
+        <textarea style={{...inp,minHeight:70,resize:"vertical"}} value={form.poznamka} onChange={e=>setForm(p=>({...p,poznamka:e.target.value}))}/>
+      </div>
+      <button onClick={uloz} disabled={saving} style={btnC()}>{saving?"Ukládám...":"Uložit změny"}</button>
+    </div>
+    <button onClick={prodej} style={{...btnC(C.red,true),width:"100%",justifyContent:"center"}}>🚗 Označit jako prodané / vrácené</button>
+  </div>;
+}
+
 const TILES=[
   {id:"deti",     emoji:"👶", label:"Děti",      popis:"Profily a info",         barva:"#4f7ef0"},
   {id:"obleceni", emoji:"👕", label:"Oblečení",  popis:"Sklady a velikosti",     barva:"#3b6fd4"},
@@ -4057,6 +4440,7 @@ const TILES=[
   {id:"voda",     emoji:"🚰", label:"Voda",      popis:"Odečty, faktury, odhad", barva:"#0369a1"},
   {id:"finance",  emoji:"💰", label:"Finance",   popis:"Výdaje a příjmy",        barva:"#b8860b"},
   {id:"dum",      emoji:"🔧", label:"Dům",       popis:"Opravy a plánování",     barva:"#8B3A1A"},
+  {id:"auta",     emoji:"🚗", label:"Auta",      popis:"Servis, náklady, km",     barva:"#1a1a2e"},
   {id:"poznamky", emoji:"📝", label:"Poznámky",  popis:"Nápady a todolist",      barva:"#2ed8c8"},
   {id:"projekty", emoji:"🏗",  label:"Projekty",  popis:"Realizované projekty",   barva:"#e05555"},
   {id:"alimenty", emoji:"⚖️",  label:"Alimenty",  popis:"Šíma — Sylvestr & John", barva:"#c0392b"},
@@ -4262,6 +4646,7 @@ export default function App() {
         {modul==="voda"     && <VodaTab/>}
         {modul==="finance"  && <FinancePinGate/>}
         {modul==="dum"      && <DumTab/>}
+        {modul==="auta"     && <AutaTab/>}
         {modul==="poznamky" && <PoznamkyTab/>}
         {modul==="projekty" && <ProjektyTab/>}
         {modul==="alimenty" && <AlimentyTab/>}
