@@ -4552,6 +4552,54 @@ function TydenWidget(){
   </div>;
 }
 
+// ── GLOBÁLNÍ PIN GATE ────────────────────────────────────────────────────────
+const APP_PIN = "5257";
+
+function AppPinGate({children}){
+  const [ok,setOk]=useState(()=>sessionStorage.getItem("app_pin")==="ok");
+  const [pin,setPin]=useState("");
+  const [chyba,setChyba]=useState(false);
+  const [pokusů,setPokusu]=useState(0);
+
+  const pokus=()=>{
+    if(pin===APP_PIN){
+      sessionStorage.setItem("app_pin","ok");
+      setOk(true);
+    } else {
+      setPokusu(p=>p+1);
+      setChyba(true);
+      setPin("");
+      setTimeout(()=>setChyba(false),2000);
+    }
+  };
+
+  if(ok)return children;
+
+  return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+    <div style={{background:"rgba(255,255,255,.05)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,.1)",borderRadius:24,padding:"48px 40px",maxWidth:380,width:"100%",textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.5)"}}>
+      <div style={{fontSize:52,marginBottom:16}}>🏡</div>
+      <h1 style={{fontSize:22,fontWeight:800,margin:"0 0 6px",color:"#fff"}}>{APP_NAME}</h1>
+      <p style={{color:"rgba(255,255,255,.5)",fontSize:13,marginBottom:8}}>Rodinný operační systém</p>
+      <p style={{color:"rgba(255,255,255,.35)",fontSize:12,marginBottom:28}}>Pro přístup zadej 15znakové heslo</p>
+      <input
+        type="password"
+        value={pin}
+        onChange={e=>setPin(e.target.value)}
+        onKeyDown={e=>e.key==="Enter"&&pokus()}
+        placeholder="••••••••••••••••"
+        autoFocus
+        style={{width:"100%",textAlign:"center",fontSize:20,letterSpacing:6,padding:"14px",borderRadius:12,border:`2px solid ${chyba?"#e05555":"rgba(255,255,255,.2)"}`,outline:"none",boxSizing:"border-box",marginBottom:8,background:"rgba(255,255,255,.08)",color:"#fff",transition:"border-color .2s"}}
+      />
+      {chyba&&<div style={{color:"#e05555",fontSize:12,marginBottom:8}}>Nesprávné heslo{pokusů>2?" — zkontroluj Caps Lock":""}</div>}
+      <button onClick={pokus} style={{background:"#4f7ef0",color:"#fff",border:"none",borderRadius:12,padding:"13px",width:"100%",fontSize:15,fontWeight:700,cursor:"pointer",marginTop:4,transition:"opacity .2s"}}
+        onMouseEnter={e=>e.currentTarget.style.opacity=".85"}
+        onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+        Přihlásit se
+      </button>
+    </div>
+  </div>;
+}
+
 export default function App() {
   const [modul,setModul]=useState(null);
   const [upravy,setUpravy]=useState(false);
@@ -4655,7 +4703,7 @@ export default function App() {
     </div>;
   }
 
-  return <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter','Segoe UI',sans-serif",color:C.text}}>
+  return <AppPinGate><div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter','Segoe UI',sans-serif",color:C.text}}>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"/>
     <style>{globalStyle}</style>
     {/* Header */}
@@ -4744,5 +4792,5 @@ export default function App() {
         ))}
       </div>
     </div>
-  </div>;
+  </div></AppPinGate>;
 }
