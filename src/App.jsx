@@ -2605,8 +2605,8 @@ function AlimentyTab(){
     const maPlatbaOtec=platby.some(p=>p.mesic===aktMesic&&p.kdo_plati==="otec");
     const maPlatbaMatka=platby.some(p=>p.mesic===aktMesic&&p.kdo_plati==="matka");
     const vytvorit=[];
-    if(!maPlatbaOtec)vytvorit.push({mesic:aktMesic,kdo_plati:"otec",komu:"matce",castka:0,datum:null,poznamka:null});
-    if(!maPlatbaMatka)vytvorit.push({mesic:aktMesic,kdo_plati:"matka",komu:"otci",castka:0,datum:null,poznamka:null});
+    if(!maPlatbaOtec)vytvorit.push({mesic:aktMesic,typ:"aliment",kdo_plati:"otec",komu:"matce",castka:0,datum:null,poznamka:null});
+    if(!maPlatbaMatka)vytvorit.push({mesic:aktMesic,typ:"aliment",kdo_plati:"matka",komu:"otci",castka:0,datum:null,poznamka:null});
     if(vytvorit.length>0){
       sb.from("alimenty_platby").insert(vytvorit).then(()=>reloadPlatby());
     }
@@ -2865,7 +2865,7 @@ function AlimentyTab(){
               <td colSpan={4} style={{padding:"8px 12px",fontWeight:600,fontSize:12,color:C.muted}}>{ALIM_META.otec} zaplatil</td>
               <td style={{padding:"8px 12px",fontWeight:700,fontSize:13,color:C.accent}}>{alimenty.filter(p=>p.kdo_plati==="otec").reduce((a,p)=>a+p.castka,0).toLocaleString("cs")} Kč</td>
               <td style={{padding:"8px 12px",fontWeight:700,fontSize:12,color:C.red}}>
-                {(()=>{const dluh=alimenty.filter(p=>p.kdo_plati==="otec").reduce((a,p)=>{const mb=getSazbaProMesic(p.mesic||"");return a+(mb-p.castka);},0);return dluh>0?`dluží ${dluh.toLocaleString("cs")} Kč`:""})()}
+                {(()=>{const dluh=alimenty.filter(p=>p.kdo_plati==="otec").reduce((a,p)=>{const mb=getSazbaProMesic(p.mesic||"");return a+(mb-p.castka);},0);return dluh>0?`dluží ${dluh.toLocaleString("cs")} Kč`:<span style={{color:C.green}}>✓ nic nedluží</span>;})()}
               </td>
               <td colSpan={3}/>
             </tr>
@@ -2873,7 +2873,7 @@ function AlimentyTab(){
               <td colSpan={4} style={{padding:"8px 12px",fontWeight:600,fontSize:12,color:C.muted}}>{ALIM_META.matka} zaplatila</td>
               <td style={{padding:"8px 12px",fontWeight:700,fontSize:13,color:C.accent}}>{alimenty.filter(p=>p.kdo_plati==="matka").reduce((a,p)=>a+p.castka,0).toLocaleString("cs")} Kč</td>
               <td style={{padding:"8px 12px",fontWeight:700,fontSize:12,color:C.red}}>
-                {(()=>{const dluh=alimenty.filter(p=>p.kdo_plati==="matka").reduce((a,p)=>{const mb=getSazbaMatkaOtec(p.mesic||"");return a+(mb-p.castka);},0);return dluh>0?`dluží ${dluh.toLocaleString("cs")} Kč`:""})()}
+                {(()=>{const dluh=alimenty.filter(p=>p.kdo_plati==="matka").reduce((a,p)=>{const mb=getSazbaMatkaOtec(p.mesic||"");return a+(mb-p.castka);},0);return dluh>0?`dluží ${dluh.toLocaleString("cs")} Kč`:<span style={{color:C.green}}>✓ nic nedluží</span>;})()}
               </td>
               <td colSpan={3}/>
             </tr>
