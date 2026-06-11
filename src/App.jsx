@@ -2854,6 +2854,7 @@ function AlimentyTab(){
                 <td style={{padding:"10px 12px",fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>{p.datum?new Date(p.datum).toLocaleDateString("cs-CZ"):"—"}</td>
                 <td style={{padding:"10px 12px",fontSize:12,color:C.muted}}>{p.poznamka||""}</td>
                 <td style={{padding:"10px 8px",whiteSpace:"nowrap"}}>
+                  {rozdil!=null&&rozdil<0&&<button onClick={()=>{setEditAlim(p);setEditFormA({kdo_plati:p.kdo_plati,komu:p.komu,komu_text:p.komu_text||"",mesic:p.mesic||"",castka:String(maByt||p.castka),datum:new Date().toISOString().slice(0,10),poznamka:p.poznamka||""});}} style={{...btnC(C.green,true),padding:"3px 8px",fontSize:11,marginRight:4}}>💳 Zaplatit</button>}
                   <button onClick={()=>{setEditAlim(p);setEditFormA({kdo_plati:p.kdo_plati,komu:p.komu,komu_text:p.komu_text||"",mesic:p.mesic||"",castka:String(p.castka),datum:p.datum||"",poznamka:p.poznamka||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
                   <button onClick={()=>smazAlim(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
                 </td>
@@ -2864,18 +2865,12 @@ function AlimentyTab(){
             <tr style={{background:C.bg,borderTop:`2px solid ${C.border}`}}>
               <td colSpan={4} style={{padding:"8px 12px",fontWeight:600,fontSize:12,color:C.muted}}>{ALIM_META.otec} zaplatil</td>
               <td style={{padding:"8px 12px",fontWeight:700,fontSize:13,color:C.accent}}>{alimenty.filter(p=>p.kdo_plati==="otec").reduce((a,p)=>a+p.castka,0).toLocaleString("cs")} Kč</td>
-              <td style={{padding:"8px 12px",fontWeight:700,fontSize:12,color:C.red}}>
-                {(()=>{const dluh=alimenty.filter(p=>p.kdo_plati==="otec").reduce((a,p)=>{const mb=getSazbaProMesic(p.mesic||"");return a+(mb-p.castka);},0);return dluh>0?`dluží ${dluh.toLocaleString("cs")} Kč`:<span style={{color:C.green}}>✓ nic nedluží</span>;})()}
-              </td>
-              <td colSpan={3}/>
+              <td colSpan={4}/>
             </tr>
             <tr style={{background:C.bg}}>
               <td colSpan={4} style={{padding:"8px 12px",fontWeight:600,fontSize:12,color:C.muted}}>{ALIM_META.matka} zaplatila</td>
               <td style={{padding:"8px 12px",fontWeight:700,fontSize:13,color:C.accent}}>{alimenty.filter(p=>p.kdo_plati==="matka").reduce((a,p)=>a+p.castka,0).toLocaleString("cs")} Kč</td>
-              <td style={{padding:"8px 12px",fontWeight:700,fontSize:12,color:C.red}}>
-                {(()=>{const dluh=alimenty.filter(p=>p.kdo_plati==="matka").reduce((a,p)=>{const mb=getSazbaMatkaOtec(p.mesic||"");return a+(mb-p.castka);},0);return dluh>0?`dluží ${dluh.toLocaleString("cs")} Kč`:<span style={{color:C.green}}>✓ nic nedluží</span>;})()}
-              </td>
-              <td colSpan={3}/>
+              <td colSpan={4}/>
             </tr>
             <tr style={{background:C.bg,borderTop:`1px solid ${C.border}`}}>
               <td colSpan={4} style={{padding:"10px 12px",fontWeight:800,fontSize:13}}>CELKEM</td>
