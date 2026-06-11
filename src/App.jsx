@@ -2588,11 +2588,26 @@ const KOMU_OPTS=[
 ];
 
 function AlimentyTab(){
-  const [zalozka,setZalozka]=useState("prehled");
+  const [zalozka,setZalozka]=useState("vyuctovani");
   const {data:sazby,reload:reloadSazby}=useData(()=>sb.from("alimenty_sazby").select("*").order("platnost_od"));
   const {data:platby,reload:reloadPlatby}=useData(()=>sb.from("alimenty_platby").select("*").order("datum",{ascending:true}));
   const {data:mimoradne,reload:reloadMim}=useData(()=>sb.from("alimenty_mimoradne").select("*").order("datum",{ascending:true}));
   const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("alimenty_nastaveni").select("*"));
+
+  // Auto-vytvoření plateb pro aktuální měsíc pokud chybí
+  useEffect(()=>{
+    if(!platby||!sazby||sazby.length===0)return;
+    const dnes=new Date();
+    const aktMesic=`${dnes.getFullYear()}-${String(dnes.getMonth()+1).padStart(2,"0")}`;
+    const maPlatbaOtec=platby.some(p=>p.mesic===aktMesic&&p.kdo_plati==="otec");
+    const maPlatbaMatka=platby.some(p=>p.mesic===aktMesic&&p.kdo_plati==="matka");
+    const vytvorit=[];
+    if(!maPlatbaOtec)vytvorit.push({mesic:aktMesic,kdo_plati:"otec",komu:"matce",castka:0,datum:null,poznamka:null});
+    if(!maPlatbaMatka)vytvorit.push({mesic:aktMesic,kdo_plati:"matka",komu:"otci",castka:0,datum:null,poznamka:null});
+    if(vytvorit.length>0){
+      sb.from("alimenty_platby").insert(vytvorit).then(()=>reloadPlatby());
+    }
+  },[platby,sazby]);
 
   const nast=Object.fromEntries((nastaveni||[]).map(r=>[r.klic,r.hodnota]));
   const dluhCelkem=parseInt(nast.dluh_celkem||"53250");
@@ -2791,19 +2806,15 @@ function AlimentyTab(){
     const smazMim=async(id)=>{if(!confirm("Smazat tento výdaj?"))return;await sb.from("alimenty_mimoradne").delete().eq("id",id);reloadMim();};
 
     return <div>
-      {/* Velké dlaždice pro přidání */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:24}}>
-        <div onClick={()=>{setPf({...pridatForm0,typ:"alimenty"});setPridatModal(true);}}
-          style={{background:"#5b8ef0",border:"none",borderRadius:16,padding:"24px 20px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,transition:"all .2s",minHeight:100,boxShadow:"0 4px 14px rgba(91,142,240,.35)"}}>
-          <div style={{fontSize:28}}>💳</div>
-          <div style={{fontWeight:800,fontSize:15,color:"#fff"}}>+ Přidat platbu alimentů</div>
-          <div style={{fontSize:12,color:"rgba(255,255,255,.8)"}}>Zaznamenat měsíční platbu</div>
-        </div>
+      {/* Dlaždice pro mimořádný výdaj */}
+      <div style={{marginBottom:24}}>
         <div onClick={()=>{setPf({...pridatForm0,typ:"mimoradne"});setPridatModal(true);}}
-          style={{background:"#e8922a",border:"none",borderRadius:16,padding:"24px 20px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,transition:"all .2s",minHeight:100,boxShadow:"0 4px 14px rgba(232,146,42,.35)"}}>
+          style={{background:"#e8922a",border:"none",borderRadius:16,padding:"20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,transition:"all .2s",boxShadow:"0 4px 14px rgba(232,146,42,.35)"}}>
           <div style={{fontSize:28}}>📋</div>
-          <div style={{fontWeight:800,fontSize:15,color:"#fff"}}>+ Přidat mimořádný výdaj</div>
-          <div style={{fontSize:12,color:"rgba(255,255,255,.8)"}}>Školka, lékař, jiné náklady</div>
+          <div>
+            <div style={{fontWeight:800,fontSize:15,color:"#fff"}}>+ Přidat mimořádný výdaj</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,.8)"}}>Školka, lékař, jiné náklady</div>
+          </div>
         </div>
       </div>
 
@@ -2820,7 +2831,8 @@ function AlimentyTab(){
             {razeni==="asc"?"↑ Nejstarší první":"↓ Nejnovější první"}
           </button>
         </div>
-        <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
           <thead><tr style={{background:C.bg}}>
             {["Měsíc","Kdo platí","Komu","Má být","Zaplaceno","Rozdíl","Datum platby","Poznámka",""].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,whiteSpace:"nowrap"}}>{h}</th>)}
           </tr></thead>
@@ -2863,6 +2875,7 @@ function AlimentyTab(){
             </tr>
           </tfoot>}
         </table>
+        </div>
       </div>
 
       {/* Tabulka mimořádných výdajů */}
@@ -2870,7 +2883,8 @@ function AlimentyTab(){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",borderBottom:`1px solid ${C.border}`}}>
           <span style={{fontWeight:800,fontSize:15,color:C.text}}>Mimořádné výdaje</span>
         </div>
-        <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
           <thead><tr style={{background:C.bg}}>
             {["Datum","Popis","Dítě","Celkem","Podíl matky","Podíl otce","M. zaplatila","O. zaplatil","Dluh školce","Dluh mezi rodiči",""].map(h=><th key={h} style={{padding:"9px 10px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.4,whiteSpace:"nowrap"}}>{h}</th>)}
           </tr></thead>
@@ -2897,9 +2911,8 @@ function AlimentyTab(){
             })}
           </tbody>
         </table>
+        </div>
       </div>
-
-      {/* Modal editace alimentu */}
       {editAlim&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
         <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:420,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
           <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>✏ Upravit platbu</h3>
@@ -3315,14 +3328,14 @@ function AlimentyTab(){
     </div>;
   };
 
-  const tabs=[{id:"prehled",l:"📅 Přehled plateb"},{id:"vyuctovani",l:"📊 Vyúčtování"},{id:"nastaveni",l:"⚙️ Nastavení"}];
+  const tabs=[{id:"vyuctovani",l:"📊 Vyúčtování"},{id:"prehled",l:"📅 Přehled plateb"},{id:"nastaveni",l:"⚙️ Nastavení"}];
 
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:800}}>⚖️ Alimenty — Šíma</h2>
     </div>
     <div style={{display:"flex",gap:2,marginBottom:24,borderBottom:`2px solid ${C.border}`,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-      {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,transition:"all .15s"}}>{t.l}</button>)}
+      {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,transition:"all .15s",whiteSpace:"nowrap",flexShrink:0}}>{t.l}</button>)}
     </div>
     {zalozka==="prehled"&&<PrehledView/>}
     {zalozka==="vyuctovani"&&<VyuctovaniView/>}
