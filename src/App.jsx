@@ -2617,6 +2617,20 @@ function AlimentyTab(){
     return total;
   };
 
+  const getSazbaMatkaOtec=(mesicStr)=>{
+    const d=new Date(mesicStr+"-01");
+    let total=0;
+    ["Sylvestr","John"].forEach(dite=>{
+      const s=(sazby||[]).filter(r=>r.smer==="matka_otci"&&r.dite===dite).find(r=>{
+        const od=new Date(r.platnost_od);
+        const do_=r.platnost_do?new Date(r.platnost_do):null;
+        return od<=d&&(!do_||do_>=d);
+      });
+      if(s)total+=s.castka;
+    });
+    return total;
+  };
+
   // Měsíce od dubna 2026 do 12 měsíců dopředu
   const mesice=[];
   const mesiceAktualni=[];
@@ -2813,7 +2827,7 @@ function AlimentyTab(){
           <tbody>
             {alimenty.length===0&&<tr><td colSpan={9} style={{padding:24,textAlign:"center",color:C.dim,fontSize:13}}>Zatím žádné platby</td></tr>}
             {alimenty.map((p,i)=>{
-              const maByt=p.kdo_plati==="otec"&&p.komu==="matce"?getSazbaProMesic(p.mesic||""):null;
+              const maByt=p.kdo_plati==="otec"&&p.komu==="matce"?getSazbaProMesic(p.mesic||""):p.kdo_plati==="matka"&&p.komu==="otci"?getSazbaMatkaOtec(p.mesic||""):null;
               const rozdil=maByt!=null?p.castka-maByt:null;
               return <tr key={p.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
                 <td style={{padding:"10px 12px",fontWeight:600,fontSize:13,whiteSpace:"nowrap"}}>{p.mesic?new Date(p.mesic+"-01").toLocaleDateString("cs-CZ",{month:"long",year:"numeric"}):""}</td>
@@ -3000,7 +3014,7 @@ function AlimentyTab(){
         ...hlavicka,
         ["Měsíc","Kdo platí","Komu","Má být (Kč)","Zaplaceno (Kč)","Rozdíl (Kč)","Datum platby","Poznámka"],
         ...alimData.map(p=>{
-          const maByt=p.kdo_plati==="otec"&&p.komu==="matce"?getSazbaProMesic(p.mesic||""):null;
+          const maByt=p.kdo_plati==="otec"&&p.komu==="matce"?getSazbaProMesic(p.mesic||""):p.kdo_plati==="matka"&&p.komu==="otci"?getSazbaMatkaOtec(p.mesic||""):null;
           return [
             p.mesic?new Date(p.mesic+"-01").toLocaleDateString("cs-CZ",{month:"long",year:"numeric"}):"",
             p.kdo_plati==="otec"?ALIM_META.otec:ALIM_META.matka,
