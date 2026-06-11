@@ -2847,7 +2847,17 @@ function AlimentyTab(){
           </tbody>
           {alimenty.length>0&&<tfoot>
             <tr style={{background:C.bg,borderTop:`2px solid ${C.border}`}}>
-              <td colSpan={4} style={{padding:"10px 12px",fontWeight:700,fontSize:13}}>CELKEM</td>
+              <td colSpan={4} style={{padding:"8px 12px",fontWeight:600,fontSize:12,color:C.muted}}>{ALIM_META.otec} zaplatil</td>
+              <td style={{padding:"8px 12px",fontWeight:700,fontSize:13,color:C.accent}}>{alimenty.filter(p=>p.kdo_plati==="otec").reduce((a,p)=>a+p.castka,0).toLocaleString("cs")} Kč</td>
+              <td colSpan={4}/>
+            </tr>
+            <tr style={{background:C.bg}}>
+              <td colSpan={4} style={{padding:"8px 12px",fontWeight:600,fontSize:12,color:C.muted}}>{ALIM_META.matka} zaplatila</td>
+              <td style={{padding:"8px 12px",fontWeight:700,fontSize:13,color:C.accent}}>{alimenty.filter(p=>p.kdo_plati==="matka").reduce((a,p)=>a+p.castka,0).toLocaleString("cs")} Kč</td>
+              <td colSpan={4}/>
+            </tr>
+            <tr style={{background:C.bg,borderTop:`1px solid ${C.border}`}}>
+              <td colSpan={4} style={{padding:"10px 12px",fontWeight:800,fontSize:13}}>CELKEM</td>
               <td style={{padding:"10px 12px",fontWeight:800,fontSize:14,color:C.accent}}>{alimenty.reduce((a,p)=>a+p.castka,0).toLocaleString("cs")} Kč</td>
               <td colSpan={4}/>
             </tr>
