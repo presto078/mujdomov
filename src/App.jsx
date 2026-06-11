@@ -2596,11 +2596,11 @@ function AlimentyTab(){
 
   // Auto-vytvoření plateb pro aktuální měsíc pokud chybí
   useEffect(()=>{
-    if(!platby||!sazby||sazby.length===0||platby===null)return;
+    if(platby===null||platby===undefined)return;
     const dnes=new Date();
     const aktMesic=`${dnes.getFullYear()}-${String(dnes.getMonth()+1).padStart(2,"0")}`;
-    const maPlatbaOtec=platby.some(p=>p.mesic===aktMesic&&p.kdo_plati==="otec");
-    const maPlatbaMatka=platby.some(p=>p.mesic===aktMesic&&p.kdo_plati==="matka");
+    const maPlatbaOtec=(platby||[]).some(p=>p.mesic===aktMesic&&p.kdo_plati==="otec");
+    const maPlatbaMatka=(platby||[]).some(p=>p.mesic===aktMesic&&p.kdo_plati==="matka");
     const vytvorit=[];
     if(!maPlatbaOtec)vytvorit.push({mesic:aktMesic,kdo_plati:"otec",komu:"matce",castka:0,datum:null,poznamka:null});
     if(!maPlatbaMatka)vytvorit.push({mesic:aktMesic,kdo_plati:"matka",komu:"otci",castka:0,datum:null,poznamka:null});
@@ -2609,7 +2609,7 @@ function AlimentyTab(){
         if(!error)reloadPlatby();
       });
     }
-  },[JSON.stringify(platby),JSON.stringify(sazby)]);
+  },[JSON.stringify(platby)]);
 
   const nast=Object.fromEntries((nastaveni||[]).map(r=>[r.klic,r.hodnota]));
   const dluhCelkem=parseInt(nast.dluh_celkem||"53250");
