@@ -2605,8 +2605,8 @@ function AlimentyTab(){
     const maPlatbaOtec=platby.some(p=>p.mesic===aktMesic&&p.kdo_plati==="otec");
     const maPlatbaMatka=platby.some(p=>p.mesic===aktMesic&&p.kdo_plati==="matka");
     const vytvorit=[];
-    if(!maPlatbaOtec)vytvorit.push({mesic:aktMesic,typ:"aliment",kdo_plati:"otec",komu:"matce",castka:0,datum:null,poznamka:null});
-    if(!maPlatbaMatka)vytvorit.push({mesic:aktMesic,typ:"aliment",kdo_plati:"matka",komu:"otci",castka:0,datum:null,poznamka:null});
+    if(!maPlatbaOtec)vytvorit.push({mesic:aktMesic,typ:"alimenty",kdo_plati:"otec",komu:"matce",castka:0,datum:null,poznamka:null});
+    if(!maPlatbaMatka)vytvorit.push({mesic:aktMesic,typ:"alimenty",kdo_plati:"matka",komu:"otci",castka:0,datum:null,poznamka:null});
     if(vytvorit.length>0){
       sb.from("alimenty_platby").insert(vytvorit).then(()=>reloadPlatby());
     }
