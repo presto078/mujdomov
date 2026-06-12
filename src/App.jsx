@@ -2861,7 +2861,7 @@ function AlimentyTab(){
           <tbody>
             {alimenty.length===0&&<tr><td colSpan={9} style={{padding:24,textAlign:"center",color:C.dim,fontSize:13}}>Zatím žádné platby</td></tr>}
             {alimenty.map((p,i)=>{
-              const maByt=p.kdo_plati==="otec"&&p.komu==="matce"?getSazbaProMesic(p.mesic||""):p.kdo_plati==="matka"&&p.komu==="otci"?getSazbaMatkaOtec(p.mesic||""):null;
+              const maByt=p.kdo_plati==="otec"&&p.komu==="matce"?getSazbaProMesic(p.mesic||"")-((p.mesic||"")>=SPLATKA_OD?splatkaM:0):p.kdo_plati==="matka"&&p.komu==="otci"?getSazbaMatkaOtec(p.mesic||""):null;
               const rozdil=maByt!=null?p.castka-maByt:null;
               return <tr key={p.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
                 <td style={{padding:"10px 12px",fontWeight:600,fontSize:13,whiteSpace:"nowrap"}}>{p.mesic?new Date(p.mesic+"-01").toLocaleDateString("cs-CZ",{month:"long",year:"numeric"}):""}</td>
