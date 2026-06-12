@@ -3061,7 +3061,8 @@ function AlimentyTab(){
 
     const alimenty=(platby||[]).filter(p=>p.typ==="alimenty");
     const nedoplatekOtec=alimenty.filter(p=>p.kdo_plati==="otec"&&p.komu==="matce").reduce((acc,p)=>{
-      const maByt=getSazbaProMesic(p.mesic||"");
+      // Počítáme jen alimenty bez splátky dluhu
+      const maByt=getSazbaProMesic(p.mesic||"")-( (p.mesic||"")>=SPLATKA_OD ? splatkaM : 0);
       const diff=p.castka-maByt;
       return acc+(diff<0?Math.abs(diff):0);
     },0);
