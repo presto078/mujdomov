@@ -2770,6 +2770,8 @@ function AlimentyTab(){
       reloadSplatky();setSplatkaModal(false);
     };
     const smazSplatku=async(id)=>{if(!confirm("Smazat splátku?"))return;await sb.from("alimenty_splatky_dluhu").delete().eq("id",id);reloadSplatky();};
+
+    const alimenty=(platby||[]).filter(p=>p.typ==="alimenty").sort((a,b)=>{
       const cmp=(a.mesic||"").localeCompare(b.mesic||"");
       return razeni==="asc"?cmp:-cmp;
     });
