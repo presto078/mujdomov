@@ -2594,6 +2594,8 @@ function AlimentyTab(){
   const {data:mimoradne,reload:reloadMim}=useData(()=>sb.from("alimenty_mimoradne").select("*").order("datum",{ascending:true}));
   const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("alimenty_nastaveni").select("*"));
 
+  const {data:slatky_dluhu,reload:reloadSplatky}=useData(()=>sb.from("alimenty_splatky_dluhu").select("*").order("datum",{ascending:false}));
+
   // Auto-vytvoření plateb pro aktuální měsíc pokud chybí
   const autoVytvorRef=useRef(false);
   useEffect(()=>{
@@ -2760,7 +2762,14 @@ function AlimentyTab(){
     const [editFormA,setEditFormA]=useState({});
     const [editFormM,setEditFormM]=useState({});
 
-    const alimenty=(platby||[]).filter(p=>p.typ==="alimenty").sort((a,b)=>{
+    const [splatkaModal,setSplatkaModal]=useState(false);
+    const [splatkaForm,setSplatkaForm]=useState({datum:new Date().toISOString().slice(0,10),castka:"2500",kdo_plati:"otec",poznamka:""});
+
+    const ulozSplatku=async()=>{
+      await sb.from("alimenty_splatky_dluhu").insert({datum:splatkaForm.datum,castka:+splatkaForm.castka,kdo_plati:splatkaForm.kdo_plati,poznamka:splatkaForm.poznamka||null});
+      reloadSplatky();setSplatkaModal(false);
+    };
+    const smazSplatku=async(id)=>{if(!confirm("Smazat splátku?"))return;await sb.from("alimenty_splatky_dluhu").delete().eq("id",id);reloadSplatky();};
       const cmp=(a.mesic||"").localeCompare(b.mesic||"");
       return razeni==="asc"?cmp:-cmp;
     });
@@ -2809,14 +2818,22 @@ function AlimentyTab(){
     const smazMim=async(id)=>{if(!confirm("Smazat tento výdaj?"))return;await sb.from("alimenty_mimoradne").delete().eq("id",id);reloadMim();};
 
     return <div>
-      {/* Dlaždice pro mimořádný výdaj */}
-      <div style={{marginBottom:24}}>
+      {/* Dlaždice pro mimořádný výdaj a splátku dluhu */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24}}>
         <div onClick={()=>{setPf({...pridatForm0,typ:"mimoradne"});setPridatModal(true);}}
           style={{background:"#e8922a",border:"none",borderRadius:16,padding:"20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,transition:"all .2s",boxShadow:"0 4px 14px rgba(232,146,42,.35)"}}>
           <div style={{fontSize:28}}>📋</div>
           <div>
-            <div style={{fontWeight:800,fontSize:15,color:"#fff"}}>+ Přidat mimořádný výdaj</div>
-            <div style={{fontSize:12,color:"rgba(255,255,255,.8)"}}>Školka, lékař, jiné náklady</div>
+            <div style={{fontWeight:800,fontSize:14,color:"#fff"}}>+ Mimořádný výdaj</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.8)"}}>Školka, lékař...</div>
+          </div>
+        </div>
+        <div onClick={()=>setSplatkaModal(true)}
+          style={{background:"#5b8ef0",border:"none",borderRadius:16,padding:"20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,transition:"all .2s",boxShadow:"0 4px 14px rgba(91,142,240,.35)"}}>
+          <div style={{fontSize:28}}>💳</div>
+          <div>
+            <div style={{fontWeight:800,fontSize:14,color:"#fff"}}>+ Splátka dluhu</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.8)"}}>Soudně nařízená splátka</div>
           </div>
         </div>
       </div>
@@ -2854,7 +2871,6 @@ function AlimentyTab(){
                 <td style={{padding:"10px 12px",fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>{p.datum?new Date(p.datum).toLocaleDateString("cs-CZ"):"—"}</td>
                 <td style={{padding:"10px 12px",fontSize:12,color:C.muted}}>{p.poznamka||""}</td>
                 <td style={{padding:"10px 8px",whiteSpace:"nowrap"}}>
-                  {rozdil!=null&&rozdil<0&&<button onClick={()=>{setEditAlim(p);setEditFormA({kdo_plati:p.kdo_plati,komu:p.komu,komu_text:p.komu_text||"",mesic:p.mesic||"",castka:String(maByt||p.castka),datum:new Date().toISOString().slice(0,10),poznamka:p.poznamka||""});}} style={{...btnC(C.green,true),padding:"3px 8px",fontSize:11,marginRight:4}}>💳 Zaplatit</button>}
                   <button onClick={()=>{setEditAlim(p);setEditFormA({kdo_plati:p.kdo_plati,komu:p.komu,komu_text:p.komu_text||"",mesic:p.mesic||"",castka:String(p.castka),datum:p.datum||"",poznamka:p.poznamka||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
                   <button onClick={()=>smazAlim(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
                 </td>
@@ -2974,6 +2990,61 @@ function AlimentyTab(){
           <div style={{display:"flex",gap:10}}>
             <button onClick={ulozEditMim} style={btnC()}>Uložit</button>
             <button onClick={()=>setEditMim(null)} style={btnC(C.muted,true)}>Zrušit</button>
+          </div>
+        </div>
+      </div>}
+
+      {/* Tabulka splátky dluhu */}
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",marginTop:20}}>
+        <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontWeight:800,fontSize:15}}>💳 Splátky dluhu</span>
+          <span style={{fontSize:13,color:C.muted}}>Celkem: {(slatky_dluhu||[]).reduce((a,s)=>a+s.castka,0).toLocaleString("cs")} Kč</span>
+        </div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:400}}>
+            <thead><tr style={{background:C.bg}}>
+              {["Datum","Kdo platí","Částka","Poznámka",""].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {(slatky_dluhu||[]).length===0&&<tr><td colSpan={5} style={{padding:24,textAlign:"center",color:C.dim}}>Zatím žádné splátky</td></tr>}
+              {(slatky_dluhu||[]).map((s,i)=><tr key={s.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
+                <td style={{padding:"10px 12px",fontSize:13}}>{new Date(s.datum).toLocaleDateString("cs-CZ")}</td>
+                <td style={{padding:"10px 12px",fontSize:13}}>{s.kdo_plati==="otec"?ALIM_META.otec:ALIM_META.matka}</td>
+                <td style={{padding:"10px 12px",fontSize:13,fontWeight:700,color:C.accent}}>{s.castka.toLocaleString("cs")} Kč</td>
+                <td style={{padding:"10px 12px",fontSize:12,color:C.muted}}>{s.poznamka||""}</td>
+                <td style={{padding:"10px 8px"}}><button onClick={()=>smazSplatku(s.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button></td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal splátka dluhu */}
+      {splatkaModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+          <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>💳 Splátka dluhu</h3>
+          <div style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Kdo platí</div>
+            <select style={inp} value={splatkaForm.kdo_plati} onChange={e=>setSplatkaForm(p=>({...p,kdo_plati:e.target.value}))}>
+              <option value="otec">{ALIM_META.otec}</option>
+              <option value="matka">{ALIM_META.matka}</option>
+            </select>
+          </div>
+          <div style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Datum</div>
+            <input style={inp} type="date" value={splatkaForm.datum} onChange={e=>setSplatkaForm(p=>({...p,datum:e.target.value}))}/>
+          </div>
+          <div style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Částka (Kč)</div>
+            <input style={inp} type="number" value={splatkaForm.castka} onChange={e=>setSplatkaForm(p=>({...p,castka:e.target.value}))}/>
+          </div>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Poznámka</div>
+            <input style={inp} type="text" placeholder="volitelně..." value={splatkaForm.poznamka} onChange={e=>setSplatkaForm(p=>({...p,poznamka:e.target.value}))}/>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={ulozSplatku} style={btnC()}>Uložit</button>
+            <button onClick={()=>setSplatkaModal(false)} style={btnC(C.muted,true)}>Zrušit</button>
           </div>
         </div>
       </div>}
