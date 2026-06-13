@@ -371,6 +371,7 @@ function ZvireDetail({zvire,onEdit,onClose}){
     <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,marginBottom:20,marginTop:-8}}>
       <button style={tabStyle("info")} onClick={()=>setTab("info")}>📋 Info</button>
       <button style={tabStyle("finance")} onClick={()=>setTab("finance")}>💰 Finance</button>
+      <button style={tabStyle("dokumenty")} onClick={()=>setTab("dokumenty")}>📁 Dokumenty</button>
     </div>
 
     {tab==="info"&&<div>
@@ -391,6 +392,7 @@ function ZvireDetail({zvire,onEdit,onClose}){
     </div>}
 
     {tab==="finance"&&<EntityFinancePanel sloupec="zvire_id" id={zvire.id} lock={{zvire_id:zvire.id}} nadpis={`Finance — ${zvire.jmeno}`}/>}
+    {tab==="dokumenty"&&<EntityDokumentyPanel lockVazba={`zvire:${zvire.id}`} nadpis={`Dokumenty — ${zvire.jmeno}`}/>}
   </Modal>;
 }
 
@@ -521,6 +523,7 @@ function ClenDetail({clen,onEdit,onClose}){
     <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,marginBottom:20,marginTop:-8}}>
       <button style={tabStyle("info")} onClick={()=>setTab("info")}>📋 Info</button>
       <button style={tabStyle("finance")} onClick={()=>setTab("finance")}>💰 Finance</button>
+      <button style={tabStyle("dokumenty")} onClick={()=>setTab("dokumenty")}>📁 Dokumenty</button>
     </div>
 
     {tab==="info"&&<div>
@@ -570,6 +573,7 @@ function ClenDetail({clen,onEdit,onClose}){
     </div>}
 
     {tab==="finance"&&<EntityFinancePanel sloupec="dite_id" id={clen.id} lock={{dite_id:clen.id}} nadpis={`Finance — ${clen.jmeno}`}/>}
+    {tab==="dokumenty"&&<EntityDokumentyPanel lockVazba={`dite:${clen.id}`} nadpis={`Dokumenty — ${clen.jmeno}`}/>}
   </Modal>;
 }
 
@@ -2129,6 +2133,7 @@ function DumTab(){
   const [modal,setModal]=useState(null);
   const [finModal,setFinModal]=useState(null); // oprava → správa všech plateb
   const [platbaModal,setPlatbaModal]=useState(null); // oprava → rychlé zadání jedné platby
+  const [dokModal,setDokModal]=useState(null); // oprava → dokumenty (faktury, revize)
   const cfMap={}; (cfDum||[]).forEach(p=>{if(p.oprava_id==null)return;const k=String(p.oprava_id);const m=cfMap[k]||{count:0,sum:0};m.count++;m.sum+=+p.castka;cfMap[k]=m;});
   // souhrn pro jednu opravu: kolik plateb, kolik reálně utraceno (net), odhad a zbytek
   const cfOpravy=(o)=>{const m=cfMap[String(o.id)];const count=m?m.count:0;const utraceno=m?-m.sum:0;const odhad=o.castka?+o.castka:0;return{count,utraceno,odhad,zbyva:odhad-utraceno};};
@@ -2167,6 +2172,7 @@ function DumTab(){
                 {o.stav!=="hotovo"&&<button onClick={()=>zmenStav(o,"hotovo")} style={{...btnC(C.green),padding:"4px 10px",fontSize:12}}>✓ Hotovo</button>}
                 <button onClick={()=>setPlatbaModal(o)} style={{...btnC(C.red),padding:"4px 10px",fontSize:12}}>💸 Zadat platbu</button>
                 <button onClick={()=>setFinModal(o)} style={{...btnC(C.purple,true),padding:"4px 10px",fontSize:12}}>💰 Finance{cfOpravy(o).count?` (${cfOpravy(o).count})`:""}</button>
+                <button onClick={()=>setDokModal(o)} style={{...btnC(C.blue,true),padding:"4px 10px",fontSize:12}}>📁 Dokumenty</button>
                 <button onClick={()=>setModal(o)} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
                 <button onClick={()=>smaz(o)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
               </div>
@@ -2188,7 +2194,407 @@ function DumTab(){
       onClose={()=>setPlatbaModal(null)}
       onSaved={()=>{setPlatbaModal(null);reloadCf();reload();}}
     />}
+    {dokModal&&<Modal title={`📁 Dokumenty — ${dokModal.nazev}`} onClose={()=>setDokModal(null)} width={560}>
+      <EntityDokumentyPanel lockVazba={`oprava:${dokModal.id}`} nadpis="Faktury, revize, záruky"/>
+    </Modal>}
   </div>;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MODUL: DOKUMENTY (Centrální kartotéka)
+// Vlož tyto bloky do App.jsx mezi ostatní top-level komponenty (pořadí nehraje
+// roli — jde o function declarations, takže jsou hoistované).
+// Závisí na existujících: C, sb, useData, Modal, Field, Tag, Spinner, inp, btnC, useState.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Synology NAS (WebDAV) — úložiště fyzických souborů ────────────────────────
+// Soubory leží na NASu; v Supabase držíme jen relativní cestu v poli `soubor_url`.
+//
+// ⚠️ BEZPEČNOST: Vite zapéká VITE_* proměnné do klientského bundlu. Pokud do
+//    VITE_SYNOLOGY_WEBDAV_USER/PASS dáš reálné přihlašovací údaje, budou čitelné
+//    v JS na frontendu. Pro produkci doporučuji nahrávat přes proxy / Supabase
+//    Edge Function, kde údaje zůstanou na serveru. Níže je přímý WebDAV PUT dle
+//    zadání — počítej i s CORS na straně NASu (povolit PUT z domény aplikace).
+const SYNOLOGY_URL  = import.meta.env.VITE_SYNOLOGY_WEBDAV_URL || "";
+const SYNOLOGY_USER = import.meta.env.VITE_SYNOLOGY_WEBDAV_USER || "";
+const SYNOLOGY_PASS = import.meta.env.VITE_SYNOLOGY_WEBDAV_PASS || "";
+
+// Nahraje soubor přes WebDAV PUT (Basic auth) a vrátí relativní cestu uloženou do DB.
+async function nahrajNaSynology(file){
+  if(!SYNOLOGY_URL) throw new Error("Chybí VITE_SYNOLOGY_WEBDAV_URL v prostředí.");
+  const cisty = file.name.replace(/[^\w.\-]+/g,"_");
+  const rel   = `${new Date().getFullYear()}/${Date.now()}_${cisty}`;     // relativní cesta v rámci WebDAV rootu
+  const base  = SYNOLOGY_URL.replace(/\/+$/,"");
+  const headers = {"Content-Type": file.type || "application/octet-stream"};
+  if(SYNOLOGY_USER) headers["Authorization"] = "Basic " + btoa(`${SYNOLOGY_USER}:${SYNOLOGY_PASS}`);
+  const res = await fetch(`${base}/${rel}`, {method:"PUT", headers, body:file});
+  if(!res.ok) throw new Error(`Nahrání na NAS selhalo (HTTP ${res.status}).`);
+  return rel;                                                              // do DB jde relativní cesta
+}
+// Sestaví plnou URL pro otevření souboru z relativní cesty.
+function synologyHref(soubor_url){
+  if(!soubor_url) return "#";
+  if(/^https?:\/\//i.test(soubor_url)) return soubor_url;
+  return `${SYNOLOGY_URL.replace(/\/+$/,"")}/${soubor_url.replace(/^\/+/,"")}`;
+}
+
+// ── Vazba dokumentu na entity (hybridní ID: deti=uuid, ostatní=bigint) ────────
+const DOK_COLS = ["dite_id","zvire_id","auto_id","oprava_id","projekt_id","sklad_kategorie_id"];
+
+// dokument → hodnota dropdownu "typ:id"
+function dokVazbaZHodnoty(d){
+  if(!d) return "";
+  if(d.dite_id)            return "dite:"+d.dite_id;
+  if(d.zvire_id)           return "zvire:"+d.zvire_id;
+  if(d.auto_id)            return "auto:"+d.auto_id;
+  if(d.oprava_id)          return "oprava:"+d.oprava_id;
+  if(d.projekt_id)         return "projekt:"+d.projekt_id;
+  if(d.sklad_kategorie_id) return "sklad:"+d.sklad_kategorie_id;
+  return "";
+}
+// hodnota dropdownu → sloupce pro Supabase (ostatní null). ID posíláme jako STRING
+// → PostgREST si je přetypuje na uuid i bigint (Number by u dětí dal NaN).
+function dokVazbaNaSloupce(v){
+  const base={dite_id:null,zvire_id:null,auto_id:null,oprava_id:null,projekt_id:null,sklad_kategorie_id:null};
+  if(!v) return base;
+  const i=v.indexOf(":"); const t=v.slice(0,i), id=v.slice(i+1);
+  if(t==="dite")    return {...base,dite_id:id};
+  if(t==="zvire")   return {...base,zvire_id:id};
+  if(t==="auto")    return {...base,auto_id:id};
+  if(t==="oprava")  return {...base,oprava_id:id};
+  if(t==="projekt") return {...base,projekt_id:id};
+  if(t==="sklad")   return {...base,sklad_kategorie_id:id};
+  return base;
+}
+// dokument → {emoji,label,color} pro barevný Tag (nebo null). Porovnání tolerantní.
+function dokVazbaInfo(d,z={}){
+  const {deti,zvirata,auta,opravy,projekty,skladKat}=z;
+  const eq=(a,b)=>String(a)===String(b);
+  if(d.dite_id){const x=(deti||[]).find(e=>eq(e.id,d.dite_id));return{emoji:x?.emoji||"👤",label:x?.jmeno||"Osoba",color:x?.barva||C.blue};}
+  if(d.zvire_id){const x=(zvirata||[]).find(e=>eq(e.id,d.zvire_id));return{emoji:x?.emoji||"🐾",label:x?.jmeno||"Zvíře",color:x?.barva||"#7a5c3a"};}
+  if(d.auto_id){const x=(auta||[]).find(e=>eq(e.id,d.auto_id));return{emoji:"🚗",label:x?.nazev||x?.spz||"Auto",color:C.accent};}
+  if(d.oprava_id){const x=(opravy||[]).find(e=>eq(e.id,d.oprava_id));return{emoji:"🔧",label:x?.nazev||"Oprava",color:C.orange};}
+  if(d.projekt_id){const x=(projekty||[]).find(e=>eq(e.id,d.projekt_id));return{emoji:x?.emoji||"🏗",label:x?.nazev||"Projekt",color:x?.barva||C.purple};}
+  if(d.sklad_kategorie_id){const x=(skladKat||[]).find(e=>eq(e.id,d.sklad_kategorie_id));return{emoji:x?.emoji||"📦",label:x?`Zboží · ${x.nazev}`:"Zboží / majetek",color:C.green};}
+  return null;
+}
+// platnost_do → {dnu, stav, text, color} pro sloupec Platnost (nebo null)
+function platnostInfo(platnost_do){
+  if(!platnost_do) return null;
+  const dnes=new Date(); dnes.setHours(0,0,0,0);
+  const cil =new Date(platnost_do); cil.setHours(0,0,0,0);
+  const dnu =Math.round((cil-dnes)/(1000*60*60*24));
+  if(dnu<0)   return {dnu, stav:"expirovano", text:`⛔ Expirováno`,        color:C.red};
+  if(dnu<=30) return {dnu, stav:"brzy",       text:`⚠ Vyprší za ${dnu} dní`, color:C.orange};
+  return            {dnu, stav:"ok",         text:cil.toLocaleDateString("cs-CZ"), color:C.muted};
+}
+
+// Styl rychlého filtru (chip)
+const dokChip=(active,color=C.accent)=>({
+  padding:"5px 12px",borderRadius:20,border:`1px solid ${active?color:C.border}`,
+  background:active?`${color}1a`:C.surface,color:active?color:C.muted,
+  cursor:"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap"
+});
+
+// Společné načtení všech entit pro vazební dropdown
+function useDokZdroje(){
+  const {data:deti}    =useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
+  const {data:zvirata} =useData(()=>sb.from("zvirata").select("id,jmeno,emoji,barva").order("jmeno"));
+  const {data:auta}    =useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
+  const {data:opravy}  =useData(()=>sb.from("dum_opravy").select("id,nazev").order("nazev"));
+  const {data:projekty}=useData(()=>sb.from("projekty").select("id,nazev,emoji,barva").order("nazev"));
+  const {data:skladKat}=useData(()=>sb.from("sklad_kategorie").select("id,nazev,emoji").order("poradi"));
+  const nacitam=[deti,zvirata,auta,opravy,projekty,skladKat].some(x=>x===null);
+  return {deti,zvirata,auta,opravy,projekty,skladKat,nacitam};
+}
+
+// ── Univerzální modal pro nahrání / úpravu dokumentu ──────────────────────────
+// lockVazba (volitelné): "dite:ID" | "zvire:ID" | "auto:ID" | "oprava:ID" | "projekt:ID" | "sklad:ID"
+function DokumentModal({dokument,lockVazba,onClose,onSaved}){
+  const {data:kategorie}=useData(()=>sb.from("dok_kategorie").select("*").order("nazev"));
+  const z=useDokZdroje();
+  const isNew=!dokument;
+  const [f,setF]=useState({
+    nazev:dokument?.nazev||"",
+    popis:dokument?.popis||"",
+    kategorie_id:dokument?.kategorie_id||"",
+    datum_vystaveni:dokument?.datum_vystaveni||"",
+    platnost_do:dokument?.platnost_do||"",
+    vazba: dokument?dokVazbaZHodnoty(dokument):(lockVazba||""),
+  });
+  const [file,setFile]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const [chyba,setChyba]=useState("");
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const nacitam=kategorie===null||z.nacitam;
+  const lockInfo=lockVazba?dokVazbaInfo(dokVazbaNaSloupce(lockVazba),z):null;
+
+  const uloz=async()=>{
+    if(!f.nazev.trim()){setChyba("Vyplň název dokumentu.");return;}
+    if(isNew&&!file){setChyba("Vyber soubor k nahrání.");return;}
+    setSaving(true);setChyba("");
+    try{
+      let soubor_url=dokument?.soubor_url||null;
+      if(file) soubor_url=await nahrajNaSynology(file);
+      const data={
+        nazev:f.nazev.trim(), popis:f.popis||null,
+        kategorie_id:f.kategorie_id||null,
+        datum_vystaveni:f.datum_vystaveni||null,
+        platnost_do:f.platnost_do||null,
+        soubor_url,
+        ...dokVazbaNaSloupce(f.vazba),
+      };
+      if(isNew) await sb.from("dokumenty").insert(data);
+      else await sb.from("dokumenty").update(data).eq("id",dokument.id);
+      onSaved();
+    }catch(e){ setChyba(e.message||"Nahrání se nezdařilo."); }
+    finally{ setSaving(false); }
+  };
+
+  return <Modal title={isNew?"Nahrát dokument":"Upravit dokument"} onClose={onClose} width={480}>
+    {nacitam?<Spinner/>:<div>
+      <Field label="Název *"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus placeholder="např. Cestovní pas, STK, Záruka pračka"/></Field>
+      <Field label="Popis"><input style={inp} value={f.popis} onChange={set("popis")} placeholder="Volitelné…"/></Field>
+      <Field label="Kategorie">
+        <select style={inp} value={f.kategorie_id} onChange={set("kategorie_id")}>
+          <option value="">— bez kategorie —</option>
+          {(kategorie||[]).map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}
+        </select>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Datum vystavení"><input style={inp} type="date" value={f.datum_vystaveni} onChange={set("datum_vystaveni")}/></Field>
+        <Field label="Platnost do" hint="Pasy, STK, záruky…"><input style={inp} type="date" value={f.platnost_do} onChange={set("platnost_do")}/></Field>
+      </div>
+
+      {/* Vazba na entitu */}
+      {lockInfo ? (
+        <Field label="Komu / čemu patří" hint="Napevno — z detailu entity">
+          <select style={{...inp,background:C.bg,cursor:"not-allowed",color:C.muted}} value={f.vazba} disabled>
+            <option value={f.vazba}>{lockInfo.emoji} {lockInfo.label}</option>
+          </select>
+        </Field>
+      ) : (
+        <Field label="Komu / čemu patří (vazba)" hint="Volitelné">
+          <select style={inp} value={f.vazba} onChange={set("vazba")}>
+            <option value="">— bez vazby —</option>
+            <optgroup label="👤 Rodina">{(z.deti||[]).map(d=><option key={d.id} value={"dite:"+d.id}>{d.emoji||"👤"} {d.jmeno}</option>)}</optgroup>
+            <optgroup label="🐾 Zvířata">{(z.zvirata||[]).map(x=><option key={x.id} value={"zvire:"+x.id}>{x.emoji||"🐾"} {x.jmeno}</option>)}</optgroup>
+            <optgroup label="🚗 Auta">{(z.auta||[]).map(x=><option key={x.id} value={"auto:"+x.id}>🚗 {x.nazev}{x.spz?` · ${x.spz}`:""}</option>)}</optgroup>
+            <optgroup label="🔧 Opravy">{(z.opravy||[]).map(x=><option key={x.id} value={"oprava:"+x.id}>{x.nazev}</option>)}</optgroup>
+            <optgroup label="🏗 Projekty">{(z.projekty||[]).map(x=><option key={x.id} value={"projekt:"+x.id}>{x.emoji||"🏗"} {x.nazev}</option>)}</optgroup>
+            <optgroup label="📦 Sklad / Zboží">{(z.skladKat||[]).map(x=><option key={x.id} value={"sklad:"+x.id}>{x.emoji} {x.nazev}</option>)}</optgroup>
+          </select>
+        </Field>
+      )}
+
+      {/* Soubor */}
+      <Field label={isNew?"Soubor * (PDF / obrázek)":"Nahradit soubor (volitelné)"} hint={dokument?.soubor_url?"Prázdné = ponechat stávající soubor":"Uloží se na Synology NAS"}>
+        <input style={{...inp,padding:"6px 8px"}} type="file" accept="application/pdf,image/*" onChange={e=>setFile(e.target.files&&e.target.files[0]||null)}/>
+      </Field>
+      {dokument?.soubor_url&&<div style={{fontSize:11,color:C.muted,marginTop:-8,marginBottom:12}}>Stávající: <a href={synologyHref(dokument.soubor_url)} target="_blank" rel="noreferrer" style={{color:C.accent}}>{dokument.soubor_url}</a></div>}
+
+      {chyba&&<div style={{background:`${C.red}1a`,color:C.red,borderRadius:8,padding:"8px 12px",fontSize:12,marginBottom:12}}>{chyba}</div>}
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
+        <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+        <button onClick={uloz} disabled={saving} style={btnC()}>{saving?"Nahrávám…":(isNew?"Nahrát":"Uložit")}</button>
+      </div>
+    </div>}
+  </Modal>;
+}
+
+// ── Obousměrný panel pro detail entity ────────────────────────────────────────
+// Použití: <EntityDokumentyPanel lockVazba={`dite:${clen.id}`} nadpis="Dokumenty — Honzík"/>
+function EntityDokumentyPanel({lockVazba,nadpis}){
+  const sl=dokVazbaNaSloupce(lockVazba);
+  const sloupec=DOK_COLS.find(c=>sl[c]!=null);
+  const hodnota=sloupec?sl[sloupec]:null;
+  const {data:dokumenty,loading,reload}=useData(
+    ()=> sloupec
+      ? sb.from("dokumenty").select("*").eq(sloupec,hodnota).order("datum_vystaveni",{ascending:false})
+      : sb.from("dokumenty").select("*").limit(0),
+    [lockVazba]);
+  const {data:kategorie}=useData(()=>sb.from("dok_kategorie").select("id,nazev,emoji,barva").order("nazev"));
+  const [modal,setModal]=useState(null); // null | "new" | dokument
+  const smaz=async(d)=>{if(!confirm(`Smazat dokument "${d.nazev}"?`))return;await sb.from("dokumenty").delete().eq("id",d.id);reload();};
+
+  if(loading) return <Spinner/>;
+  const docs=dokumenty||[];
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+      <div style={{fontSize:12,fontWeight:700,color:C.muted}}>{nadpis||"Dokumenty"} ({docs.length})</div>
+      <button onClick={()=>setModal("new")} style={{...btnC(),padding:"6px 12px",fontSize:12}}>+ Nahrát dokument</button>
+    </div>
+
+    {docs.length===0
+      ? <div style={{padding:"24px 0",textAlign:"center",color:C.dim,fontSize:13}}>Zatím žádné dokumenty</div>
+      : <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+        {docs.map((d,i)=>{
+          const kat=(kategorie||[]).find(k=>String(k.id)===String(d.kategorie_id));
+          const pl=platnostInfo(d.platnost_do);
+          return <div key={d.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:i<docs.length-1?`1px solid ${C.border}`:"none"}}>
+            <span style={{fontSize:17}}>{kat?.emoji||"📄"}</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{d.nazev}</div>
+              <div style={{fontSize:11,color:C.muted}}>{kat?kat.nazev:"Bez kategorie"}{d.datum_vystaveni?` · ${new Date(d.datum_vystaveni).toLocaleDateString("cs-CZ")}`:""}</div>
+            </div>
+            {pl&&<span style={{fontSize:11,fontWeight:700,color:pl.color,whiteSpace:"nowrap"}}>{pl.stav==="ok"?`do ${pl.text}`:pl.text}</span>}
+            {d.soubor_url&&<button onClick={()=>window.open(synologyHref(d.soubor_url),"_blank","noopener")} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11}}>👁</button>}
+            <button onClick={()=>setModal(d)} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11}}>✏</button>
+            <button onClick={()=>smaz(d)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
+          </div>;
+        })}
+      </div>}
+
+    {modal&&<DokumentModal
+      dokument={modal==="new"?null:modal}
+      lockVazba={lockVazba}
+      onClose={()=>setModal(null)}
+      onSaved={()=>{setModal(null);reload();}}
+    />}
+  </div>;
+}
+
+// ── Hlavní dlaždice ───────────────────────────────────────────────────────────
+function DokumentyTab(){
+  const [zalozka,setZalozka]=useState("kartoteka");
+  const tabs=[{id:"kartoteka",l:"📁 Kartotéka"},{id:"nastaveni",l:"⚙️ Nastavení kategorií"}];
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <h2 style={{margin:0,fontSize:22,fontWeight:800}}>📁 Dokumenty</h2>
+    </div>
+    <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`}}>
+      {tabs.map(t=><button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
+    </div>
+    {zalozka==="kartoteka"&&<DokumentyKartoteka/>}
+    {zalozka==="nastaveni"&&<DokKategorieNastaveni/>}
+  </div>;
+}
+
+// ── Kartotéka (hledání + filtry + tabulka) ────────────────────────────────────
+function DokumentyKartoteka(){
+  const {data:dokumenty,loading,reload}=useData(()=>sb.from("dokumenty").select("*").order("datum_vystaveni",{ascending:false}));
+  const {data:kategorie}=useData(()=>sb.from("dok_kategorie").select("*").order("nazev"));
+  const z=useDokZdroje();
+  const [hledat,setHledat]=useState("");
+  const [filtrKat,setFiltrKat]=useState(null);
+  const [modal,setModal]=useState(null); // null | "new" | dokument
+  const smaz=async(d)=>{if(!confirm(`Smazat dokument "${d.nazev}"?`))return;await sb.from("dokumenty").delete().eq("id",d.id);reload();};
+
+  if(loading||z.nacitam) return <Spinner/>;
+  const docs=(dokumenty||[]).filter(d=>
+    (!hledat || (d.nazev||"").toLowerCase().includes(hledat.toLowerCase())) &&
+    (filtrKat==null || String(d.kategorie_id)===String(filtrKat))
+  );
+
+  return <div>
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
+      <input style={{...inp,maxWidth:300}} value={hledat} onChange={e=>setHledat(e.target.value)} placeholder="🔎 Hledat podle názvu…"/>
+      <div style={{flex:1}}/>
+      <button onClick={()=>setModal("new")} style={btnC()}>+ Nahrát dokument</button>
+    </div>
+
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
+      <button onClick={()=>setFiltrKat(null)} style={dokChip(filtrKat==null)}>Vše</button>
+      {(kategorie||[]).map(k=><button key={k.id} onClick={()=>setFiltrKat(k.id)} style={dokChip(String(filtrKat)===String(k.id),k.barva)}>{k.emoji} {k.nazev}</button>)}
+    </div>
+
+    {docs.length===0
+      ? <div style={{padding:"36px 0",textAlign:"center",color:C.dim,fontSize:14}}>Žádné dokumenty neodpovídají filtru</div>
+      : <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <thead>
+            <tr style={{background:C.bg,textAlign:"left"}}>
+              {["Název","Vystaveno","Kategorie","Vazba","Platnost",""].map((h,i)=>
+                <th key={i} style={{padding:"10px 14px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,whiteSpace:"nowrap"}}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {docs.map(d=>{
+              const kat=(kategorie||[]).find(k=>String(k.id)===String(d.kategorie_id));
+              const vi=dokVazbaInfo(d,z);
+              const pl=platnostInfo(d.platnost_do);
+              return <tr key={d.id} style={{borderTop:`1px solid ${C.border}`}}>
+                <td style={{padding:"10px 14px",fontWeight:600,color:C.text}}>{d.nazev}{d.popis&&<div style={{fontSize:11,color:C.muted,fontWeight:400}}>{d.popis}</div>}</td>
+                <td style={{padding:"10px 14px",color:C.muted,whiteSpace:"nowrap"}}>{d.datum_vystaveni?new Date(d.datum_vystaveni).toLocaleDateString("cs-CZ"):"—"}</td>
+                <td style={{padding:"10px 14px",whiteSpace:"nowrap"}}>{kat?<span>{kat.emoji} {kat.nazev}</span>:<span style={{color:C.dim}}>—</span>}</td>
+                <td style={{padding:"10px 14px"}}>{vi?<Tag color={vi.color}>{vi.emoji} {vi.label}</Tag>:<span style={{color:C.dim}}>—</span>}</td>
+                <td style={{padding:"10px 14px",whiteSpace:"nowrap"}}>{pl?<span style={{color:pl.color,fontWeight:700,fontSize:12}}>{pl.stav==="ok"?`do ${pl.text}`:pl.text}</span>:<span style={{color:C.dim}}>—</span>}</td>
+                <td style={{padding:"10px 14px",whiteSpace:"nowrap",textAlign:"right"}}>
+                  {d.soubor_url&&<button onClick={()=>window.open(synologyHref(d.soubor_url),"_blank","noopener")} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>👁 Otevřít</button>}
+                  <button onClick={()=>setModal(d)} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
+                  <button onClick={()=>smaz(d)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
+                </td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>}
+
+    {modal&&<DokumentModal
+      dokument={modal==="new"?null:modal}
+      onClose={()=>setModal(null)}
+      onSaved={()=>{setModal(null);reload();}}
+    />}
+  </div>;
+}
+
+// ── Nastavení kategorií (CRUD) ────────────────────────────────────────────────
+function DokKategorieNastaveni(){
+  const {data:kategorie,loading,reload}=useData(()=>sb.from("dok_kategorie").select("*").order("nazev"));
+  const [modal,setModal]=useState(null); // null | "new" | kategorie
+  const smaz=async(k)=>{if(!confirm(`Smazat kategorii "${k.nazev}"? Dokumenty zůstanou, jen ztratí kategorii.`))return;await sb.from("dok_kategorie").delete().eq("id",k.id);reload();};
+  if(loading) return <Spinner/>;
+  const kats=kategorie||[];
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+      <div style={{fontSize:12,fontWeight:700,color:C.muted}}>Kategorie dokumentů ({kats.length})</div>
+      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat kategorii</button>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10}}>
+      {kats.map(k=>
+        <div key={k.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",borderLeft:`4px solid ${k.barva||C.accent}`,display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:22}}>{k.emoji||"📄"}</span>
+          <div style={{flex:1,fontWeight:700,fontSize:14,minWidth:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{k.nazev}</div>
+          <button onClick={()=>setModal(k)} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11}}>✏</button>
+          <button onClick={()=>smaz(k)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
+        </div>)}
+    </div>
+    {kats.length===0&&<div style={{padding:"24px 0",textAlign:"center",color:C.dim,fontSize:13}}>Zatím žádné kategorie</div>}
+    {modal&&<DokKategorieModal kategorie={modal==="new"?null:modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+  </div>;
+}
+
+const DOK_EMOJI=["📄","🪪","🛂","🎓","🏥","🚗","🏠","🔧","🧾","📜","💼","🐾","🏗","📦","⚡","💧","🔥","📋"];
+function DokKategorieModal({kategorie,onClose,onSaved}){
+  const isNew=!kategorie;
+  const [f,setF]=useState({nazev:kategorie?.nazev||"",emoji:kategorie?.emoji||"📄",barva:kategorie?.barva||C.accent});
+  const [saving,setSaving]=useState(false);
+  const uloz=async()=>{
+    if(!f.nazev.trim())return;
+    setSaving(true);
+    const data={nazev:f.nazev.trim(),emoji:f.emoji,barva:f.barva};
+    if(isNew) await sb.from("dok_kategorie").insert(data);
+    else await sb.from("dok_kategorie").update(data).eq("id",kategorie.id);
+    setSaving(false);onSaved();
+  };
+  return <Modal title={isNew?"Nová kategorie":"Upravit kategorii"} onClose={onClose} width={400}>
+    <Field label="Název *"><input style={inp} value={f.nazev} onChange={e=>setF(p=>({...p,nazev:e.target.value}))} autoFocus placeholder="např. Doklady, Záruky, Smlouvy"/></Field>
+    <Field label="Emoji">
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {DOK_EMOJI.map(em=><button key={em} onClick={()=>setF(p=>({...p,emoji:em}))} style={{fontSize:20,padding:"4px 8px",borderRadius:8,cursor:"pointer",border:`2px solid ${f.emoji===em?C.accent:C.border}`,background:f.emoji===em?`${C.accent}1a`:C.surface}}>{em}</button>)}
+      </div>
+    </Field>
+    <Field label="Barva">
+      <input type="color" value={f.barva} onChange={e=>setF(p=>({...p,barva:e.target.value}))} style={{width:60,height:36,border:`1px solid ${C.border}`,borderRadius:8,background:C.surface,cursor:"pointer"}}/>
+    </Field>
+    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
+      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+      <button onClick={uloz} disabled={saving||!f.nazev.trim()} style={btnC()}>{saving?"Ukládám…":"Uložit"}</button>
+    </div>
+  </Modal>;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2605,6 +3011,7 @@ function ProjektDetail({projekt,onBack}){
     {id:"obed",l:"🍽 Oběd"},
     {id:"zakusky",l:"🍰 Zákusky"},
     {id:"todo",l:"✅ ToDo"},
+    {id:"dokumenty",l:"📁 Dokumenty"},
   ];
 
   return <div>
@@ -2646,6 +3053,7 @@ function ProjektDetail({projekt,onBack}){
     {zalozka==="obed"&&<ObedTab projektId={p.id}/>}
     {zalozka==="zakusky"&&<ZakuskyTab projektId={p.id}/>}
     {zalozka==="todo"&&<TodoTab projektId={p.id}/>}
+    {zalozka==="dokumenty"&&<EntityDokumentyPanel lockVazba={`projekt:${p.id}`} nadpis={`Dokumenty — ${p.nazev}`}/>}
   </div>;
 }
 
@@ -4714,7 +5122,7 @@ function AutoDetail({auto,onBack,reloadAuta}){
   const {data:kilometry,reload:reloadKm}=useData(()=>sb.from("auta_kilometry").select("*").eq("auto_id",auto.id).order("datum",{ascending:false}));
   const {data:naklady,reload:reloadNaklady}=useData(()=>sb.from("auta_naklady").select("*").eq("auto_id",auto.id).order("datum",{ascending:false}));
 
-  const tabs=[{id:"prehled",l:"📊 Přehled"},{id:"servis",l:"🔧 Servisní kniha"},{id:"km",l:"📍 Kilometry"},{id:"naklady",l:"💰 Náklady"},{id:"finance",l:"💸 Cashflow plán"},{id:"nastaveni",l:"⚙️ Nastavení"}];
+  const tabs=[{id:"prehled",l:"📊 Přehled"},{id:"servis",l:"🔧 Servisní kniha"},{id:"km",l:"📍 Kilometry"},{id:"naklady",l:"💰 Náklady"},{id:"finance",l:"💸 Cashflow plán"},{id:"dokumenty",l:"📁 Dokumenty"},{id:"nastaveni",l:"⚙️ Nastavení"}];
 
   const celkemNaklady=(naklady||[]).reduce((a,n)=>a+(+n.castka),0);
   const celkemServis=(servisy||[]).reduce((a,s)=>a+(+s.cena||0),0);
@@ -4736,6 +5144,7 @@ function AutoDetail({auto,onBack,reloadAuta}){
     {zalozka==="km"&&<AutoKilometry autoId={auto.id} kilometry={kilometry||[]} reload={reloadKm}/>}
     {zalozka==="naklady"&&<AutoNaklady autoId={auto.id} naklady={naklady||[]} reload={reloadNaklady}/>}
     {zalozka==="finance"&&<EntityFinancePanel sloupec="auto_id" id={auto.id} lock={{auto_id:auto.id}} nadpis={`Finance — ${auto.nazev}`} novaDefault={{nazev:auto.nazev+" — ",castka:""}}/>}
+    {zalozka==="dokumenty"&&<EntityDokumentyPanel lockVazba={`auto:${auto.id}`} nadpis={`Dokumenty — ${auto.nazev}`}/>}
     {zalozka==="nastaveni"&&<AutoNastaveni auto={auto} reload={reloadAuta} onBack={onBack}/>}
   </div>;
 }
@@ -5048,6 +5457,7 @@ const TILES=[
   {id:"alimenty", emoji:"⚖️",  label:"Alimenty",  popis:"Šíma — Sylvestr & John", barva:"#c0392b"},
   {id:"kalendar", emoji:"📅",  label:"Kalendář",  popis:"Google Calendar",         barva:"#1a7a4a"},
   {id:"zvirata",  emoji:"🐾",  label:"Zvířata",   popis:"Profily a péče",           barva:"#7a5c3a"},
+  {id:"dokumenty",emoji:"📁",  label:"Dokumenty", popis:"Centrální kartotéka",      barva:"#5a6acf"},
 ];
 
 // ── TÝDENNÍ WIDGET NA HOMEPAGE ───────────────────────────────────────────────
@@ -5303,6 +5713,7 @@ export default function App() {
         {modul==="alimenty" && <AlimentyTab/>}
         {modul==="kalendar" && <KalendarTab/>}
         {modul==="zvirata"  && <ZvirataTab/>}
+        {modul==="dokumenty"&& <DokumentyTab/>}
       </div>
     </div>;
   }
