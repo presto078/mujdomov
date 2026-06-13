@@ -37,7 +37,7 @@ const C = {
 };
 
 const MODULES = [
-  { id:"deti",     label:"Děti",     emoji:"👶" },
+  { id:"deti",     label:"Rodina",   emoji:"👨‍👩‍👧‍👦" },
   { id:"obleceni", label:"Oblečení", emoji:"👕" },
   { id:"boty",     label:"Boty",     emoji:"👟" },
   { id:"sklad",    label:"Sklad",    emoji:"📦" },
@@ -94,60 +94,197 @@ function EmptyState({emoji,text,action,onAction}){return <div style={{textAlign:
 function StatCard({label,val,color=C.accent}){return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 16px",textAlign:"center"}}><div style={{fontSize:22,fontWeight:800,color}}>{val}</div><div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginTop:2}}>{label}</div></div>;}
 
 // ══════════════════════════════════════════════════════════════════════════════
-// DĚTI
+// RODINA
 // ══════════════════════════════════════════════════════════════════════════════
-function DiteModal({dite,onClose,onSaved}){
-  const isNew=!dite;
-  const [f,setF]=useState({jmeno:dite?.jmeno||"",narozen:dite?.narozen||"",pohlavi:dite?.pohlavi||"chlapec",skola:dite?.skola||"",trida:dite?.trida||"",poznamka:dite?.poznamka||"",barva:dite?.barva||DITE_BARVY[0],emoji:dite?.emoji||DITE_EMOJIS[0]});
+function ClenModal({clen,onClose,onSaved}){
+  const isNew=!clen;
+  const [f,setF]=useState({
+    jmeno:clen?.jmeno||"",
+    typ:clen?.typ||"dite",
+    narozen:clen?.narozen||"",
+    pohlavi:clen?.pohlavi||"chlapec",
+    rc:clen?.rc||"",
+    email:clen?.email||"",
+    telefon:clen?.telefon||"",
+    skola:clen?.skola||"",
+    trida:clen?.trida||"",
+    krouzky:clen?.krouzky||"",
+    poznamka:clen?.poznamka||"",
+    barva:clen?.barva||DITE_BARVY[0],
+    emoji:clen?.emoji||DITE_EMOJIS[0],
+  });
   const [saving,setSaving]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  const uloz=async()=>{if(!f.jmeno.trim())return;setSaving(true);if(isNew)await sb.from("deti").insert(f);else await sb.from("deti").update(f).eq("id",dite.id);setSaving(false);onSaved();};
-  return <Modal title={isNew?"Přidat dítě":"Upravit dítě"} onClose={onClose}>
+  const uloz=async()=>{
+    if(!f.jmeno.trim())return;
+    setSaving(true);
+    if(isNew)await sb.from("deti").insert(f);
+    else await sb.from("deti").update(f).eq("id",clen.id);
+    setSaving(false);onSaved();
+  };
+  return <Modal title={isNew?"Přidat člena rodiny":"Upravit člena rodiny"} onClose={onClose} width={500}>
+    <Field label="Typ osoby">
+      <div style={{display:"flex",gap:8}}>
+        {[{v:"dite",l:"👶 Dítě"},{v:"dospely",l:"🧑 Dospělý"}].map(o=>(
+          <button key={o.v} onClick={()=>setF(p=>({...p,typ:o.v}))}
+            style={{...btnC(C.accent,f.typ!==o.v),flex:1,fontSize:13}}>{o.l}</button>
+        ))}
+      </div>
+    </Field>
     <Field label="Jméno"><input style={inp} value={f.jmeno} onChange={set("jmeno")} autoFocus onKeyDown={e=>e.key==="Enter"&&uloz()}/></Field>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
       <Field label="Datum narození"><input style={inp} type="date" value={f.narozen} onChange={set("narozen")}/></Field>
-      <Field label="Pohlaví"><select style={inp} value={f.pohlavi} onChange={set("pohlavi")}><option value="chlapec">Chlapec</option><option value="divka">Dívka</option></select></Field>
+      <Field label="Pohlaví"><select style={inp} value={f.pohlavi} onChange={set("pohlavi")}><option value="chlapec">Chlapec / Muž</option><option value="divka">Dívka / Žena</option></select></Field>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Škola / školka"><input style={inp} value={f.skola} onChange={set("skola")} placeholder="ZŠ Hostice"/></Field>
+      <Field label="Rodné číslo"><input style={inp} value={f.rc} onChange={set("rc")} placeholder="000101/0000"/></Field>
+      <Field label="Telefon"><input style={inp} value={f.telefon} onChange={set("telefon")} placeholder="+420 …"/></Field>
+    </div>
+    <Field label="E-mail"><input style={inp} type="email" value={f.email} onChange={set("email")} placeholder="jmeno@email.cz"/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Škola / školka"><input style={inp} value={f.skola} onChange={set("skola")} placeholder="ZŠ Hoštice"/></Field>
       <Field label="Třída / skupina"><input style={inp} value={f.trida} onChange={set("trida")} placeholder="3.B"/></Field>
     </div>
+    <Field label="Kroužky" hint="Odděl čárkou: fotbal, klavír, angličtina"><input style={inp} value={f.krouzky} onChange={set("krouzky")} placeholder="Fotbal, klavír…"/></Field>
     <Field label="Emoji"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{DITE_EMOJIS.map(e=><span key={e} onClick={()=>setF(p=>({...p,emoji:e}))} style={{fontSize:24,cursor:"pointer",padding:4,borderRadius:8,background:f.emoji===e?C.accentS:"transparent"}}>{e}</span>)}</div></Field>
     <Field label="Barva"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{DITE_BARVY.map(b=><div key={b} onClick={()=>setF(p=>({...p,barva:b}))} style={{width:26,height:26,borderRadius:"50%",background:b,cursor:"pointer",border:f.barva===b?"3px solid #1a1d2e":"3px solid transparent"}}/>)}</div></Field>
     <Field label="Poznámka"><textarea style={{...inp,resize:"vertical",minHeight:60}} value={f.poznamka} onChange={set("poznamka")}/></Field>
-    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}><button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button><button onClick={uloz} disabled={saving} style={btnC()}>{saving?"Ukládám…":"Uložit"}</button></div>
+    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
+      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+      <button onClick={uloz} disabled={saving} style={btnC()}>{saving?"Ukládám…":"Uložit"}</button>
+    </div>
+  </Modal>;
+}
+
+function ClenDetail({clen,onEdit,onClose}){
+  const [tab,setTab]=useState("info");
+  const tabStyle=(t)=>({
+    padding:"8px 20px",fontWeight:700,fontSize:13,cursor:"pointer",border:"none",background:"none",
+    borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,
+    color:tab===t?C.accent:C.muted,transition:"all .15s",
+  });
+  const krouzky=(clen.krouzky||"").split(",").map(k=>k.trim()).filter(Boolean);
+  return <Modal title={`${clen.emoji||"👤"} ${clen.jmeno}`} onClose={onClose} width={520}>
+    {/* Tabs */}
+    <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,marginBottom:20,marginTop:-8}}>
+      <button style={tabStyle("info")} onClick={()=>setTab("info")}>📋 Info</button>
+      <button style={tabStyle("finance")} onClick={()=>setTab("finance")}>💰 Finance</button>
+    </div>
+
+    {tab==="info"&&<div>
+      {/* Hlavička */}
+      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20,padding:16,background:C.bg,borderRadius:12}}>
+        <div style={{width:56,height:56,borderRadius:14,background:`${clen.barva||C.accent}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30}}>{clen.emoji||"👤"}</div>
+        <div>
+          <div style={{fontWeight:800,fontSize:18,color:C.text}}>{clen.jmeno}</div>
+          <div style={{color:C.muted,fontSize:13,marginTop:2}}>
+            {vekText(clen.narozen)}{clen.narozen&&` · nar. ${new Date(clen.narozen).toLocaleDateString("cs-CZ")}`}
+          </div>
+          <Tag color={clen.typ==="dite"?C.blue:C.purple}>{clen.typ==="dite"?"Dítě":"Dospělý"}</Tag>
+        </div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        {clen.rc&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px"}}>
+          <div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:4}}>Rodné číslo</div>
+          <div style={{color:C.text,fontWeight:700,fontSize:14}}>{clen.rc}</div>
+        </div>}
+        {clen.telefon&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px"}}>
+          <div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:4}}>Telefon</div>
+          <div style={{color:C.text,fontWeight:700,fontSize:14}}>{clen.telefon}</div>
+        </div>}
+        {clen.email&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",gridColumn:"1/-1"}}>
+          <div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:4}}>E-mail</div>
+          <div style={{color:C.accent,fontWeight:600,fontSize:14}}>{clen.email}</div>
+        </div>}
+        {(clen.skola||clen.trida)&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",gridColumn:"1/-1"}}>
+          <div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:4}}>Škola</div>
+          <div style={{color:C.text,fontWeight:700,fontSize:14}}>📚 {[clen.skola,clen.trida].filter(Boolean).join(" · ")}</div>
+        </div>}
+      </div>
+
+      {krouzky.length>0&&<div style={{marginTop:12}}>
+        <div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:8}}>Kroužky</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          {krouzky.map((k,i)=><Tag key={i} color={C.green}>{k}</Tag>)}
+        </div>
+      </div>}
+
+      {clen.poznamka&&<div style={{marginTop:12,color:C.dim,fontSize:13,fontStyle:"italic",padding:"10px 14px",background:C.bg,borderRadius:10}}>{clen.poznamka}</div>}
+
+      <div style={{display:"flex",justifyContent:"flex-end",marginTop:20}}>
+        <button onClick={onEdit} style={btnC()}>✎ Upravit</button>
+      </div>
+    </div>}
+
+    {tab==="finance"&&<div>
+      <div style={{textAlign:"center",padding:"40px 0",color:C.dim}}>
+        <div style={{fontSize:40,marginBottom:12}}>💰</div>
+        <div style={{fontSize:14}}>Finance pro {clen.jmeno}</div>
+        <div style={{fontSize:12,marginTop:8,color:C.dim}}>Tato sekce bude brzy k dispozici</div>
+      </div>
+    </div>}
   </Modal>;
 }
 
 function DetiTab(){
-  const {data:deti,loading,reload}=useData(()=>sb.from("deti").select("*").order("narozen"));
-  const [modal,setModal]=useState(null);
+  const {data:deti,loading,reload}=useData(()=>sb.from("deti").select("*").order("jmeno"));
+  const [modal,setModal]=useState(null);   // null | "new" | clen objekt (edit) | {detail: clen}
   const smaz=async(d)=>{if(!confirm(`Smazat ${d.jmeno}?`))return;await sb.from("deti").delete().eq("id",d.id);reload();};
   if(loading)return <Spinner/>;
-  return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-      <div style={{color:C.text,fontWeight:800,fontSize:17}}>👶 Děti <span style={{color:C.muted,fontWeight:400,fontSize:14}}>({(deti||[]).length})</span></div>
-      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat dítě</button>
-    </div>
-    {(deti||[]).length===0&&<EmptyState emoji="👶" text="Zatím žádné děti" action="Přidat první dítě" onAction={()=>setModal("new")}/>}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14}}>
-      {(deti||[]).map(d=>(
-        <div key={d.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:18,borderLeft:`4px solid ${d.barva||C.accent}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-            <div style={{width:44,height:44,borderRadius:11,background:`${d.barva||C.accent}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{d.emoji||"👦"}</div>
-            <div><div style={{color:C.text,fontWeight:800,fontSize:16}}>{d.jmeno}</div><div style={{color:C.muted,fontSize:12}}>{vekText(d.narozen)}{d.narozen&&` · nar. ${new Date(d.narozen).toLocaleDateString("cs-CZ")}`}</div></div>
-          </div>
-          {(d.skola||d.trida)&&<div style={{color:C.muted,fontSize:12,marginBottom:6}}>📚 {[d.skola,d.trida].filter(Boolean).join(" · ")}</div>}
-          {d.poznamka&&<div style={{color:C.dim,fontSize:12,marginBottom:10,fontStyle:"italic"}}>{d.poznamka}</div>}
-          <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setModal(d)} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
-            <button onClick={()=>smaz(d)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
-          </div>
+
+  const dospeli=(deti||[]).filter(d=>d.typ==="dospely");
+  const deti2=(deti||[]).filter(d=>d.typ!=="dospely");
+
+  const ClenKarta=({d})=>(
+    <div key={d.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:18,borderLeft:`4px solid ${d.barva||C.accent}`,cursor:"pointer"}}
+      onClick={()=>setModal({detail:d})}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+        <div style={{width:44,height:44,borderRadius:11,background:`${d.barva||C.accent}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{d.emoji||"👤"}</div>
+        <div>
+          <div style={{color:C.text,fontWeight:800,fontSize:16}}>{d.jmeno}</div>
+          <div style={{color:C.muted,fontSize:12}}>{vekText(d.narozen)}{d.narozen&&` · nar. ${new Date(d.narozen).toLocaleDateString("cs-CZ")}`}</div>
         </div>
-      ))}
+      </div>
+      {(d.skola||d.trida)&&<div style={{color:C.muted,fontSize:12,marginBottom:6}}>📚 {[d.skola,d.trida].filter(Boolean).join(" · ")}</div>}
+      {d.krouzky&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
+        {d.krouzky.split(",").map(k=>k.trim()).filter(Boolean).map((k,i)=><Tag key={i} color={C.green}>{k}</Tag>)}
+      </div>}
+      {d.email&&<div style={{color:C.muted,fontSize:12,marginBottom:6}}>✉ {d.email}</div>}
+      {d.telefon&&<div style={{color:C.muted,fontSize:12,marginBottom:6}}>📞 {d.telefon}</div>}
+      {d.poznamka&&<div style={{color:C.dim,fontSize:12,marginBottom:10,fontStyle:"italic"}}>{d.poznamka}</div>}
+      <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
+        <button onClick={()=>setModal(d)} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
+        <button onClick={()=>smaz(d)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
+      </div>
     </div>
-    {modal==="new"&&<DiteModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
-    {modal&&modal!=="new"&&<DiteModal dite={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+  );
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+      <div style={{color:C.text,fontWeight:800,fontSize:17}}>👨‍👩‍👧‍👦 Rodina <span style={{color:C.muted,fontWeight:400,fontSize:14}}>({(deti||[]).length})</span></div>
+      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat člena</button>
+    </div>
+
+    {(deti||[]).length===0&&<EmptyState emoji="👨‍👩‍👧‍👦" text="Zatím žádní členové rodiny" action="Přidat prvního člena" onAction={()=>setModal("new")}/>}
+
+    {dospeli.length>0&&<>
+      <div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:12}}>Dospělí</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14,marginBottom:24}}>
+        {dospeli.map(d=><ClenKarta key={d.id} d={d}/>)}
+      </div>
+    </>}
+
+    {deti2.length>0&&<>
+      <div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:12}}>Děti</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14}}>
+        {deti2.map(d=><ClenKarta key={d.id} d={d}/>)}
+      </div>
+    </>}
+
+    {modal==="new"&&<ClenModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+    {modal&&modal!=="new"&&!modal.detail&&<ClenModal clen={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+    {modal?.detail&&<ClenDetail clen={modal.detail} onEdit={()=>setModal(modal.detail)} onClose={()=>setModal(null)}/>}
   </div>;
 }
 
@@ -4546,7 +4683,7 @@ function AutoNastaveni({auto,reload,onBack}){
 }
 
 const TILES=[
-  {id:"deti",     emoji:"👶", label:"Děti",      popis:"Profily a info",         barva:"#4f7ef0"},
+  {id:"deti",     emoji:"👨‍👩‍👧‍👦", label:"Rodina",    popis:"Profily a info",         barva:"#4f7ef0"},
   {id:"obleceni", emoji:"👕", label:"Oblečení",  popis:"Sklady a velikosti",     barva:"#3b6fd4"},
   {id:"boty",     emoji:"👟", label:"Boty",      popis:"Páry a umístění",        barva:"#6b3fa0"},
   {id:"sklad",    emoji:"📦", label:"Sklad",     popis:"Zásoby doma",            barva:"#c87000"},
