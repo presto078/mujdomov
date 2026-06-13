@@ -65,7 +65,7 @@ const PRIORITA = {
   high:{label:"Vysoká",color:C.red},
 };
 const QUICK_ITEMS = ["Triko krátké","Triko dlouhé","Mikina","Teplaky","Kalhoty / džíny","Kraťasy","Pyžamo","Bunda","Body","Overal","Vestičky","Svetr","Kombinéza","Košile","Nátělník","Punčocháče","Ponožky"];
-const DITE_EMOJIS = ["👦","👧","🧒","👶","🧑","👱","🧒‍♀️","👧‍🦱"];
+const DITE_EMOJIS = ["👶","🧒","👦","👧","🧑","👱","👨","👩","🧔","👴","👵","🧓","👨‍🦱","👩‍🦱","👨‍🦰","👩‍🦰","👨‍🦳","👩‍🦳","👨‍🦲","👩‍🦲","🧕","👲","🧑‍🎓","👨‍🎓","👩‍🎓","🧑‍💼","👨‍💼","👩‍💼","🧑‍🍳","👨‍🍳","👩‍🍳","🧑‍🔧","👨‍🔧","👩‍🔧","🧑‍🎨","🦸","🦹","🧙","🧝","🧟","🧜","🧚","🤴","👸","🤶","🎅","🥷","🫅","🫶"];
 const DITE_BARVY  = ["#4f7ef0","#e05555","#2ecc8a","#e8a030","#9b7ef5","#38b2e8","#f5a623","#2ed8c8"];
 
 const inp  = {background:C.surface,border:`1px solid ${C.borderL}`,borderRadius:8,padding:"8px 12px",color:C.text,fontSize:13,outline:"none",width:"100%"};
@@ -97,7 +97,7 @@ function StatCard({label,val,color=C.accent}){return <div style={{background:C.s
 // ZVÍŘATA
 // ══════════════════════════════════════════════════════════════════════════════
 const ZVIRE_TYPY=["Pes","Kočka","Králík","Morče","Křeček","Papoušek","Ryby","Had","Želva","Jiné"];
-const ZVIRE_EMOJIS=["🐶","🐱","🐰","🐹","🦜","🐠","🐍","🐢","🐾","🦮"];
+const ZVIRE_EMOJIS=["🐶","🐱","🐰","🐹","🐭","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐙","🦊","🐺","🐻","🦝","🦨","🦡","🦦","🦥","🦔","🐿","🐇","🦜","🐦","🦅","🦆","🦉","🦚","🦩","🦢","🕊","🐓","🐠","🐟","🐡","🦈","🐬","🐳","🦭","🐊","🐢","🦎","🐍","🦕","🐛","🦋","🐝","🐞","🦗","🦟","🕷","🐌","🐜"];
 const ZVIRE_BARVY=["#7a5c3a","#e05555","#2ecc8a","#e8a030","#9b7ef5","#38b2e8","#4f7ef0","#f5a623","#2ed8c8","#c87000"];
 
 function ZvireModal({zvire,onClose,onSaved}){
@@ -129,7 +129,7 @@ function ZvireModal({zvire,onClose,onSaved}){
       </Field>
       <Field label="Datum narození"><input style={inp} type="date" value={f.narozen} onChange={set("narozen")}/></Field>
     </div>
-    <Field label="Emoji"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{ZVIRE_EMOJIS.map(e=><span key={e} onClick={()=>setF(p=>({...p,emoji:e}))} style={{fontSize:24,cursor:"pointer",padding:4,borderRadius:8,background:f.emoji===e?C.accentS:"transparent"}}>{e}</span>)}</div></Field>
+    <Field label="Emoji"><div style={{display:"flex",gap:4,flexWrap:"wrap",background:C.bg,borderRadius:10,padding:8}}>{ZVIRE_EMOJIS.map(e=><span key={e} onClick={()=>setF(p=>({...p,emoji:e}))} title={e} style={{fontSize:28,cursor:"pointer",padding:"5px 6px",borderRadius:9,background:f.emoji===e?C.accentS:"transparent",border:f.emoji===e?`2px solid ${C.accent}`:"2px solid transparent",transition:"all .12s",lineHeight:1}}>{e}</span>)}</div></Field>
     <Field label="Barva"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{ZVIRE_BARVY.map(b=><div key={b} onClick={()=>setF(p=>({...p,barva:b}))} style={{width:26,height:26,borderRadius:"50%",background:b,cursor:"pointer",border:f.barva===b?"3px solid #1a1d2e":"3px solid transparent"}}/>)}</div></Field>
     <Field label="Poznámka"><textarea style={{...inp,resize:"vertical",minHeight:60}} value={f.poznamka} onChange={set("poznamka")} placeholder="Plemeno, alergie, veterinář…"/></Field>
     <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
@@ -284,7 +284,7 @@ function ClenModal({clen,onClose,onSaved}){
       <Field label="Třída / skupina"><input style={inp} value={f.trida} onChange={set("trida")} placeholder="3.B"/></Field>
     </div>
     <Field label="Kroužky" hint="Odděl čárkou: fotbal, klavír, angličtina"><input style={inp} value={f.krouzky} onChange={set("krouzky")} placeholder="Fotbal, klavír…"/></Field>
-    <Field label="Emoji"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{DITE_EMOJIS.map(e=><span key={e} onClick={()=>setF(p=>({...p,emoji:e}))} style={{fontSize:24,cursor:"pointer",padding:4,borderRadius:8,background:f.emoji===e?C.accentS:"transparent"}}>{e}</span>)}</div></Field>
+    <Field label="Emoji"><div style={{display:"flex",gap:4,flexWrap:"wrap",background:C.bg,borderRadius:10,padding:8}}>{DITE_EMOJIS.map(e=><span key={e} onClick={()=>setF(p=>({...p,emoji:e}))} title={e} style={{fontSize:28,cursor:"pointer",padding:"5px 6px",borderRadius:9,background:f.emoji===e?C.accentS:"transparent",border:f.emoji===e?`2px solid ${C.accent}`:"2px solid transparent",transition:"all .12s",lineHeight:1}}>{e}</span>)}</div></Field>
     <Field label="Barva"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{DITE_BARVY.map(b=><div key={b} onClick={()=>setF(p=>({...p,barva:b}))} style={{width:26,height:26,borderRadius:"50%",background:b,cursor:"pointer",border:f.barva===b?"3px solid #1a1d2e":"3px solid transparent"}}/>)}</div></Field>
     <Field label="Poznámka"><textarea style={{...inp,resize:"vertical",minHeight:60}} value={f.poznamka} onChange={set("poznamka")}/></Field>
     <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
