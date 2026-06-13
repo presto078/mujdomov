@@ -104,6 +104,7 @@ function vazbaZPolozky(p){
   if(p.dite_id)   return "dite:"+p.dite_id;
   if(p.zvire_id)  return "zvire:"+p.zvire_id;
   if(p.oprava_id) return "oprava:"+p.oprava_id;
+  if(p.auto_id)   return "auto:"+p.auto_id;
   if(p.je_majetek)return "sklad:"+(p.sklad_kategorie_id||"obecne");
   return "";
 }
@@ -111,22 +112,24 @@ function vazbaZPolozky(p){
 // PK entit jsou SMÍŠENÉ (deti=uuid, zvirata=bigint, …) → ID posíláme jako string.
 // PostgREST string korektně přetypuje na uuid i bigint; číslo by do uuid neprošlo.
 function vazbaNaSloupce(v){
-  const base={dite_id:null,zvire_id:null,oprava_id:null,je_majetek:false,sklad_kategorie_id:null};
+  const base={dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null};
   if(!v) return base;
   const i=v.indexOf(":"); const t=v.slice(0,i), id=v.slice(i+1);
   if(t==="dite")   return {...base,dite_id:id};
   if(t==="zvire")  return {...base,zvire_id:id};
   if(t==="oprava") return {...base,oprava_id:id};
+  if(t==="auto")   return {...base,auto_id:id};
   if(t==="sklad")  return {...base,je_majetek:true,sklad_kategorie_id:id==="obecne"?null:id};
   return base;
 }
 // Položka cashflow → {emoji,label,color} pro zobrazení Tagu vazby (nebo null)
 function cashflowVazbaInfo(p,zdroje={}){
-  const {deti,zvirata,opravy,skladKat}=zdroje;
+  const {deti,zvirata,opravy,auta,skladKat}=zdroje;
   const eq=(a,b)=>String(a)===String(b);
   if(p.dite_id){const d=(deti||[]).find(x=>eq(x.id,p.dite_id));return{emoji:d?.emoji||"👤",label:d?.jmeno||"Člen rodiny",color:d?.barva||C.blue};}
   if(p.zvire_id){const z=(zvirata||[]).find(x=>eq(x.id,p.zvire_id));return{emoji:z?.emoji||"🐾",label:z?.jmeno||"Zvíře",color:z?.barva||"#7a5c3a"};}
   if(p.oprava_id){const o=(opravy||[]).find(x=>eq(x.id,p.oprava_id));return{emoji:"🔧",label:o?.nazev||"Oprava",color:C.orange};}
+  if(p.auto_id){const a=(auta||[]).find(x=>eq(x.id,p.auto_id));return{emoji:"🚗",label:a?.nazev||a?.spz||"Auto",color:C.accent};}
   if(p.je_majetek){const k=(skladKat||[]).find(x=>eq(x.id,p.sklad_kategorie_id));return{emoji:k?.emoji||"📦",label:k?`Majetek · ${k.nazev}`:"Majetek / sklad",color:C.purple};}
   return null;
 }
@@ -139,11 +142,13 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
   const {data:deti}=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:zvirata}=useData(()=>sb.from("zvirata").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:opravy}=useData(()=>sb.from("dum_opravy").select("id,nazev,stav").order("nazev"));
+  const {data:auta}=useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
   const {data:skladKat}=useData(()=>sb.from("sklad_kategorie").select("id,nazev,emoji").order("poradi"));
 
   const lockVazba = lock?.dite_id   ? "dite:"+lock.dite_id
     : lock?.zvire_id  ? "zvire:"+lock.zvire_id
     : lock?.oprava_id ? "oprava:"+lock.oprava_id
+    : lock?.auto_id   ? "auto:"+lock.auto_id
     : lock?.majetek   ? "sklad:obecne"
     : null;
 
@@ -161,9 +166,9 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
   const [saving,setSaving]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const isNew=!polozka;
-  const nacitam = kategorie===null||deti===null||zvirata===null||opravy===null||skladKat===null;
-  // Uzamčená vazba na konkrétní entitu (ne majetek) → jen čtení
-  const lockInfo = (lock && !lock.majetek) ? cashflowVazbaInfo(vazbaNaSloupce(lockVazba),{deti,zvirata,opravy,skladKat}) : null;
+  const nacitam = kategorie===null||deti===null||zvirata===null||opravy===null||auta===null||skladKat===null;
+  // Uzamčená vazba na konkrétní entitu (ne majetek) → předvybraný a zakázaný dropdown
+  const lockInfo = (lock && !lock.majetek) ? cashflowVazbaInfo(vazbaNaSloupce(lockVazba),{deti,zvirata,opravy,auta,skladKat}) : null;
 
   const uloz=async()=>{
     if(!f.nazev.trim()||f.castka==="") return;
@@ -197,12 +202,10 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
 
       {/* Vazba na entitu */}
       {lockInfo ? (
-        <Field label="Vazba na entitu">
-          <div style={{display:"flex",alignItems:"center",gap:8,background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px"}}>
-            <span style={{fontSize:18}}>{lockInfo.emoji}</span>
-            <span style={{fontWeight:700,fontSize:13,color:C.text}}>{lockInfo.label}</span>
-            <span style={{marginLeft:"auto",fontSize:11,color:C.dim}}>napevno</span>
-          </div>
+        <Field label="Vazba na entitu" hint="Napevno — položka patří této entitě">
+          <select style={{...inp,background:C.bg,cursor:"not-allowed",color:C.muted}} value={f.vazba} disabled>
+            <option value={f.vazba}>{lockInfo.emoji} {lockInfo.label}</option>
+          </select>
         </Field>
       ) : lock?.majetek ? (
         <Field label="Kategorie majetku / skladu" hint="Investice nebo nákup zásob">
@@ -218,6 +221,7 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
             <optgroup label="👤 Člen rodiny">{(deti||[]).map(d=><option key={d.id} value={"dite:"+d.id}>{d.emoji||"👤"} {d.jmeno}</option>)}</optgroup>
             <optgroup label="🐾 Zvíře">{(zvirata||[]).map(z=><option key={z.id} value={"zvire:"+z.id}>{z.emoji||"🐾"} {z.jmeno}</option>)}</optgroup>
             <optgroup label="🔧 Dům a opravy">{(opravy||[]).map(o=><option key={o.id} value={"oprava:"+o.id}>{o.nazev}</option>)}</optgroup>
+            <optgroup label="🚗 Auta">{(auta||[]).map(a=><option key={a.id} value={"auto:"+a.id}>🚗 {a.nazev}{a.spz?` · ${a.spz}`:""}</option>)}</optgroup>
             <optgroup label="📦 Sklad / Majetek">
               <option value="sklad:obecne">Majetek / sklad (obecně)</option>
               {(skladKat||[]).map(k=><option key={k.id} value={"sklad:"+k.id}>{k.emoji} {k.nazev}</option>)}
@@ -1741,6 +1745,7 @@ function FinanceTab(){
     const {data:deti}=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
     const {data:zvirata}=useData(()=>sb.from("zvirata").select("id,jmeno,emoji,barva").order("jmeno"));
     const {data:opravy}=useData(()=>sb.from("dum_opravy").select("id,nazev").order("nazev"));
+    const {data:auta}=useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
     const {data:skladKat}=useData(()=>sb.from("sklad_kategorie").select("id,nazev,emoji").order("poradi"));
 
     const nazvy=["Leden","Únor","Březen","Duben","Květen","Červen","Červenec","Srpen","Září","Říjen","Listopad","Prosinec"];
@@ -1764,7 +1769,7 @@ function FinanceTab(){
         return true;
       });
       for(const p of kNovym){
-        await sb.from("fin_cashflow_plan").insert({rok:nr,mesic:nm,nazev:p.nazev,castka:p.castka,kategorie_id:p.kategorie_id,opakovani:p.opakovani,datum_do:p.datum_do||null,poznamka:p.poznamka,dite_id:p.dite_id||null,zvire_id:p.zvire_id||null,oprava_id:p.oprava_id||null,je_majetek:p.je_majetek||false,sklad_kategorie_id:p.sklad_kategorie_id||null});
+        await sb.from("fin_cashflow_plan").insert({rok:nr,mesic:nm,nazev:p.nazev,castka:p.castka,kategorie_id:p.kategorie_id,opakovani:p.opakovani,datum_do:p.datum_do||null,poznamka:p.poznamka,dite_id:p.dite_id||null,zvire_id:p.zvire_id||null,oprava_id:p.oprava_id||null,auto_id:p.auto_id||null,je_majetek:p.je_majetek||false,sklad_kategorie_id:p.sklad_kategorie_id||null});
       }
       reloadPlan();alert(`Zkopírováno ${kNovym.length} položek do ${nazvy[nm-1]} (přeskočeno ${planMesice.length-kNovym.length-existujici.filter(e=>planMesice.find(p=>p.nazev===e)).length} ukončených)`);
     };
@@ -1810,7 +1815,7 @@ function FinanceTab(){
                   <div style={{fontWeight:600,fontSize:14}}>{p.nazev}</div>
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:2}}>
                     {kat&&<span style={{fontSize:11,color:C.muted}}>{kat.nazev}</span>}
-                    {(()=>{const vi=cashflowVazbaInfo(p,{deti,zvirata,opravy,skladKat});return vi?<span style={{display:"inline-flex",alignItems:"center",gap:4,background:`${vi.color}1a`,color:vi.color,borderRadius:20,padding:"1px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{vi.emoji} {vi.label}</span>:null;})()}
+                    {(()=>{const vi=cashflowVazbaInfo(p,{deti,zvirata,opravy,auta,skladKat});return vi?<span style={{display:"inline-flex",alignItems:"center",gap:4,background:`${vi.color}1a`,color:vi.color,borderRadius:20,padding:"1px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{vi.emoji} {vi.label}</span>:null;})()}
                   </div>
                 </div>
                 {p.opakovani!=="jednorazove"&&<span style={{fontSize:10,background:C.accentS,color:C.accent,borderRadius:99,padding:"2px 8px",fontWeight:700}}>🔄 {p.opakovani==="mesicni"?"měsíčně":"ročně"}</span>}
@@ -2122,8 +2127,11 @@ function DumTab(){
   const {data:opravy,loading,reload}=useData(()=>sb.from("dum_opravy").select("*").order("stav").order("datum_plan"));
   const {data:cfDum,reload:reloadCf}=useData(()=>sb.from("fin_cashflow_plan").select("id,oprava_id,castka").not("oprava_id","is",null));
   const [modal,setModal]=useState(null);
-  const [finModal,setFinModal]=useState(null); // oprava, pro kterou zobrazujeme finance
-  const cfMap={}; (cfDum||[]).forEach(p=>{if(!p.oprava_id)return;const m=cfMap[p.oprava_id]||{count:0,sum:0};m.count++;m.sum+=+p.castka;cfMap[p.oprava_id]=m;});
+  const [finModal,setFinModal]=useState(null); // oprava → správa všech plateb
+  const [platbaModal,setPlatbaModal]=useState(null); // oprava → rychlé zadání jedné platby
+  const cfMap={}; (cfDum||[]).forEach(p=>{if(p.oprava_id==null)return;const k=String(p.oprava_id);const m=cfMap[k]||{count:0,sum:0};m.count++;m.sum+=+p.castka;cfMap[k]=m;});
+  // souhrn pro jednu opravu: kolik plateb, kolik reálně utraceno (net), odhad a zbytek
+  const cfOpravy=(o)=>{const m=cfMap[String(o.id)];const count=m?m.count:0;const utraceno=m?-m.sum:0;const odhad=o.castka?+o.castka:0;return{count,utraceno,odhad,zbyva:odhad-utraceno};};
   const zmenStav=async(o,stav)=>{const upd={stav};if(stav==="hotovo")upd.datum_hotovo=new Date().toISOString().slice(0,10);await sb.from("dum_opravy").update(upd).eq("id",o.id);reload();};
   const smaz=async(o)=>{if(!confirm(`Smazat "${o.nazev}"?`))return;await sb.from("dum_opravy").delete().eq("id",o.id);reload();};
   if(loading)return <Spinner/>;
@@ -2142,15 +2150,23 @@ function DumTab(){
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
                 <span style={{fontWeight:700,fontSize:14,color:C.text,flex:1}}>{o.nazev}</span>
                 <Tag color={PRIORITA[o.priorita]?.color||C.dim}>{PRIORITA[o.priorita]?.label}</Tag>
-                {o.castka&&<Tag color={C.muted}>odhad {fmt(o.castka)}</Tag>}
-                {cfMap[o.id]&&<Tag color={cfMap[o.id].sum<0?C.red:C.green}>💰 {cfMap[o.id].count}× · {fmt(cfMap[o.id].sum)}</Tag>}
               </div>
               {o.popis&&<div style={{color:C.dim,fontSize:12,marginBottom:6}}>{o.popis}</div>}
               {o.datum_plan&&<div style={{color:C.muted,fontSize:12,marginBottom:8}}>📅 {new Date(o.datum_plan).toLocaleDateString("cs-CZ")}{o.datum_hotovo&&` · ✓ ${new Date(o.datum_hotovo).toLocaleDateString("cs-CZ")}`}</div>}
+              {(()=>{const{count,utraceno,odhad,zbyva}=cfOpravy(o);if(count===0&&!odhad)return null;return (
+                <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",background:C.bg,borderRadius:8,padding:"8px 12px",marginBottom:8,fontSize:12}}>
+                  {odhad>0&&<span style={{color:C.muted}}>Odhad: <b style={{color:C.text}}>{fmt(odhad)}</b></span>}
+                  <span style={{color:C.muted}}>Skutečnost ({count}×): <b style={{color:utraceno>0?C.red:C.text}}>{fmt(utraceno)}</b></span>
+                  {odhad>0&&(zbyva<0
+                    ? <Tag color={C.red}>⚠ Přešvihnuto o {fmt(-zbyva)}</Tag>
+                    : <Tag color={C.green}>Zbývá {fmt(zbyva)}</Tag>)}
+                </div>
+              );})()}
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                 {o.stav==="plan"&&<button onClick={()=>zmenStav(o,"probiha")} style={{...btnC(C.orange),padding:"4px 10px",fontSize:12}}>▶ Zahájit</button>}
                 {o.stav!=="hotovo"&&<button onClick={()=>zmenStav(o,"hotovo")} style={{...btnC(C.green),padding:"4px 10px",fontSize:12}}>✓ Hotovo</button>}
-                <button onClick={()=>setFinModal(o)} style={{...btnC(C.purple,true),padding:"4px 10px",fontSize:12}}>💰 Finance{cfMap[o.id]?` (${cfMap[o.id].count})`:""}</button>
+                <button onClick={()=>setPlatbaModal(o)} style={{...btnC(C.red),padding:"4px 10px",fontSize:12}}>💸 Zadat platbu</button>
+                <button onClick={()=>setFinModal(o)} style={{...btnC(C.purple,true),padding:"4px 10px",fontSize:12}}>💰 Finance{cfOpravy(o).count?` (${cfOpravy(o).count})`:""}</button>
                 <button onClick={()=>setModal(o)} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
                 <button onClick={()=>smaz(o)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
               </div>
@@ -2163,8 +2179,15 @@ function DumTab(){
     {modal==="new"&&<OpravaModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
     {modal&&modal!=="new"&&<OpravaModal oprava={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
     {finModal&&<Modal title={`💰 Finance — ${finModal.nazev}`} onClose={()=>{setFinModal(null);reloadCf();}} width={520}>
-      <EntityFinancePanel sloupec="oprava_id" id={finModal.id} lock={{oprava_id:finModal.id}} nadpis="Napojené cashflow položky" novaDefault={{nazev:finModal.nazev,castka:finModal.castka?-(Math.abs(+finModal.castka)):""}}/>
+      <EntityFinancePanel sloupec="oprava_id" id={finModal.id} lock={{oprava_id:finModal.id}} nadpis="Napojené platby (záloha, materiál, doplatek…)" novaDefault={{nazev:`Oprava: ${finModal.nazev}`,castka:cfOpravy(finModal).zbyva>0?-cfOpravy(finModal).zbyva:""}}/>
     </Modal>}
+    {platbaModal&&<CashflowModal
+      lock={{oprava_id:platbaModal.id}}
+      defaultNazev={`Oprava: ${platbaModal.nazev}`}
+      defaultCastka={cfOpravy(platbaModal).zbyva>0?-cfOpravy(platbaModal).zbyva:""}
+      onClose={()=>setPlatbaModal(null)}
+      onSaved={()=>{setPlatbaModal(null);reloadCf();reload();}}
+    />}
   </div>;
 }
 
@@ -4691,7 +4714,7 @@ function AutoDetail({auto,onBack,reloadAuta}){
   const {data:kilometry,reload:reloadKm}=useData(()=>sb.from("auta_kilometry").select("*").eq("auto_id",auto.id).order("datum",{ascending:false}));
   const {data:naklady,reload:reloadNaklady}=useData(()=>sb.from("auta_naklady").select("*").eq("auto_id",auto.id).order("datum",{ascending:false}));
 
-  const tabs=[{id:"prehled",l:"📊 Přehled"},{id:"servis",l:"🔧 Servisní kniha"},{id:"km",l:"📍 Kilometry"},{id:"naklady",l:"💰 Náklady"},{id:"nastaveni",l:"⚙️ Nastavení"}];
+  const tabs=[{id:"prehled",l:"📊 Přehled"},{id:"servis",l:"🔧 Servisní kniha"},{id:"km",l:"📍 Kilometry"},{id:"naklady",l:"💰 Náklady"},{id:"finance",l:"💸 Cashflow plán"},{id:"nastaveni",l:"⚙️ Nastavení"}];
 
   const celkemNaklady=(naklady||[]).reduce((a,n)=>a+(+n.castka),0);
   const celkemServis=(servisy||[]).reduce((a,s)=>a+(+s.cena||0),0);
@@ -4712,6 +4735,7 @@ function AutoDetail({auto,onBack,reloadAuta}){
     {zalozka==="servis"&&<AutoServis autoId={auto.id} servisy={servisy||[]} reload={reloadServisy}/>}
     {zalozka==="km"&&<AutoKilometry autoId={auto.id} kilometry={kilometry||[]} reload={reloadKm}/>}
     {zalozka==="naklady"&&<AutoNaklady autoId={auto.id} naklady={naklady||[]} reload={reloadNaklady}/>}
+    {zalozka==="finance"&&<EntityFinancePanel sloupec="auto_id" id={auto.id} lock={{auto_id:auto.id}} nadpis={`Finance — ${auto.nazev}`} novaDefault={{nazev:auto.nazev+" — ",castka:""}}/>}
     {zalozka==="nastaveni"&&<AutoNastaveni auto={auto} reload={reloadAuta} onBack={onBack}/>}
   </div>;
 }
