@@ -218,9 +218,18 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
         ? {dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null}
         : vazbaNaSloupce(f.vazba)),
     };
-    if(isNew) await sb.from("fin_cashflow_plan").insert(data);
-    else await sb.from("fin_cashflow_plan").update(data).eq("id",polozka.id);
-    setSaving(false);onSaved();
+    const {error} = isNew
+      ? await sb.from("fin_cashflow_plan").insert(data)
+      : await sb.from("fin_cashflow_plan").update(data).eq("id",polozka.id);
+    setSaving(false);
+    if(error){
+      console.error("Uložení cashflow selhalo:",error,"\npayload:",data);
+      alert("Položku se nepodařilo uložit:\n\n"+(error.message||"neznámá chyba")
+        +(error.details?("\n\nDetail: "+error.details):"")
+        +(error.hint?("\n\nTip: "+error.hint):""));
+      return;
+    }
+    onSaved();
   };
 
   // ── Lokální designové tokeny (větší, vzdušnější varianty C / inp) ──────────────
