@@ -94,6 +94,144 @@ function EmptyState({emoji,text,action,onAction}){return <div style={{textAlign:
 function StatCard({label,val,color=C.accent}){return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 16px",textAlign:"center"}}><div style={{fontSize:22,fontWeight:800,color}}>{val}</div><div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginTop:2}}>{label}</div></div>;}
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ZVÍŘATA
+// ══════════════════════════════════════════════════════════════════════════════
+const ZVIRE_TYPY=["Pes","Kočka","Králík","Morče","Křeček","Papoušek","Ryby","Had","Želva","Jiné"];
+const ZVIRE_EMOJIS=["🐶","🐱","🐰","🐹","🦜","🐠","🐍","🐢","🐾","🦮"];
+const ZVIRE_BARVY=["#7a5c3a","#e05555","#2ecc8a","#e8a030","#9b7ef5","#38b2e8","#4f7ef0","#f5a623","#2ed8c8","#c87000"];
+
+function ZvireModal({zvire,onClose,onSaved}){
+  const isNew=!zvire;
+  const [f,setF]=useState({
+    jmeno:zvire?.jmeno||"",
+    typ:zvire?.typ||"Pes",
+    narozen:zvire?.narozen||"",
+    poznamka:zvire?.poznamka||"",
+    barva:zvire?.barva||ZVIRE_BARVY[0],
+    emoji:zvire?.emoji||ZVIRE_EMOJIS[0],
+  });
+  const [saving,setSaving]=useState(false);
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const uloz=async()=>{
+    if(!f.jmeno.trim())return;
+    setSaving(true);
+    if(isNew)await sb.from("zvirata").insert(f);
+    else await sb.from("zvirata").update(f).eq("id",zvire.id);
+    setSaving(false);onSaved();
+  };
+  return <Modal title={isNew?"Přidat zvíře":"Upravit zvíře"} onClose={onClose} width={460}>
+    <Field label="Jméno *"><input style={inp} value={f.jmeno} onChange={set("jmeno")} autoFocus onKeyDown={e=>e.key==="Enter"&&uloz()} placeholder="Např. Rex"/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Typ zvířete">
+        <select style={inp} value={f.typ} onChange={set("typ")}>
+          {ZVIRE_TYPY.map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+      </Field>
+      <Field label="Datum narození"><input style={inp} type="date" value={f.narozen} onChange={set("narozen")}/></Field>
+    </div>
+    <Field label="Emoji"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{ZVIRE_EMOJIS.map(e=><span key={e} onClick={()=>setF(p=>({...p,emoji:e}))} style={{fontSize:24,cursor:"pointer",padding:4,borderRadius:8,background:f.emoji===e?C.accentS:"transparent"}}>{e}</span>)}</div></Field>
+    <Field label="Barva"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{ZVIRE_BARVY.map(b=><div key={b} onClick={()=>setF(p=>({...p,barva:b}))} style={{width:26,height:26,borderRadius:"50%",background:b,cursor:"pointer",border:f.barva===b?"3px solid #1a1d2e":"3px solid transparent"}}/>)}</div></Field>
+    <Field label="Poznámka"><textarea style={{...inp,resize:"vertical",minHeight:60}} value={f.poznamka} onChange={set("poznamka")} placeholder="Plemeno, alergie, veterinář…"/></Field>
+    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
+      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+      <button onClick={uloz} disabled={saving||!f.jmeno.trim()} style={btnC()}>{saving?"Ukládám…":"Uložit"}</button>
+    </div>
+  </Modal>;
+}
+
+function ZvireDetail({zvire,onEdit,onClose}){
+  const [tab,setTab]=useState("info");
+  const tabStyle=(t)=>({
+    padding:"8px 20px",fontWeight:700,fontSize:13,cursor:"pointer",border:"none",background:"none",
+    borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,
+    color:tab===t?C.accent:C.muted,transition:"all .15s",
+  });
+  const hneda="#7a5c3a";
+  return <Modal title={`${zvire.emoji||"🐾"} ${zvire.jmeno}`} onClose={onClose} width={460}>
+    <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,marginBottom:20,marginTop:-8}}>
+      <button style={tabStyle("info")} onClick={()=>setTab("info")}>📋 Info</button>
+      <button style={tabStyle("finance")} onClick={()=>setTab("finance")}>💰 Finance</button>
+    </div>
+
+    {tab==="info"&&<div>
+      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20,padding:16,background:C.bg,borderRadius:12}}>
+        <div style={{width:56,height:56,borderRadius:14,background:`${zvire.barva||hneda}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30}}>{zvire.emoji||"🐾"}</div>
+        <div>
+          <div style={{fontWeight:800,fontSize:18,color:C.text}}>{zvire.jmeno}</div>
+          <div style={{color:C.muted,fontSize:13,marginTop:2}}>
+            {vekText(zvire.narozen)}{zvire.narozen&&` · nar. ${new Date(zvire.narozen).toLocaleDateString("cs-CZ")}`}
+          </div>
+          <Tag color={hneda}>{zvire.typ||"Zvíře"}</Tag>
+        </div>
+      </div>
+      {zvire.poznamka&&<div style={{color:C.dim,fontSize:13,fontStyle:"italic",padding:"10px 14px",background:C.bg,borderRadius:10,marginBottom:12}}>{zvire.poznamka}</div>}
+      <div style={{display:"flex",justifyContent:"flex-end"}}>
+        <button onClick={onEdit} style={btnC()}>✎ Upravit</button>
+      </div>
+    </div>}
+
+    {tab==="finance"&&<div>
+      <div style={{textAlign:"center",padding:"40px 0",color:C.dim}}>
+        <div style={{fontSize:40,marginBottom:12}}>💰</div>
+        <div style={{fontSize:14}}>Finance pro {zvire.jmeno}</div>
+        <div style={{fontSize:12,marginTop:8}}>Tato sekce bude brzy k dispozici</div>
+      </div>
+    </div>}
+  </Modal>;
+}
+
+function ZvirataTab(){
+  const {data:zvirata,loading,reload}=useData(()=>sb.from("zvirata").select("*").order("jmeno"));
+  const [modal,setModal]=useState(null);
+  const smaz=async(z)=>{if(!confirm(`Smazat ${z.jmeno}?`))return;await sb.from("zvirata").delete().eq("id",z.id);reload();};
+  if(loading)return <Spinner/>;
+
+  // Seskup podle typu
+  const skupiny=[...new Set((zvirata||[]).map(z=>z.typ||"Jiné"))].sort();
+
+  const ZvireKarta=({z})=>(
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:18,borderLeft:`4px solid ${z.barva||"#7a5c3a"}`,cursor:"pointer"}}
+      onClick={()=>setModal({detail:z})}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+        <div style={{width:44,height:44,borderRadius:11,background:`${z.barva||"#7a5c3a"}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{z.emoji||"🐾"}</div>
+        <div>
+          <div style={{color:C.text,fontWeight:800,fontSize:16}}>{z.jmeno}</div>
+          <div style={{color:C.muted,fontSize:12}}>{z.typ}{z.narozen&&` · ${vekText(z.narozen)}`}{z.narozen&&` · nar. ${new Date(z.narozen).toLocaleDateString("cs-CZ")}`}</div>
+        </div>
+      </div>
+      {z.poznamka&&<div style={{color:C.dim,fontSize:12,marginBottom:10,fontStyle:"italic"}}>{z.poznamka}</div>}
+      <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
+        <button onClick={()=>setModal(z)} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
+        <button onClick={()=>smaz(z)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
+      </div>
+    </div>
+  );
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+      <div style={{color:C.text,fontWeight:800,fontSize:17}}>🐾 Zvířata <span style={{color:C.muted,fontWeight:400,fontSize:14}}>({(zvirata||[]).length})</span></div>
+      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat zvíře</button>
+    </div>
+
+    {(zvirata||[]).length===0&&<EmptyState emoji="🐾" text="Zatím žádná zvířata" action="Přidat první zvíře" onAction={()=>setModal("new")}/>}
+
+    {skupiny.map(typ=>{
+      const skupina=(zvirata||[]).filter(z=>(z.typ||"Jiné")===typ);
+      return <div key={typ} style={{marginBottom:24}}>
+        <div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:12}}>{typ}</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14}}>
+          {skupina.map(z=><ZvireKarta key={z.id} z={z}/>)}
+        </div>
+      </div>;
+    })}
+
+    {modal==="new"&&<ZvireModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+    {modal&&modal!=="new"&&!modal.detail&&<ZvireModal zvire={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+    {modal?.detail&&<ZvireDetail zvire={modal.detail} onEdit={()=>setModal(modal.detail)} onClose={()=>setModal(null)}/>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // RODINA
 // ══════════════════════════════════════════════════════════════════════════════
 function ClenModal({clen,onClose,onSaved}){
@@ -4697,6 +4835,7 @@ const TILES=[
   {id:"projekty", emoji:"🏗",  label:"Projekty",  popis:"Realizované projekty",   barva:"#e05555"},
   {id:"alimenty", emoji:"⚖️",  label:"Alimenty",  popis:"Šíma — Sylvestr & John", barva:"#c0392b"},
   {id:"kalendar", emoji:"📅",  label:"Kalendář",  popis:"Google Calendar",         barva:"#1a7a4a"},
+  {id:"zvirata",  emoji:"🐾",  label:"Zvířata",   popis:"Profily a péče",           barva:"#7a5c3a"},
 ];
 
 // ── TÝDENNÍ WIDGET NA HOMEPAGE ───────────────────────────────────────────────
@@ -4951,6 +5090,7 @@ export default function App() {
         {modul==="projekty" && <ProjektyTab/>}
         {modul==="alimenty" && <AlimentyTab/>}
         {modul==="kalendar" && <KalendarTab/>}
+        {modul==="zvirata"  && <ZvirataTab/>}
       </div>
     </div>;
   }
