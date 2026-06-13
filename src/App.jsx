@@ -454,6 +454,8 @@ function ClenModal({clen,onClose,onSaved}){
   const isNew=!clen;
   const [f,setF]=useState({
     jmeno:clen?.jmeno||"",
+    oficialni_jmeno:clen?.oficialni_jmeno||"",
+    prijmeni:clen?.prijmeni||"",
     typ:clen?.typ||"dite",
     narozen:clen?.narozen||"",
     pohlavi:clen?.pohlavi||"chlapec",
@@ -485,7 +487,11 @@ function ClenModal({clen,onClose,onSaved}){
         ))}
       </div>
     </Field>
-    <Field label="Jméno"><input style={inp} value={f.jmeno} onChange={set("jmeno")} autoFocus onKeyDown={e=>e.key==="Enter"&&uloz()}/></Field>
+    <Field label="Jméno / přezdívka" hint="Hlavní jméno používané v celé aplikaci"><input style={inp} value={f.jmeno} onChange={set("jmeno")} autoFocus onKeyDown={e=>e.key==="Enter"&&uloz()} placeholder="např. Honzík"/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Úřední jméno" hint="Pro doklady — volitelné"><input style={inp} value={f.oficialni_jmeno} onChange={set("oficialni_jmeno")} placeholder="Jan"/></Field>
+      <Field label="Příjmení"><input style={inp} value={f.prijmeni} onChange={set("prijmeni")} placeholder="Novák"/></Field>
+    </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
       <Field label="Datum narození"><input style={inp} type="date" value={f.narozen} onChange={set("narozen")}/></Field>
       <Field label="Pohlaví"><select style={inp} value={f.pohlavi} onChange={set("pohlavi")}><option value="chlapec">Chlapec / Muž</option><option value="divka">Dívka / Žena</option></select></Field>
@@ -518,6 +524,7 @@ function ClenDetail({clen,onEdit,onClose}){
     color:tab===t?C.accent:C.muted,transition:"all .15s",
   });
   const krouzky=(clen.krouzky||"").split(",").map(k=>k.trim()).filter(Boolean);
+  const celeJmeno=[clen.oficialni_jmeno,clen.prijmeni].filter(Boolean).join(" ");
   return <Modal title={`${clen.emoji||"👤"} ${clen.jmeno}`} onClose={onClose} width={520}>
     {/* Tabs */}
     <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,marginBottom:20,marginTop:-8}}>
@@ -532,6 +539,7 @@ function ClenDetail({clen,onEdit,onClose}){
         <div style={{width:56,height:56,borderRadius:14,background:`${clen.barva||C.accent}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30}}>{clen.emoji||"👤"}</div>
         <div>
           <div style={{fontWeight:800,fontSize:18,color:C.text}}>{clen.jmeno}</div>
+          {celeJmeno&&<div style={{color:C.text,fontSize:13,fontWeight:600,marginTop:1}}>🪪 {celeJmeno}</div>}
           <div style={{color:C.muted,fontSize:13,marginTop:2}}>
             {vekText(clen.narozen)}{clen.narozen&&` · nar. ${new Date(clen.narozen).toLocaleDateString("cs-CZ")}`}
           </div>
@@ -573,7 +581,7 @@ function ClenDetail({clen,onEdit,onClose}){
     </div>}
 
     {tab==="finance"&&<EntityFinancePanel sloupec="dite_id" id={clen.id} lock={{dite_id:clen.id}} nadpis={`Finance — ${clen.jmeno}`}/>}
-    {tab==="dokumenty"&&<EntityDokumentyPanel lockVazba={`dite:${clen.id}`} nadpis={`Dokumenty — ${clen.jmeno}`}/>}
+    {tab==="dokumenty"&&<EntityDokumentyPanel lockVazba={`dite:${clen.id}`} nadpis={`Dokumenty — ${clen.jmeno}${celeJmeno?` (${celeJmeno})`:""}`}/>}
   </Modal>;
 }
 
@@ -2299,7 +2307,7 @@ const dokChip=(active,color=C.accent)=>({
 
 // Společné načtení všech entit pro vazební dropdown
 function useDokZdroje(){
-  const {data:deti}    =useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
+  const {data:deti}    =useData(()=>sb.from("deti").select("id,jmeno,emoji,barva,oficialni_jmeno,prijmeni").order("jmeno"));
   const {data:zvirata} =useData(()=>sb.from("zvirata").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:auta}    =useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
   const {data:opravy}  =useData(()=>sb.from("dum_opravy").select("id,nazev").order("nazev"));
@@ -2378,7 +2386,7 @@ function DokumentModal({dokument,lockVazba,onClose,onSaved}){
         <Field label="Komu / čemu patří (vazba)" hint="Volitelné">
           <select style={inp} value={f.vazba} onChange={set("vazba")}>
             <option value="">— bez vazby —</option>
-            <optgroup label="👤 Rodina">{(z.deti||[]).map(d=><option key={d.id} value={"dite:"+d.id}>{d.emoji||"👤"} {d.jmeno}</option>)}</optgroup>
+            <optgroup label="👤 Rodina">{(z.deti||[]).map(d=><option key={d.id} value={"dite:"+d.id}>{d.emoji||"👤"} {d.jmeno}{[d.oficialni_jmeno,d.prijmeni].filter(Boolean).length?` — ${[d.oficialni_jmeno,d.prijmeni].filter(Boolean).join(" ")}`:""}</option>)}</optgroup>
             <optgroup label="🐾 Zvířata">{(z.zvirata||[]).map(x=><option key={x.id} value={"zvire:"+x.id}>{x.emoji||"🐾"} {x.jmeno}</option>)}</optgroup>
             <optgroup label="🚗 Auta">{(z.auta||[]).map(x=><option key={x.id} value={"auto:"+x.id}>🚗 {x.nazev}{x.spz?` · ${x.spz}`:""}</option>)}</optgroup>
             <optgroup label="🔧 Opravy">{(z.opravy||[]).map(x=><option key={x.id} value={"oprava:"+x.id}>{x.nazev}</option>)}</optgroup>
