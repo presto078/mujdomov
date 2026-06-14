@@ -315,6 +315,14 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
                 {(ucty||[]).filter(u=>String(u.id)!==String(f.ucet_id)).map(u=><option key={u.id} value={u.id}>{u.nazev}{u.typ==="deti"?" · 👶 dětský":""}</option>)}
               </select>
             </FL>
+            {prevodNeplatny&&(
+              <div style={{marginTop:10,background:C.redS||"#fdecec",border:`1px solid ${C.red}`,borderRadius:10,padding:"9px 12px",fontSize:12,fontWeight:600,color:C.red}}>
+                {!f.ucet_id?"⚠ Vyber zdrojový účet (Z účtu), ze kterého se peníze odešlou."
+                  :!f.prevod_ucet_id?"⚠ Vyber cílový účet (Na účet), kam peníze dorazí."
+                  :"⚠ Zdrojový a cílový účet musí být různé."}
+                {" "}Dokud to neplatí, převod nelze uložit.
+              </div>
+            )}
           </div>
         )}
       </div>
