@@ -205,8 +205,9 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
   const lockInfo = (lock && !lock.majetek) ? cashflowVazbaInfo(vazbaNaSloupce(lockVazba),{deti,zvirata,opravy,auta,skladKat}) : null;
 
   const prevodNeplatny = jePrevod && (!f.ucet_id || !f.prevod_ucet_id || String(f.ucet_id)===String(f.prevod_ucet_id));
+  const ucetChybi = !f.ucet_id; // účet je povinný u všech typů (jinak se položka nepromítne do predikce účtu)
   const uloz=async()=>{
-    if(!f.nazev.trim()||f.castka==="") return;
+    if(!f.nazev.trim()||f.castka===""||ucetChybi) return;
     if(prevodNeplatny) return;
     setSaving(true);
     const data={
@@ -305,6 +306,11 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
             <option value="">{jePrevod?"— vyberte zdrojový účet —":"— vyberte účet —"}</option>
             {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}{u.typ==="deti"?" · 👶 dětský":""}</option>)}
           </select>
+          {!jePrevod&&ucetChybi&&(
+            <div style={{marginTop:8,background:C.redS||"#fdecec",border:`1px solid ${C.red}`,borderRadius:10,padding:"9px 12px",fontSize:12,fontWeight:600,color:C.red}}>
+              ⚠ Vyber účet, kterého se {typ==="vydej"?"výdaj":"příjem"} týká — jinak se položka nepromítne do predikce zůstatku ani do filtru účtu.
+            </div>
+          )}
         </FL>
 
         {jePrevod&&(
@@ -395,7 +401,7 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
       {/* Akce */}
       <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:4}}>
         <button onClick={onClose} style={{...btnC(C.muted,true),padding:"12px 22px",fontSize:14,borderRadius:10}}>Zrušit</button>
-        <button onClick={uloz} disabled={saving||!f.nazev.trim()||f.castka===""||prevodNeplatny} style={{...btnC(),padding:"12px 24px",fontSize:14,borderRadius:10}}>{saving?"Ukládám…":"Uložit položku"}</button>
+        <button onClick={uloz} disabled={saving||!f.nazev.trim()||f.castka===""||ucetChybi||prevodNeplatny} style={{...btnC(),padding:"12px 24px",fontSize:14,borderRadius:10}}>{saving?"Ukládám…":"Uložit položku"}</button>
       </div>
     </div>}
   </Modal>;
@@ -2641,7 +2647,9 @@ function CashflowTab(){
                 <div className="cfp-main">
                   <div className="cfp-name">{p.nazev}</div>
                   <div className="cfp-meta">
-                    {p.ucet_id&&<span className="cfp-chip" style={{color:C.blue,background:C.blueS}}>🏦 {ucetNazev(p.ucet_id)}</span>}
+                    {p.ucet_id
+                      ? <span className="cfp-chip" style={{color:C.blue,background:C.blueS}}>🏦 {ucetNazev(p.ucet_id)}</span>
+                      : <span className="cfp-chip" style={{color:C.red,background:C.redS||"#fdecec",border:`1px solid ${C.red}`}}>⚠ bez účtu</span>}
                     {kat&&<span style={{fontSize:12,color:C.muted}}>{kat.nazev}</span>}
                     {vi&&<span className="cfp-chip" style={{background:`${vi.color}1a`,color:vi.color}}>{vi.emoji} {vi.label}</span>}
                     {p.opakovani!=="jednorazove"&&<span className="cfp-chip" style={{background:C.accentS,color:C.accent}}>🔄 {p.opakovani==="mesicni"?"měsíčně":"ročně"}</span>}
