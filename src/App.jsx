@@ -2343,6 +2343,7 @@ function CashflowTab(){
   const [modal,setModal]=useState(null); // null | "nova" | položka
   const [simulace,setSimulace]=useState([]); // hypotetické převody [{from,to,amount,rok,mesic}]
   const [sim,setSim]=useState(null);         // otevřený simulátor {u, idx}
+  const [filtrUcet,setFiltrUcet]=useState(""); // "" = všechny účty; jinak id účtu (jen Plán měsíce)
 
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
   const {data:plan,reload:reloadPlan}=useData(()=>sb.from("fin_cashflow_plan").select("*").order("rok").order("mesic"));
@@ -2421,8 +2422,23 @@ function CashflowTab(){
   const planMesice=(plan||[]).filter(p=>p.rok===rok&&p.mesic===mesic&&(zahrnoutDeti||!jeDetskyUcet(p.ucet_id,detiSet)));
   const bezne=planMesice.filter(p=>!jePrevodP(p));
   const prevody=planMesice.filter(jePrevodP);
-  const prijmy=bezne.filter(p=>+(p.castka)>0).reduce((a,p)=>a+(+p.castka),0);
-  const vydaje=bezne.filter(p=>+(p.castka)<0).reduce((a,p)=>a+Math.abs(+p.castka),0);
+
+  // Filtr na konkrétní účet (volitelný). Převod se týká účtu, pokud je zdroj NEBO cíl.
+  const filtrAktivni=!!filtrUcet;
+  const naUcte=(p)=>String(p.ucet_id)===String(filtrUcet);
+  const naUcteCil=(p)=>String(p.prevod_ucet_id)===String(filtrUcet);
+  const bezneF   = filtrAktivni ? bezne.filter(naUcte) : bezne;
+  const prevodyF = filtrAktivni ? prevody.filter(p=>naUcte(p)||naUcteCil(p)) : prevody;
+  // Souhrny: u filtrovaného účtu se do příjmů/výdajů započítají i převody dle směru.
+  let prijmy=bezneF.filter(p=>+(p.castka)>0).reduce((a,p)=>a+(+p.castka),0);
+  let vydaje=bezneF.filter(p=>+(p.castka)<0).reduce((a,p)=>a+Math.abs(+p.castka),0);
+  if(filtrAktivni){
+    prevodyF.forEach(p=>{
+      const amt=Math.abs(+p.castka);
+      if(naUcteCil(p)) prijmy+=amt;        // příchozí převod = přírůstek na účtu
+      else if(naUcte(p)) vydaje+=amt;      // odchozí převod = úbytek z účtu
+    });
+  }
 
   const smaz=async(id)=>{if(!confirm("Smazat položku?"))return;await sb.from("fin_cashflow_plan").delete().eq("id",id);reloadPlan();};
 
@@ -2555,7 +2571,29 @@ function CashflowTab(){
 
     {/* ── PLÁN MĚSÍCE ── */}
     {zalozka==="plan"&&<div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:10}}>
+      <style>{`
+        .cfp-cards{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
+        .cfp-card-l{ font-size:11.5px; }
+        .cfp-card-v{ font-size:20px; }
+        .cfp-row{ display:flex; align-items:center; gap:12px; padding:13px 16px; flex-wrap:wrap; }
+        .cfp-main{ flex:1 1 auto; min-width:150px; }
+        .cfp-name{ font-weight:600; font-size:15.5px; line-height:1.3; }
+        .cfp-meta{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:3px; }
+        .cfp-right{ display:flex; align-items:center; gap:8px; margin-left:auto; }
+        .cfp-amt{ font-weight:800; font-size:16.5px; white-space:nowrap; }
+        .cfp-chip{ font-size:12px; font-weight:700; border-radius:20px; padding:2px 9px; white-space:nowrap; display:inline-flex; align-items:center; gap:4px; }
+        .cfp-sec{ font-size:14px; font-weight:700; margin-bottom:9px; }
+        @media (max-width:560px){
+          .cfp-cards{ gap:8px; }
+          .cfp-card-v{ font-size:17px; }
+          .cfp-card-l{ font-size:10px; letter-spacing:.3px; }
+          .cfp-name{ font-size:16px; }
+          .cfp-amt{ font-size:18px; }
+          .cfp-row{ padding:14px 13px; gap:9px 10px; }
+        }
+      `}</style>
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <button onClick={()=>{if(mesic===1){setMesic(12);setRok(r=>r-1);}else setMesic(m=>m-1);}} style={{...btnC(C.muted,true),padding:"6px 12px"}}>←</button>
           <div style={{fontWeight:800,fontSize:18,minWidth:140,textAlign:"center"}}>{MESICE[mesic-1]} {rok}</div>
@@ -2567,40 +2605,53 @@ function CashflowTab(){
         </div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
+      {/* Filtr na konkrétní účet */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,flexWrap:"wrap"}}>
+        <label style={{fontSize:13,fontWeight:700,color:C.muted}}>🏦 Účet:</label>
+        <select value={filtrUcet} onChange={e=>setFiltrUcet(e.target.value)} style={{...inp,flex:"1 1 200px",maxWidth:300,fontSize:14,padding:"0 12px",height:44,borderRadius:10}}>
+          <option value="">Všechny účty</option>
+          {uctyView.map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
+        </select>
+        {filtrAktivni&&<button onClick={()=>setFiltrUcet("")} style={{...btnC(C.muted,true),fontSize:12,padding:"8px 12px"}}>✕ Zrušit filtr</button>}
+      </div>
+
+      <div className="cfp-cards">
         {[
-          {l:"Plánované příjmy",v:`${prijmy.toLocaleString("cs")} Kč`,c:C.green},
-          {l:"Plánované výdaje",v:`${vydaje.toLocaleString("cs")} Kč`,c:C.red},
-          {l:"Bilance",v:`${(prijmy-vydaje).toLocaleString("cs")} Kč`,c:prijmy>=vydaje?C.green:C.red},
+          {l:filtrAktivni?"Přijde na účet":"Plánované příjmy",v:`${prijmy.toLocaleString("cs")} Kč`,c:C.green},
+          {l:filtrAktivni?"Odejde z účtu":"Plánované výdaje",v:`${vydaje.toLocaleString("cs")} Kč`,c:C.red},
+          {l:filtrAktivni?"Čistá změna":"Bilance",v:`${(prijmy-vydaje>0?"+":"")}${(prijmy-vydaje).toLocaleString("cs")} Kč`,c:prijmy>=vydaje?C.green:C.red},
         ].map(k=><div key={k.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${k.c}`}}>
-          <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{k.l}</div>
-          <div style={{fontSize:18,fontWeight:800,color:k.c}}>{k.v}</div>
+          <div className="cfp-card-l" style={{fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{k.l}</div>
+          <div className="cfp-card-v" style={{fontWeight:800,color:k.c}}>{k.v}</div>
         </div>)}
       </div>
 
-      {[{label:"📥 Příjmy",arr:bezne.filter(p=>+(p.castka)>0)},{label:"📤 Výdaje",arr:bezne.filter(p=>+(p.castka)<0)}].map(({label,arr})=>{
+      {[{label:"📥 Příjmy",arr:bezneF.filter(p=>+(p.castka)>0)},{label:"📤 Výdaje",arr:bezneF.filter(p=>+(p.castka)<0)}].map(({label,arr})=>{
         const polozky=[...arr].sort((a,b)=>Math.abs(+(b.castka))-Math.abs(+(a.castka)));
         return <div key={label} style={{marginBottom:20}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.muted,marginBottom:8}}>{label} ({polozky.length})</div>
-          {polozky.length===0?<div style={{padding:"12px 16px",color:C.dim,fontSize:13,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>Žádné položky</div>:
+          <div className="cfp-sec" style={{color:C.muted}}>{label} ({polozky.length})</div>
+          {polozky.length===0?<div style={{padding:"13px 16px",color:C.dim,fontSize:14,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>Žádné položky{filtrAktivni?` na účtu ${ucetNazev(filtrUcet)}`:""}</div>:
           <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
             {polozky.map((p,i)=>{
               const kat=(kategorie||[]).find(k=>k.id===p.kategorie_id);
               const vi=cashflowVazbaInfo(p,{deti,zvirata,opravy,auta,skladKat});
-              return <div key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderBottom:i<polozky.length-1?`1px solid ${C.border}`:"none"}}>
-                <span style={{fontSize:18}}>{kat?.emoji||"💰"}</span>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:600,fontSize:14}}>{p.nazev}</div>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:2}}>
-                    {p.ucet_id&&<span style={{fontSize:11,fontWeight:700,color:C.blue,background:C.blueS,borderRadius:20,padding:"1px 8px"}}>🏦 {ucetNazev(p.ucet_id)}</span>}
-                    {kat&&<span style={{fontSize:11,color:C.muted}}>{kat.nazev}</span>}
-                    {vi&&<span style={{display:"inline-flex",alignItems:"center",gap:4,background:`${vi.color}1a`,color:vi.color,borderRadius:20,padding:"1px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{vi.emoji} {vi.label}</span>}
+              const kladna=+(p.castka)>0;
+              return <div key={p.id} className="cfp-row" style={{borderBottom:i<polozky.length-1?`1px solid ${C.border}`:"none"}}>
+                <span style={{fontSize:20}}>{kat?.emoji||"💰"}</span>
+                <div className="cfp-main">
+                  <div className="cfp-name">{p.nazev}</div>
+                  <div className="cfp-meta">
+                    {p.ucet_id&&<span className="cfp-chip" style={{color:C.blue,background:C.blueS}}>🏦 {ucetNazev(p.ucet_id)}</span>}
+                    {kat&&<span style={{fontSize:12,color:C.muted}}>{kat.nazev}</span>}
+                    {vi&&<span className="cfp-chip" style={{background:`${vi.color}1a`,color:vi.color}}>{vi.emoji} {vi.label}</span>}
+                    {p.opakovani!=="jednorazove"&&<span className="cfp-chip" style={{background:C.accentS,color:C.accent}}>🔄 {p.opakovani==="mesicni"?"měsíčně":"ročně"}</span>}
                   </div>
                 </div>
-                {p.opakovani!=="jednorazove"&&<span style={{fontSize:10,background:C.accentS,color:C.accent,borderRadius:99,padding:"2px 8px",fontWeight:700}}>🔄 {p.opakovani==="mesicni"?"měsíčně":"ročně"}</span>}
-                <div style={{fontWeight:800,fontSize:15,color:+(p.castka)>0?C.green:C.red}}>{+(p.castka)>0?"+":""}{(+p.castka).toLocaleString("cs")} Kč</div>
-                <button onClick={()=>setModal(p)} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
-                <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
+                <div className="cfp-right">
+                  <div className="cfp-amt" style={{color:kladna?C.green:C.red}}>{kladna?"+":""}{(+p.castka).toLocaleString("cs")} Kč</div>
+                  <button onClick={()=>setModal(p)} style={{...btnC(C.accent,true),padding:"6px 10px",fontSize:13}}>✏</button>
+                  <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"6px 10px",fontSize:13}}>🗑</button>
+                </div>
               </div>;
             })}
           </div>}
@@ -2609,19 +2660,31 @@ function CashflowTab(){
 
       {/* Plánované převody mezi účty */}
       <div style={{marginBottom:20}}>
-        <div style={{fontSize:13,fontWeight:700,color:C.muted,marginBottom:8}}>↔️ Plánované převody mezi účty ({prevody.length})</div>
-        {prevody.length===0?<div style={{padding:"12px 16px",color:C.dim,fontSize:13,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>Žádné plánované převody — přidej je tlačítkem „+ Přidat položku" a zaškrtni „Plánovaný převod".</div>:
+        <div className="cfp-sec" style={{color:C.muted}}>↔️ {filtrAktivni?`Převody týkající se účtu ${ucetNazev(filtrUcet)}`:"Plánované převody mezi účty"} ({prevodyF.length})</div>
+        {prevodyF.length===0?<div style={{padding:"13px 16px",color:C.dim,fontSize:14,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>{filtrAktivni?`Žádné převody na účtu ${ucetNazev(filtrUcet)}.`:"Žádné plánované převody — přidej je tlačítkem + Přidat položku a zvol typ Převod."}</div>:
         <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-          {prevody.map((p,i)=><div key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderBottom:i<prevody.length-1?`1px solid ${C.border}`:"none"}}>
-            <span style={{fontSize:18}}>↔️</span>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:600,fontSize:14}}>{p.nazev}</div>
-              <div style={{fontSize:11,color:C.muted}}>🏦 {ucetNazev(p.ucet_id)} → {ucetNazev(p.prevod_ucet_id)}</div>
-            </div>
-            <div style={{fontWeight:800,fontSize:15,color:C.blue}}>{Math.abs(+p.castka).toLocaleString("cs")} Kč</div>
-            <button onClick={()=>setModal(p)} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
-            <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
-          </div>)}
+          {prevodyF.map((p,i)=>{
+            // Směr vůči vybranému účtu (při filtru): odchozí = úbytek, příchozí = přírůstek
+            const odchozi=filtrAktivni&&naUcte(p);
+            const prichozi=filtrAktivni&&naUcteCil(p);
+            const amtColor=odchozi?C.red:prichozi?C.green:C.blue;
+            const amtPrefix=odchozi?"−":prichozi?"+":"";
+            const smer=odchozi?`→ ${ucetNazev(p.prevod_ucet_id)}`
+              :prichozi?`← ${ucetNazev(p.ucet_id)}`
+              :`${ucetNazev(p.ucet_id)} → ${ucetNazev(p.prevod_ucet_id)}`;
+            return <div key={p.id} className="cfp-row" style={{borderBottom:i<prevodyF.length-1?`1px solid ${C.border}`:"none"}}>
+              <span style={{fontSize:20}}>{odchozi?"📤":prichozi?"📥":"↔️"}</span>
+              <div className="cfp-main">
+                <div className="cfp-name">{p.nazev}</div>
+                <div className="cfp-meta"><span className="cfp-chip" style={{color:amtColor,background:`${amtColor}14`}}>🏦 {smer}</span></div>
+              </div>
+              <div className="cfp-right">
+                <div className="cfp-amt" style={{color:amtColor}}>{amtPrefix}{Math.abs(+p.castka).toLocaleString("cs")} Kč</div>
+                <button onClick={()=>setModal(p)} style={{...btnC(C.accent,true),padding:"6px 10px",fontSize:13}}>✏</button>
+                <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"6px 10px",fontSize:13}}>🗑</button>
+              </div>
+            </div>;
+          })}
         </div>}
       </div>
     </div>}
