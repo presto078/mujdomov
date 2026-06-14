@@ -160,7 +160,7 @@ function cashflowVazbaInfo(p,zdroje={}){
 // Volitelný `lock` předvybere a uzamkne vazbu: {dite_id} | {zvire_id} | {oprava_id} | {majetek:true}
 function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCastka,lock,onClose,onSaved}){
   const dnes=new Date();
-  const {data:kategorie}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
+  const {data:kategorie,reload:reloadKat}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("id,nazev,typ,mena").eq("aktivni",true).order("poradi"));
   const {data:deti}=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:zvirata}=useData(()=>sb.from("zvirata").select("id,jmeno,emoji,barva").order("jmeno"));
@@ -197,12 +197,30 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
   });
   const [typ,setTyp]=useState(initTyp);          // "prijem" | "vydej" | "prevod"
   const [saving,setSaving]=useState(false);
+  const [novaKatOtevreno,setNovaKatOtevreno]=useState(false);
+  const [novaKat,setNovaKat]=useState({nazev:"",emoji:"💰"});
+  const [ukladamKat,setUkladamKat]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const isNew=!polozka;
   const jePrevod = typ==="prevod";                // odvozené – řídí zobrazení polí i uložení
   const nacitam = kategorie===null||ucty===null||deti===null||zvirata===null||opravy===null||auta===null||skladKat===null;
   // Uzamčená vazba na konkrétní entitu (ne majetek) → předvybraný a zakázaný dropdown
   const lockInfo = (lock && !lock.majetek) ? cashflowVazbaInfo(vazbaNaSloupce(lockVazba),{deti,zvirata,opravy,auta,skladKat}) : null;
+
+  // Rychlé přidání kategorie přímo z tohoto okna (bez odskoku do editoru kategorií).
+  const pridejKategorii=async()=>{
+    if(!novaKat.nazev.trim()) return;
+    setUkladamKat(true);
+    const katTyp = typ==="prijem" ? "prijem" : "vydaj";
+    const {data:vlozeno,error} = await sb.from("fin_kategorie")
+      .insert({nazev:novaKat.nazev.trim(), emoji:(novaKat.emoji||"💰").trim()||"💰", typ:katTyp, barva:"#4f7ef0", poradi:(kategorie||[]).length})
+      .select().single();
+    setUkladamKat(false);
+    if(error){ alert("Kategorii se nepodařilo přidat:\n"+(error.message||"neznámá chyba")); return; }
+    await reloadKat();
+    if(vlozeno?.id!=null) setF(p=>({...p,kategorie_id:vlozeno.id}));
+    setNovaKat({nazev:"",emoji:"💰"}); setNovaKatOtevreno(false);
+  };
 
   const prevodNeplatny = jePrevod && (!f.ucet_id || !f.prevod_ucet_id || String(f.ucet_id)===String(f.prevod_ucet_id));
   const ucetChybi = !f.ucet_id; // účet je povinný u všech typů (jinak se položka nepromítne do predikce účtu)
@@ -339,11 +357,25 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
           <div style={sekceLbl}>Zařazení</div>
 
           <FL label="Kategorie" style={{marginBottom:14}}>
-            <select style={inpL} value={f.kategorie_id} onChange={set("kategorie_id")}>
-              <option value="">— bez kategorie —</option>
-              <optgroup label="Příjmy">{(kategorie||[]).filter(k=>k.typ==="prijem").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
-              <optgroup label="Výdaje">{(kategorie||[]).filter(k=>k.typ==="vydaj").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
-            </select>
+            <div style={{display:"flex",gap:8}}>
+              <select style={{...inpL,flex:1,minWidth:0}} value={f.kategorie_id} onChange={set("kategorie_id")}>
+                <option value="">— bez kategorie —</option>
+                <optgroup label="Příjmy">{(kategorie||[]).filter(k=>k.typ==="prijem").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
+                <optgroup label="Výdaje">{(kategorie||[]).filter(k=>k.typ==="vydaj").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
+              </select>
+              <button type="button" onClick={()=>setNovaKatOtevreno(o=>!o)} style={{...btnC(C.accent,true),padding:"0 14px",height:48,whiteSpace:"nowrap",borderRadius:10,fontSize:13,fontWeight:700}}>{novaKatOtevreno?"✕ Zavřít":"+ Nová"}</button>
+            </div>
+            {novaKatOtevreno&&(
+              <div style={{marginTop:10,background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:12,animation:"cfSlide .2s ease"}}>
+                <div style={{fontSize:11.5,fontWeight:700,color:C.muted,marginBottom:8}}>Rychlé přidání kategorie — typ „{typ==="prijem"?"Příjem":"Výdaj"}"</div>
+                <div style={{display:"flex",gap:8}}>
+                  <input style={{...inpL,width:62,textAlign:"center",flex:"0 0 auto"}} value={novaKat.emoji} onChange={e=>setNovaKat(p=>({...p,emoji:e.target.value}))} placeholder="💰" maxLength={4}/>
+                  <input style={{...inpL,flex:1,minWidth:0}} value={novaKat.nazev} onChange={e=>setNovaKat(p=>({...p,nazev:e.target.value}))} placeholder="Název kategorie" onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();pridejKategorii();}}}/>
+                  <button type="button" onClick={pridejKategorii} disabled={ukladamKat||!novaKat.nazev.trim()} style={{...btnC(),padding:"0 16px",height:48,whiteSpace:"nowrap",borderRadius:10,fontSize:13}}>{ukladamKat?"…":"Přidat"}</button>
+                </div>
+                <div style={{fontSize:11,color:C.dim,marginTop:7}}>Po přidání se kategorie rovnou vybere. Barvu/přesné nastavení doladíš v editoru kategorií.</div>
+              </div>
+            )}
           </FL>
 
           {lockInfo ? (
