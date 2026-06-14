@@ -89,6 +89,10 @@ function vekText(narozen){if(!narozen)return"";const d=new Date(narozen),now=new
 function Spinner(){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:60,color:C.muted,fontSize:14,gap:10}}><div style={{width:18,height:18,border:`2px solid ${C.border}`,borderTop:`2px solid ${C.accent}`,borderRadius:"50%",animation:"spin .8s linear infinite"}}/>Načítám…<style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;}
 function Tag({color,children}){return <span style={{background:`${color}22`,color,padding:"2px 9px",borderRadius:20,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{children}</span>;}
 function Field({label,hint,children}){return <div style={{marginBottom:14}}><div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:5}}>{label}</div>{children}{hint&&<div style={{color:C.dim,fontSize:11,marginTop:3}}>{hint}</div>}</div>;}
+// Větší/vzdušnější varianta Field pro CashflowModal. MUSÍ být na úrovni modulu —
+// definovaná uvnitř komponenty by se při každém renderu vytvořila znovu a inputy
+// by po každém znaku ztrácely fokus (remount).
+function FL({label,hint,children,style}){return <div style={{marginBottom:0,...style}}><div style={{color:C.muted,fontSize:12.5,fontWeight:800,letterSpacing:.4,textTransform:"uppercase",marginBottom:7}}>{label}</div>{children}{hint&&<div style={{color:C.dim,fontSize:11.5,marginTop:6,lineHeight:1.4}}>{hint}</div>}</div>;}
 function Modal({title,onClose,children,width=460}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}} onClick={onClose}><div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:28,width,maxWidth:"95vw",maxHeight:"92vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}><div style={{color:C.text,fontWeight:800,fontSize:18}}>{title}</div><button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22}}>✕</button></div>{children}</div></div>;}
 function EmptyState({emoji,text,action,onAction}){return <div style={{textAlign:"center",padding:"60px 0",color:C.dim}}><div style={{fontSize:48,marginBottom:12}}>{emoji}</div><div style={{fontSize:14,marginBottom:16}}>{text}</div>{action&&<button onClick={onAction} style={btnC()}>{action}</button>}</div>;}
 function StatCard({label,val,color=C.accent}){return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 16px",textAlign:"center"}}><div style={{fontSize:22,fontWeight:800,color}}>{val}</div><div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginTop:2}}>{label}</div></div>;}
@@ -237,13 +241,6 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
   const inpAmt  = {...inp, fontSize:24, fontWeight:800, padding:"0 56px 0 16px", height:62, borderRadius:14, boxSizing:"border-box"};
   const sekce   = {background:C.bg, border:`1px solid ${C.border}`, borderRadius:14, padding:16, marginBottom:14};
   const sekceLbl= {fontSize:12, fontWeight:800, color:C.muted, letterSpacing:.6, textTransform:"uppercase", margin:"0 2px 12px"};
-  const FL=({label,hint,children,style})=>(
-    <div style={{marginBottom:0,...style}}>
-      <div style={{color:C.muted,fontSize:12.5,fontWeight:800,letterSpacing:.4,textTransform:"uppercase",marginBottom:7}}>{label}</div>
-      {children}
-      {hint&&<div style={{color:C.dim,fontSize:11.5,marginTop:6,lineHeight:1.4}}>{hint}</div>}
-    </div>
-  );
   const TYPY = lock
     ? [{v:"prijem",l:"Příjem",c:C.green},{v:"vydej",l:"Výdej",c:C.red}]
     : [{v:"prijem",l:"Příjem",c:C.green},{v:"vydej",l:"Výdej",c:C.red},{v:"prevod",l:"Převod",c:C.accent}];
