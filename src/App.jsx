@@ -93,7 +93,7 @@ function Field({label,hint,children}){return <div style={{marginBottom:14}}><div
 // definovaná uvnitř komponenty by se při každém renderu vytvořila znovu a inputy
 // by po každém znaku ztrácely fokus (remount).
 function FL({label,hint,children,style}){return <div style={{marginBottom:0,...style}}><div style={{color:C.muted,fontSize:12.5,fontWeight:800,letterSpacing:.4,textTransform:"uppercase",marginBottom:7}}>{label}</div>{children}{hint&&<div style={{color:C.dim,fontSize:11.5,marginTop:6,lineHeight:1.4}}>{hint}</div>}</div>;}
-function Modal({title,onClose,children,width=460}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}} onClick={onClose}><div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:28,width,maxWidth:"95vw",maxHeight:"92vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}><div style={{color:C.text,fontWeight:800,fontSize:18}}>{title}</div><button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22}}>✕</button></div>{children}</div></div>;}
+function Modal({title,onClose,children,width=460,bg,accent}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}} onClick={onClose}><div style={{background:bg||C.card,border:`1px solid ${C.border}`,borderTop:accent?`4px solid ${accent}`:`1px solid ${C.border}`,borderRadius:16,padding:28,width,maxWidth:"95vw",maxHeight:"92vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}><div style={{color:accent||C.text,fontWeight:800,fontSize:18}}>{title}</div><button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22}}>✕</button></div>{children}</div></div>;}
 function EmptyState({emoji,text,action,onAction}){return <div style={{textAlign:"center",padding:"60px 0",color:C.dim}}><div style={{fontSize:48,marginBottom:12}}>{emoji}</div><div style={{fontSize:14,marginBottom:16}}>{text}</div>{action&&<button onClick={onAction} style={btnC()}>{action}</button>}</div>;}
 function StatCard({label,val,color=C.accent}){return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 16px",textAlign:"center"}}><div style={{fontSize:22,fontWeight:800,color}}>{val}</div><div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginTop:2}}>{label}</div></div>;}
 
@@ -256,10 +256,13 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
   };
 
   // ── Lokální designové tokeny (větší, vzdušnější varianty C / inp) ──────────────
-  const inpL    = {...inp, fontSize:15, padding:"0 14px", height:48, borderRadius:10, boxSizing:"border-box"};
-  const inpAmt  = {...inp, fontSize:24, fontWeight:800, padding:"0 56px 0 16px", height:62, borderRadius:14, boxSizing:"border-box"};
-  const sekce   = {background:C.bg, border:`1px solid ${C.border}`, borderRadius:14, padding:16, marginBottom:14};
+  const inpL    = {...inp, fontSize:15, padding:"0 14px", height:48, borderRadius:10, boxSizing:"border-box", background:C.bg};
+  const inpAmt  = {...inp, fontSize:24, fontWeight:800, padding:"0 56px 0 16px", height:62, borderRadius:14, boxSizing:"border-box", background:C.bg};
+  const sekce   = {background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:16, marginBottom:14, boxShadow:"0 1px 3px rgba(0,0,0,.04)"};
   const sekceLbl= {fontSize:12, fontWeight:800, color:C.muted, letterSpacing:.6, textTransform:"uppercase", margin:"0 2px 12px"};
+  // Barva celého okna podle typu transakce — výrazný signál (příjem zelená, výdej červená, převod modrá)
+  const typAccent = typ==="prijem" ? C.green : typ==="vydej" ? C.red : C.accent;
+  const typBg     = typ==="prijem" ? C.greenS : typ==="vydej" ? C.redS : C.accentS;
   const TYPY = lock
     ? [{v:"prijem",l:"Příjem",c:C.green},{v:"vydej",l:"Výdej",c:C.red}]
     : [{v:"prijem",l:"Příjem",c:C.green},{v:"vydej",l:"Výdej",c:C.red},{v:"prevod",l:"Převod",c:C.accent}];
@@ -275,7 +278,7 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
     : typ==="vydej" ? "Zadej kladné číslo — uloží se jako výdaj (−)"
     : "Zadej kladné číslo — uloží se jako příjem (+)";
 
-  return <Modal title={isNew?"Nová finanční položka":"Upravit položku"} onClose={onClose} width={470}>
+  return <Modal title={isNew?"Nová finanční položka":"Upravit položku"} onClose={onClose} width={470} bg={typBg} accent={typAccent}>
     {nacitam?<Spinner/>:<div>
       <style>{`
         .cf-amount::-webkit-outer-spin-button,.cf-amount::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
@@ -284,7 +287,7 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
       `}</style>
 
       {/* 1) Segmentovaný přepínač typu transakce — hlavní navigace */}
-      <div style={{display:"flex",gap:8,marginBottom:18,background:C.bg,padding:6,borderRadius:13,border:`1px solid ${C.border}`}}>
+      <div style={{display:"flex",gap:8,marginBottom:18,background:C.surface,padding:6,borderRadius:13,border:`1px solid ${C.border}`,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
         {TYPY.map(t=>(
           <button key={t.v} onClick={()=>setTyp(t.v)} style={tabBtn(typ===t.v,t.c)}>{t.l}</button>
         ))}
@@ -366,7 +369,7 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
               <button type="button" onClick={()=>setNovaKatOtevreno(o=>!o)} style={{...btnC(C.accent,true),padding:"0 14px",height:48,whiteSpace:"nowrap",borderRadius:10,fontSize:13,fontWeight:700}}>{novaKatOtevreno?"✕ Zavřít":"+ Nová"}</button>
             </div>
             {novaKatOtevreno&&(
-              <div style={{marginTop:10,background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:12,animation:"cfSlide .2s ease"}}>
+              <div style={{marginTop:10,background:typBg,border:`1px solid ${C.border}`,borderRadius:10,padding:12,animation:"cfSlide .2s ease"}}>
                 <div style={{fontSize:11.5,fontWeight:700,color:C.muted,marginBottom:8}}>Rychlé přidání kategorie — typ „{typ==="prijem"?"Příjem":"Výdaj"}"</div>
                 <div style={{display:"flex",gap:8}}>
                   <input style={{...inpL,width:62,textAlign:"center",flex:"0 0 auto"}} value={novaKat.emoji} onChange={e=>setNovaKat(p=>({...p,emoji:e.target.value}))} placeholder="💰" maxLength={4}/>
