@@ -3600,10 +3600,25 @@ function ProjektyTab(){
   const [aktivni,setAktivni]=useState(null); // projekt_id nebo null
   const [modal,setModal]=useState(false);
   const [form,setForm]=useState({nazev:"",emoji:"🏗",datum:"",cas:"",misto:"",barva:"#4f7ef0"});
+  const [saving,setSaving]=useState(false);
 
   const ulozProjekt=async()=>{
-    await sb.from("projekty").insert({...form,datum:form.datum||null,cas:form.cas||null});
+    if(!form.nazev.trim()||saving) return;
+    setSaving(true);
+    const {error}=await sb.from("projekty").insert({...form,datum:form.datum||null,cas:form.cas||null});
+    setSaving(false);
+    if(error){ alert("Projekt se nepodařilo uložit:\n"+(error.message||"neznámá chyba")); return; }
+    setForm({nazev:"",emoji:"🏗",datum:"",cas:"",misto:"",barva:"#4f7ef0"});
     setModal(false);reload();
+  };
+
+  const smazProjekt=async(e,p)=>{
+    e.stopPropagation();
+    if(!confirm(`Smazat projekt „${p.nazev}"?\nSmažou se i jeho rozpočtové položky. Tuto akci nelze vrátit.`)) return;
+    await sb.from("projekty_rozpocet").delete().eq("projekt_id",p.id);
+    const {error}=await sb.from("projekty").delete().eq("id",p.id);
+    if(error){ alert("Smazání se nepovedlo:\n"+(error.message||"neznámá chyba")); return; }
+    reload();
   };
 
   if(loading)return <Spinner/>;
@@ -3634,9 +3649,11 @@ function ProjektyTab(){
       {(projekty||[]).map(p=>{
         const dniZbyvá=odpocet(p.datum);
         return <div key={p.id} onClick={()=>setAktivni(p.id)}
-          style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",cursor:"pointer",transition:"all .2s",boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}
+          style={{position:"relative",background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",cursor:"pointer",transition:"all .2s",boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}
           onMouseEnter={e=>e.currentTarget.style.transform="translateY(-3px)"}
           onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
+          <button onClick={(e)=>smazProjekt(e,p)} title="Smazat projekt"
+            style={{position:"absolute",top:10,right:10,zIndex:2,background:"rgba(0,0,0,.25)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>🗑</button>
           <div style={{background:p.barva||C.accent,padding:"20px 20px 16px"}}>
             <div style={{fontSize:32,marginBottom:6}}>{p.emoji}</div>
             <div style={{fontWeight:800,fontSize:16,color:"#fff"}}>{p.nazev}</div>
@@ -3668,7 +3685,7 @@ function ProjektyTab(){
           <input style={inp} type={f.t} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
         </div>)}
         <div style={{display:"flex",gap:10,marginTop:16}}>
-          <button onClick={ulozProjekt} style={btnC()}>Uložit</button>
+          <button onClick={ulozProjekt} disabled={saving||!form.nazev.trim()} style={{...btnC(),opacity:(saving||!form.nazev.trim())?.6:1,cursor:(saving||!form.nazev.trim())?"not-allowed":"pointer"}}>{saving?"Ukládám…":"Uložit"}</button>
           <button onClick={()=>setModal(false)} style={btnC(C.muted,true)}>Zrušit</button>
         </div>
       </div>
