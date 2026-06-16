@@ -2307,6 +2307,7 @@ function CashflowTab(){
   const [simulace,setSimulace]=useState([]); // hypotetické převody [{from,to,amount,rok,mesic}]
   const [sim,setSim]=useState(null);         // otevřený simulátor {u, idx}
   const [filtrUcet,setFiltrUcet]=useState(""); // "" = všechny účty; jinak id účtu (jen Plán měsíce)
+  const [filtrKat,setFiltrKat]=useState("");   // "" = všechny kategorie; jinak id kategorie (jen Plán měsíce)
   const [odemcenyMesic,setOdemcenyMesic]=useState(""); // "rok-mesic" vědomě odemčeného uplynulého měsíce v Plánu
 
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
@@ -2397,10 +2398,15 @@ function CashflowTab(){
 
   // Filtr na konkrétní účet (volitelný). Převod se týká účtu, pokud je zdroj NEBO cíl.
   const filtrAktivni=!!filtrUcet;
+  const filtrKatAktivni=!!filtrKat;
   const naUcte=(p)=>String(p.ucet_id)===String(filtrUcet);
   const naUcteCil=(p)=>String(p.prevod_ucet_id)===String(filtrUcet);
-  const bezneF   = filtrAktivni ? bezne.filter(naUcte) : bezne;
-  const prevodyF = filtrAktivni ? prevody.filter(p=>naUcte(p)||naUcteCil(p)) : prevody;
+  const vKat=(p)=>String(p.kategorie_id)===String(filtrKat);
+  let bezneF = bezne;
+  if(filtrAktivni) bezneF=bezneF.filter(naUcte);
+  if(filtrKatAktivni) bezneF=bezneF.filter(vKat);
+  // Převody nemají kategorii → při filtru kategorie se nezobrazují
+  let prevodyF = filtrKatAktivni ? [] : (filtrAktivni ? prevody.filter(p=>naUcte(p)||naUcteCil(p)) : prevody);
   // Souhrny: u filtrovaného účtu se do příjmů/výdajů započítají i převody dle směru.
   let prijmy=bezneF.filter(p=>+(p.castka)>0).reduce((a,p)=>a+(+p.castka),0);
   let vydaje=bezneF.filter(p=>+(p.castka)<0).reduce((a,p)=>a+Math.abs(+p.castka),0);
@@ -2588,14 +2594,20 @@ function CashflowTab(){
         </div>
       )}
 
-      {/* Filtr na konkrétní účet */}
+      {/* Filtry: účet + kategorie */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,flexWrap:"wrap"}}>
         <label style={{fontSize:13,fontWeight:700,color:C.muted}}>🏦 Účet:</label>
-        <select value={filtrUcet} onChange={e=>setFiltrUcet(e.target.value)} style={{...inp,flex:"1 1 200px",maxWidth:300,fontSize:14,padding:"0 12px",height:44,borderRadius:10}}>
+        <select value={filtrUcet} onChange={e=>setFiltrUcet(e.target.value)} style={{...inp,flex:"1 1 160px",maxWidth:240,fontSize:14,padding:"0 12px",height:44,borderRadius:10}}>
           <option value="">Všechny účty</option>
           {uctyView.map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
         </select>
-        {filtrAktivni&&<button onClick={()=>setFiltrUcet("")} style={{...btnC(C.muted,true),fontSize:12,padding:"8px 12px"}}>✕ Zrušit filtr</button>}
+        <label style={{fontSize:13,fontWeight:700,color:C.muted}}>🏷️ Kategorie:</label>
+        <select value={filtrKat} onChange={e=>setFiltrKat(e.target.value)} style={{...inp,flex:"1 1 160px",maxWidth:240,fontSize:14,padding:"0 12px",height:44,borderRadius:10}}>
+          <option value="">Všechny kategorie</option>
+          <optgroup label="Příjmy">{(kategorie||[]).filter(k=>k.typ==="prijem").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
+          <optgroup label="Výdaje">{(kategorie||[]).filter(k=>k.typ==="vydaj").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
+        </select>
+        {(filtrAktivni||filtrKatAktivni)&&<button onClick={()=>{setFiltrUcet("");setFiltrKat("");}} style={{...btnC(C.muted,true),fontSize:12,padding:"8px 12px"}}>✕ Zrušit filtry</button>}
       </div>
 
       <div className="cfp-cards">
@@ -4207,9 +4219,11 @@ function AlimentyTab(){
 
   const {data:slatky_dluhu,reload:reloadSplatky}=useData(()=>sb.from("alimenty_splatky_dluhu").select("*").order("datum",{ascending:false}));
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("id,nazev").eq("aktivni",true).order("poradi"));
+  const {data:kategorieFin}=useData(()=>sb.from("fin_kategorie").select("id,nazev,typ").order("poradi"));
 
   // Výchozí účet pro alimenty = Moneta běžný (fallback první účet)
   const monetaId=(ucty||[]).find(u=>/moneta\s*běžný/i.test(u.nazev||""))?.id || (ucty||[])[0]?.id || null;
+  const alimentyKatId=(kategorieFin||[]).find(k=>/aliment/i.test(k.nazev||""))?.id||null;
 
   // Zrcadlení platby do cashflow (fin_transakce): otec→matce = příjem (+), matka→otci = výdaj (−).
   // Promítne se jen platba s reálným datem a nenulovou částkou. Drží se 1:1 přes alimenty_platby.fin_transakce_id.
@@ -4218,11 +4232,21 @@ function AlimentyTab(){
     const aktivni = p.typ==="alimenty" && p.datum && Number(p.castka)>0 && (p.ucet_id||monetaId);
     if(aktivni){
       const prijem = p.kdo_plati==="otec"; // otec platí matce = příjem; matka platí otci = výdaj
+      // Zajisti kategorii „Alimenty" (ať to v cashflow není „Nezařazeno")
+      let katId=alimentyKatId;
+      if(!katId){
+        const {data:ex}=await sb.from("fin_kategorie").select("id").ilike("nazev","aliment%").limit(1);
+        katId=ex&&ex[0]?ex[0].id:null;
+        if(!katId){
+          const {data:nk}=await sb.from("fin_kategorie").insert({nazev:"Alimenty",emoji:"⚖️",typ:"prijem",barva:"#c0392b",poradi:900}).select("id").single();
+          katId=nk?.id||null;
+        }
+      }
       const tData={
         ucet_id:p.ucet_id||monetaId,
         datum:p.datum,
         castka:(prijem?1:-1)*Math.abs(Number(p.castka)),
-        kategorie_id:null,
+        kategorie_id:katId,
         popis:`Alimenty${p.mesic?" "+p.mesic:""} (${p.kdo_plati}→${p.komu||""})`.trim(),
         protistrana:"Alimenty Šíma",
         typ:prijem?"prijem":"vydaj",
