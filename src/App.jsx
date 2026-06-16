@@ -11,7 +11,7 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const GOOGLE_REDIRECT = window.location.origin+"/auth/callback";
 const GOOGLE_SCOPES = "https://www.googleapis.com/auth/calendar.readonly";
 const sb = createClient(SUPA_URL, SUPA_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
 });
 
 // Google Calendar IDs
@@ -2385,6 +2385,7 @@ function CashflowTab(){
   const [simulace,setSimulace]=useState([]); // hypotetické převody [{from,to,amount,rok,mesic}]
   const [sim,setSim]=useState(null);         // otevřený simulátor {u, idx}
   const [filtrUcet,setFiltrUcet]=useState(""); // "" = všechny účty; jinak id účtu (jen Plán měsíce)
+  const [odemcenyMesic,setOdemcenyMesic]=useState(""); // "rok-mesic" vědomě odemčeného uplynulého měsíce v Plánu
 
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
   const {data:plan,reload:reloadPlan}=useData(()=>sb.from("fin_cashflow_plan").select("*").order("rok").order("mesic"));
@@ -2396,6 +2397,11 @@ function CashflowTab(){
   const {data:opravy}=useData(()=>sb.from("dum_opravy").select("id,nazev").order("nazev"));
   const {data:auta}=useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
   const {data:skladKat}=useData(()=>sb.from("sklad_kategorie").select("id,nazev,emoji").order("poradi"));
+  // Reálné transakce jen za vybraný měsíc (reaktivně na rok/mesic) — pro porovnání plán vs realita
+  const _mStart=`${rok}-${String(mesic).padStart(2,"0")}-01`;
+  const _nmR=mesic===12?1:mesic+1, _nyR=mesic===12?rok+1:rok;
+  const _mEnd=`${_nyR}-${String(_nmR).padStart(2,"0")}-01`;
+  const {data:transMesic}=useData(()=>sb.from("fin_transakce").select("*").gte("datum",_mStart).lt("datum",_mEnd).limit(3000),[rok,mesic]);
   const stavy=[...(stavy1||[]),...(stavy2||[])];
 
   const nacitam=ucty===null||plan===null||stavy1===null||stavy2===null;
@@ -2461,6 +2467,9 @@ function CashflowTab(){
 
   // ── PLÁN MĚSÍCE ──
   const planMesice=(plan||[]).filter(p=>p.rok===rok&&p.mesic===mesic&&(zahrnoutDeti||!jeDetskyUcet(p.ucet_id,detiSet)));
+  // Zámek uplynulých měsíců — chrání historický otisk plánu pro zpětné porovnání s realitou.
+  const jeMinuly = rok<dnes.getFullYear() || (rok===dnes.getFullYear() && mesic<dnes.getMonth()+1);
+  const zamceno = jeMinuly && odemcenyMesic!==`${rok}-${mesic}`;
   const bezne=planMesice.filter(p=>!jePrevodP(p));
   const prevody=planMesice.filter(jePrevodP);
 
@@ -2507,7 +2516,7 @@ function CashflowTab(){
     reloadPlan();alert(`Zkopírováno ${kNovym.length} položek do ${MESICE[nm-1]} ${nr}.`);
   };
 
-  const tabs=[{id:"likvidita",l:"📊 Predikce likvidity"},{id:"plan",l:"📋 Plán měsíce"}];
+  const tabs=[{id:"likvidita",l:"📊 Predikce likvidity"},{id:"plan",l:"📋 Plán měsíce"},{id:"realita",l:"🎯 Plán vs. realita"}];
   // Zápis (na)plánovaného převodu z likvidity do fin_cashflow_plan.
   const ulozPrevod=async(t)=>{
     await sb.from("fin_cashflow_plan").insert({
@@ -2641,10 +2650,21 @@ function CashflowTab(){
           <button onClick={()=>{if(mesic===12){setMesic(1);setRok(r=>r+1);}else setMesic(m=>m+1);}} style={{...btnC(C.muted,true),padding:"6px 12px"}}>→</button>
         </div>
         <div style={{display:"flex",gap:8}}>
-          <button onClick={kopirujMesic} style={{...btnC(C.muted,true),fontSize:12,padding:"6px 12px"}}>📋 Kopírovat →</button>
-          <button onClick={()=>setModal("nova")} style={btnC()}>+ Přidat položku</button>
+          <button onClick={kopirujMesic} disabled={zamceno} title={zamceno?"Uplynulý měsíc je zamčený":""} style={{...btnC(C.muted,true),fontSize:12,padding:"6px 12px",opacity:zamceno?.5:1,cursor:zamceno?"not-allowed":"pointer"}}>📋 Kopírovat →</button>
+          <button onClick={()=>setModal("nova")} disabled={zamceno} style={{...btnC(),opacity:zamceno?.5:1,cursor:zamceno?"not-allowed":"pointer"}}>+ Přidat položku</button>
         </div>
       </div>
+
+      {jeMinuly&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",background:zamceno?C.accentS:C.redS,border:`1px solid ${zamceno?C.accent:C.red}`,borderRadius:10,padding:"10px 14px",marginBottom:16}}>
+          <div style={{fontSize:12.5,fontWeight:600,color:zamceno?C.accent:C.red}}>
+            {zamceno
+              ? "🔒 Uplynulý měsíc — plán je zamčený jako otisk pro zpětné porovnání s realitou."
+              : "🔓 Uplynulý měsíc odemčen — úpravy teď přepíšou historický otisk plánu. Po dokončení zase zamkni."}
+          </div>
+          <button onClick={()=>setOdemcenyMesic(zamceno?`${rok}-${mesic}`:"")} style={{...btnC(zamceno?C.accent:C.red,true),fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}}>{zamceno?"🔓 Přesto upravit":"🔒 Zamknout"}</button>
+        </div>
+      )}
 
       {/* Filtr na konkrétní účet */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,flexWrap:"wrap"}}>
@@ -2692,8 +2712,8 @@ function CashflowTab(){
                 </div>
                 <div className="cfp-right">
                   <div className="cfp-amt" style={{color:kladna?C.green:C.red}}>{kladna?"+":""}{(+p.castka).toLocaleString("cs")} Kč</div>
-                  <button onClick={()=>setModal(p)} style={{...btnC(C.accent,true),padding:"6px 10px",fontSize:13}}>✏</button>
-                  <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"6px 10px",fontSize:13}}>🗑</button>
+                  <button onClick={()=>setModal(p)} disabled={zamceno} style={{...btnC(C.accent,true),padding:"6px 10px",fontSize:13,opacity:zamceno?.45:1,cursor:zamceno?"not-allowed":"pointer"}}>✏</button>
+                  <button onClick={()=>smaz(p.id)} disabled={zamceno} style={{...btnC(C.red,true),padding:"6px 10px",fontSize:13,opacity:zamceno?.45:1,cursor:zamceno?"not-allowed":"pointer"}}>🗑</button>
                 </div>
               </div>;
             })}
@@ -2723,14 +2743,134 @@ function CashflowTab(){
               </div>
               <div className="cfp-right">
                 <div className="cfp-amt" style={{color:amtColor}}>{amtPrefix}{Math.abs(+p.castka).toLocaleString("cs")} Kč</div>
-                <button onClick={()=>setModal(p)} style={{...btnC(C.accent,true),padding:"6px 10px",fontSize:13}}>✏</button>
-                <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"6px 10px",fontSize:13}}>🗑</button>
+                <button onClick={()=>setModal(p)} disabled={zamceno} style={{...btnC(C.accent,true),padding:"6px 10px",fontSize:13,opacity:zamceno?.45:1,cursor:zamceno?"not-allowed":"pointer"}}>✏</button>
+                <button onClick={()=>smaz(p.id)} disabled={zamceno} style={{...btnC(C.red,true),padding:"6px 10px",fontSize:13,opacity:zamceno?.45:1,cursor:zamceno?"not-allowed":"pointer"}}>🗑</button>
               </div>
             </div>;
           })}
         </div>}
       </div>
     </div>}
+
+    {/* ── PLÁN vs. REALITA ── */}
+    {zalozka==="realita"&&(()=>{
+      const fmtS=(v)=>`${v>0?"+":""}${Math.round(v).toLocaleString("cs")} Kč`;
+      const fmt=(v)=>`${Math.round(v).toLocaleString("cs")} Kč`;
+      const rozdilBarva=(v)=>v>0?C.green:v<0?C.red:C.dim;
+      const th={padding:"10px 12px",textAlign:"right",fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.4,whiteSpace:"nowrap",borderBottom:`2px solid ${C.border}`};
+      const thL={...th,textAlign:"left"};
+      const td={padding:"11px 12px",textAlign:"right",fontSize:14,fontWeight:700,whiteSpace:"nowrap"};
+      const tdL={...td,textAlign:"left",fontWeight:600};
+
+      const planM=(plan||[]).filter(p=>p.rok===rok&&p.mesic===mesic&&(zahrnoutDeti||!jeDetskyUcet(p.ucet_id,detiSet)));
+      const trans=(transMesic||[]).filter(t=>zahrnoutDeti||!jeDetskyUcet(t.ucet_id,detiSet));
+      const planBezne=planM.filter(p=>!jePrevodP(p));
+      const transBezne=trans.filter(t=>!t.prevod_ucet_id);
+
+      // Souhrny
+      const pPrijmy=planBezne.filter(p=>+p.castka>0).reduce((a,p)=>a+(+p.castka),0);
+      const pVydaje=planBezne.filter(p=>+p.castka<0).reduce((a,p)=>a+Math.abs(+p.castka),0);
+      const rPrijmy=transBezne.filter(t=>+t.castka>0).reduce((a,t)=>a+(+t.castka),0);
+      const rVydaje=transBezne.filter(t=>+t.castka<0).reduce((a,t)=>a+Math.abs(+t.castka),0);
+      const souhrn=[
+        {l:"Příjmy",  plan:pPrijmy, real:rPrijmy, vetsiLepsi:true},
+        {l:"Výdaje",  plan:pVydaje, real:rVydaje, vetsiLepsi:false},
+        {l:"Bilance", plan:pPrijmy-pVydaje, real:rPrijmy-rVydaje, vetsiLepsi:true},
+      ];
+
+      // Po kategoriích (bez převodů)
+      const katMap={};
+      const pridej=(kid,key,val)=>{const k=kid==null?"none":String(kid);(katMap[k]=katMap[k]||{plan:0,real:0})[key]+=val;};
+      planBezne.forEach(p=>pridej(p.kategorie_id,"plan",+p.castka));
+      transBezne.forEach(t=>pridej(t.kategorie_id,"real",+t.castka));
+      const katRadky=Object.entries(katMap).map(([k,v])=>{
+        const kat=k==="none"?null:(kategorie||[]).find(x=>String(x.id)===k);
+        return {id:k, nazev:kat?`${kat.emoji} ${kat.nazev}`:"❔ Nezařazeno", plan:v.plan, real:v.real, rozdil:v.real-v.plan};
+      }).sort((a,b)=>Math.max(Math.abs(b.plan),Math.abs(b.real))-Math.max(Math.abs(a.plan),Math.abs(a.real)));
+
+      // Po účtech: plánovaná vs skutečná změna + reálný zůstatek (fin_stavy)
+      const realDelta=(ucetId)=>{let d=0;trans.forEach(t=>{if(t.prevod_ucet_id){const amt=Math.abs(+t.castka);if(String(t.ucet_id)===String(ucetId))d-=amt;if(String(t.prevod_ucet_id)===String(ucetId))d+=amt;}else if(String(t.ucet_id)===String(ucetId)){d+=(+t.castka);}});return d;};
+      const realStav=(ucetId)=>{const s=(stavy||[]).find(x=>String(x.ucet_id)===String(ucetId)&&x.rok===rok&&x.mesic===mesic);return s?+s.stav:null;};
+      const uctRadky=uctyView.map(u=>{
+        const pd=planDelta(u.id,rok,mesic), rd=realDelta(u.id), rs=realStav(u.id);
+        return {u, pd, rd, rozdil:rd-pd, rs};
+      }).filter(r=>r.pd!==0||r.rd!==0||r.rs!=null);
+
+      const prazdno=planM.length===0&&trans.length===0;
+
+      return <div>
+        {/* Navigace měsíce */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:18,flexWrap:"wrap"}}>
+          <button onClick={()=>{if(mesic===1){setMesic(12);setRok(r=>r-1);}else setMesic(m=>m-1);}} style={{...btnC(C.muted,true),padding:"6px 12px"}}>←</button>
+          <div style={{fontWeight:800,fontSize:18,minWidth:140,textAlign:"center"}}>{MESICE[mesic-1]} {rok}</div>
+          <button onClick={()=>{if(mesic===12){setMesic(1);setRok(r=>r+1);}else setMesic(m=>m+1);}} style={{...btnC(C.muted,true),padding:"6px 12px"}}>→</button>
+          <div style={{fontSize:12,color:C.dim,marginLeft:6}}>Plán z „Plánu měsíce" vs. reálné transakce daného měsíce.</div>
+        </div>
+
+        {transMesic===null?<Spinner/>:prazdno?(
+          <div style={{padding:"16px 18px",color:C.dim,fontSize:14,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>
+            Za {MESICE[mesic-1]} {rok} zatím není co porovnávat — chybí plán i reálné transakce.
+          </div>
+        ):<>
+          {/* Souhrnné karty */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:22}}>
+            {souhrn.map(s=>{
+              const rozdil=s.real-s.plan;
+              const dobre=s.vetsiLepsi?rozdil>=0:rozdil<=0;
+              const barva=rozdil===0?C.dim:(dobre?C.green:C.red);
+              return <div key={s.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${barva}`}}>
+                <div style={{fontSize:11.5,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:8}}>{s.l}</div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.muted,marginBottom:2}}><span>Plán</span><b style={{color:C.text}}>{fmt(s.plan)}</b></div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.muted,marginBottom:6}}><span>Skutečnost</span><b style={{color:C.text}}>{fmt(s.real)}</b></div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:14,fontWeight:800,borderTop:`1px solid ${C.border}`,paddingTop:6,color:barva}}><span>Rozdíl</span><span>{fmtS(rozdil)}</span></div>
+              </div>;
+            })}
+          </div>
+
+          {/* Po kategoriích */}
+          <div className="cfp-sec" style={{fontSize:14,fontWeight:700,color:C.muted,marginBottom:9}}>🏷️ Po kategoriích ({katRadky.length})</div>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",marginBottom:24}}>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",minWidth:440}}>
+                <thead><tr><th style={thL}>Kategorie</th><th style={th}>Plán</th><th style={th}>Skutečnost</th><th style={th}>Rozdíl</th></tr></thead>
+                <tbody>
+                  {katRadky.length===0?<tr><td colSpan={4} style={{...tdL,color:C.dim}}>Žádné položky.</td></tr>:
+                   katRadky.map((r,i)=><tr key={r.id} style={{borderBottom:i<katRadky.length-1?`1px solid ${C.border}`:"none"}}>
+                    <td style={tdL}>{r.nazev}</td>
+                    <td style={{...td,color:C.muted}}>{fmtS(r.plan)}</td>
+                    <td style={td}>{fmtS(r.real)}</td>
+                    <td style={{...td,fontWeight:800,color:rozdilBarva(r.rozdil)}}>{fmtS(r.rozdil)}</td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Po účtech */}
+          <div className="cfp-sec" style={{fontSize:14,fontWeight:700,color:C.muted,marginBottom:9}}>🏦 Po účtech — jak se lišila změna zůstatku ({uctRadky.length})</div>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",minWidth:560}}>
+                <thead><tr><th style={thL}>Účet</th><th style={th}>Plánovaná změna</th><th style={th}>Skutečná změna</th><th style={th}>Rozdíl</th><th style={th}>Reálný zůstatek</th></tr></thead>
+                <tbody>
+                  {uctRadky.length===0?<tr><td colSpan={5} style={{...tdL,color:C.dim}}>Žádný pohyb na účtech.</td></tr>:
+                   uctRadky.map((r,i)=><tr key={r.u.id} style={{borderBottom:i<uctRadky.length-1?`1px solid ${C.border}`:"none"}}>
+                    <td style={tdL}>🏦 {r.u.nazev}</td>
+                    <td style={{...td,color:C.muted}}>{fmtS(r.pd)}</td>
+                    <td style={td}>{fmtS(r.rd)}</td>
+                    <td style={{...td,fontWeight:800,color:rozdilBarva(r.rozdil)}}>{fmtS(r.rozdil)}</td>
+                    <td style={{...td,color:r.rs==null?C.dim:C.text}}>{r.rs==null?"— nezadáno":fmt(r.rs)}</td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div style={{fontSize:11.5,color:C.dim,marginTop:10,lineHeight:1.5}}>
+            „Rozdíl" = skutečnost − plán; zelená = lepší pro bilanci, červená = horší. Převody mezi tvými účty se do příjmů/výdajů nezapočítávají. „Reálný zůstatek" bereme z dohraných stavů účtů (fin_stavy) za tento měsíc.
+          </div>
+        </>}
+      </div>;
+    })()}
 
     {modal&&<CashflowModal
       polozka={modal==="nova"?null:modal}
@@ -6252,7 +6392,7 @@ function AppPinGate({children}){
   </div>;
 }
 
-export default function App() {
+function AppInner() {
   const [modul,setModul]=useState(null);
   const [upravy,setUpravy]=useState(false);
   const [poradi,setPoradi]=useState(null); // null = načítám
@@ -6448,4 +6588,56 @@ export default function App() {
       </div>
     </div>
   </div></AppPinGate>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PŘIHLAŠOVACÍ BRÁNA (Supabase Auth — e-mail + heslo). Skutečná ochrana dat
+// funguje až ve spojení se zapnutým RLS na všech tabulkách (viz SQL skript v návodu).
+// ══════════════════════════════════════════════════════════════════════════════
+const inpLogin={width:"100%",fontSize:15,padding:"13px 14px",borderRadius:12,border:"1px solid rgba(255,255,255,.2)",outline:"none",boxSizing:"border-box",background:"rgba(255,255,255,.08)",color:"#fff"};
+
+function LoginScreen(){
+  const [email,setEmail]=useState("");
+  const [heslo,setHeslo]=useState("");
+  const [chyba,setChyba]=useState("");
+  const [nacitam,setNacitam]=useState(false);
+  const prihlasit=async()=>{
+    if(!email.trim()||!heslo) return;
+    setNacitam(true); setChyba("");
+    const {error}=await sb.auth.signInWithPassword({email:email.trim(),password:heslo});
+    setNacitam(false);
+    if(error) setChyba(error.message==="Invalid login credentials"?"Nesprávný e-mail nebo heslo.":error.message);
+  };
+  return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter','Segoe UI',sans-serif",padding:20}}>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+    <div style={{background:"rgba(255,255,255,.05)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,.1)",borderRadius:24,padding:"44px 38px",maxWidth:400,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,.5)"}}>
+      <div style={{textAlign:"center",marginBottom:26}}>
+        <div style={{fontSize:52,marginBottom:12}}>🏡</div>
+        <h1 style={{fontSize:22,fontWeight:800,margin:"0 0 6px",color:"#fff"}}>{APP_NAME}</h1>
+        <p style={{color:"rgba(255,255,255,.5)",fontSize:13,margin:0}}>Přihlas se svým rodinným účtem</p>
+      </div>
+      <label style={{display:"block",color:"rgba(255,255,255,.6)",fontSize:12,fontWeight:700,marginBottom:6}}>E-mail</label>
+      <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="username" placeholder="jmeno@email.cz" style={inpLogin}/>
+      <label style={{display:"block",color:"rgba(255,255,255,.6)",fontSize:12,fontWeight:700,margin:"14px 0 6px"}}>Heslo</label>
+      <input type="password" value={heslo} onChange={e=>setHeslo(e.target.value)} autoComplete="current-password" onKeyDown={e=>e.key==="Enter"&&prihlasit()} placeholder="••••••••" style={inpLogin}/>
+      {chyba&&<div style={{color:"#ff9b9b",fontSize:12.5,marginTop:12,fontWeight:600}}>⚠ {chyba}</div>}
+      <button onClick={prihlasit} disabled={nacitam||!email.trim()||!heslo} style={{background:"#4f7ef0",color:"#fff",border:"none",borderRadius:12,padding:"14px",width:"100%",fontSize:15,fontWeight:700,cursor:"pointer",marginTop:18,opacity:(nacitam||!email.trim()||!heslo)?.6:1,transition:"opacity .2s"}}>{nacitam?"Přihlašuji…":"Přihlásit se"}</button>
+      <p style={{color:"rgba(255,255,255,.3)",fontSize:11,textAlign:"center",marginTop:18,lineHeight:1.5}}>Účty zakládá správce v Supabase. Zapomenuté heslo resetuje správce.</p>
+    </div>
+  </div>;
+}
+
+export default function App(){
+  const [session,setSession]=useState(undefined); // undefined=načítám, null=odhlášen, objekt=přihlášen
+  useEffect(()=>{
+    sb.auth.getSession().then(({data})=>setSession(data.session||null));
+    const {data:sub}=sb.auth.onAuthStateChange((_e,s)=>setSession(s||null));
+    return ()=>sub.subscription.unsubscribe();
+  },[]);
+  if(session===undefined) return <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center"}}><Spinner/></div>;
+  if(!session) return <LoginScreen/>;
+  return <>
+    <AppInner/>
+    <button onClick={()=>sb.auth.signOut()} title={`Přihlášen: ${session.user?.email||""}`} style={{position:"fixed",bottom:14,right:14,zIndex:1000,background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,padding:"7px 12px",fontSize:12,fontWeight:700,color:C.muted,cursor:"pointer",boxShadow:"0 3px 10px rgba(0,0,0,.12)"}}>🚪 Odhlásit</button>
+  </>;
 }
