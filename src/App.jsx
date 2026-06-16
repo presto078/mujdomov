@@ -1443,84 +1443,6 @@ function SpotrebaTab(){
 // ══════════════════════════════════════════════════════════════════════════════
 // FINANCE
 // ══════════════════════════════════════════════════════════════════════════════
-// ── FINANCE PIN GATE ─────────────────────────────────────────────────────────
-const FINANCE_PIN = "780519";
-
-function FinancePinGate(){
-  const [odemceno,setOdemceno]=useState(()=>sessionStorage.getItem("finance_pin")==="ok");
-  const [pin,setPin]=useState("");
-  const [chyba,setChyba]=useState(false);
-
-  const pokus=()=>{
-    if(pin===FINANCE_PIN){
-      sessionStorage.setItem("finance_pin","ok");
-      setOdemceno(true);
-    } else {
-      setChyba(true);
-      setPin("");
-      setTimeout(()=>setChyba(false),2000);
-    }
-  };
-
-  if(odemceno)return <FinanceTab/>;
-
-  return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:400}}>
-    <div style={{background:"#fff",borderRadius:20,padding:"40px 36px",maxWidth:320,width:"100%",textAlign:"center",boxShadow:"0 8px 32px rgba(0,0,0,.1)"}}>
-      <div style={{fontSize:48,marginBottom:12}}>🔒</div>
-      <h2 style={{fontSize:20,fontWeight:800,margin:"0 0 6px"}}>Finance</h2>
-      <p style={{color:"#6b7280",fontSize:13,marginBottom:24}}>Zadej PIN pro přístup</p>
-      <input
-        type="password"
-        inputMode="numeric"
-        maxLength={6}
-        value={pin}
-        onChange={e=>setPin(e.target.value)}
-        onKeyDown={e=>e.key==="Enter"&&pokus()}
-        placeholder="• • • • • •"
-        autoFocus
-        style={{width:"100%",textAlign:"center",fontSize:22,letterSpacing:6,padding:"12px",borderRadius:10,border:`2px solid ${chyba?"#e05555":"#e2e6f0"}`,outline:"none",boxSizing:"border-box",marginBottom:8,transition:"border-color .2s"}}
-      />
-      {chyba&&<div style={{color:"#e05555",fontSize:12,marginBottom:8}}>Špatný PIN, zkus znovu</div>}
-      <button
-        onClick={pokus}
-        style={{background:"#3b6fd4",color:"#fff",border:"none",borderRadius:10,padding:"11px",width:"100%",fontSize:14,fontWeight:700,cursor:"pointer",marginTop:4}}
-      >Přihlásit se</button>
-    </div>
-  </div>;
-}
-
-// Cashflow modul sdílí stejný PIN i odemčení jako Finance (Realita).
-function CashflowPinGate(){
-  const [odemceno,setOdemceno]=useState(()=>sessionStorage.getItem("finance_pin")==="ok");
-  const [pin,setPin]=useState("");
-  const [chyba,setChyba]=useState(false);
-
-  const pokus=()=>{
-    if(pin===FINANCE_PIN){
-      sessionStorage.setItem("finance_pin","ok");
-      setOdemceno(true);
-    } else {
-      setChyba(true);setPin("");
-      setTimeout(()=>setChyba(false),2000);
-    }
-  };
-
-  if(odemceno)return <CashflowTab/>;
-
-  return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:400}}>
-    <div style={{background:"#fff",borderRadius:20,padding:"40px 36px",maxWidth:320,width:"100%",textAlign:"center",boxShadow:"0 8px 32px rgba(0,0,0,.1)"}}>
-      <div style={{fontSize:48,marginBottom:12}}>🔒</div>
-      <h2 style={{fontSize:20,fontWeight:800,margin:"0 0 6px"}}>Cashflow</h2>
-      <p style={{color:"#6b7280",fontSize:13,marginBottom:24}}>Zadej PIN pro přístup</p>
-      <input type="password" inputMode="numeric" maxLength={6} value={pin}
-        onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&pokus()}
-        placeholder="• • • • • •" autoFocus
-        style={{width:"100%",textAlign:"center",fontSize:22,letterSpacing:6,padding:"12px",borderRadius:10,border:`2px solid ${chyba?"#e05555":"#e2e6f0"}`,outline:"none",boxSizing:"border-box",marginBottom:8,transition:"border-color .2s"}}/>
-      {chyba&&<div style={{color:"#e05555",fontSize:12,marginBottom:8}}>Špatný PIN, zkus znovu</div>}
-      <button onClick={pokus} style={{background:"#3b6fd4",color:"#fff",border:"none",borderRadius:10,padding:"11px",width:"100%",fontSize:14,fontWeight:700,cursor:"pointer",marginTop:4}}>Přihlásit se</button>
-    </div>
-  </div>;
-}
 
 function FinanceTab(){
   const [zalozka,setZalozka]=useState("dashboard");
@@ -6344,54 +6266,6 @@ function TydenWidget(){
   </div>;
 }
 
-// ── GLOBÁLNÍ PIN GATE ────────────────────────────────────────────────────────
-const APP_PIN = "5257";
-
-function AppPinGate({children}){
-  const [ok,setOk]=useState(()=>sessionStorage.getItem("app_pin")==="ok");
-  const [pin,setPin]=useState("");
-  const [chyba,setChyba]=useState(false);
-  const [pokusů,setPokusu]=useState(0);
-
-  const pokus=()=>{
-    if(pin===APP_PIN){
-      sessionStorage.setItem("app_pin","ok");
-      setOk(true);
-    } else {
-      setPokusu(p=>p+1);
-      setChyba(true);
-      setPin("");
-      setTimeout(()=>setChyba(false),2000);
-    }
-  };
-
-  if(ok)return children;
-
-  return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-    <div style={{background:"rgba(255,255,255,.05)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,.1)",borderRadius:24,padding:"48px 40px",maxWidth:380,width:"100%",textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.5)"}}>
-      <div style={{fontSize:52,marginBottom:16}}>🏡</div>
-      <h1 style={{fontSize:22,fontWeight:800,margin:"0 0 6px",color:"#fff"}}>{APP_NAME}</h1>
-      <p style={{color:"rgba(255,255,255,.5)",fontSize:13,marginBottom:8}}>Rodinný operační systém</p>
-      <p style={{color:"rgba(255,255,255,.35)",fontSize:12,marginBottom:28}}>Pro přístup zadej 15znakové heslo</p>
-      <input
-        type="password"
-        value={pin}
-        onChange={e=>setPin(e.target.value)}
-        onKeyDown={e=>e.key==="Enter"&&pokus()}
-        placeholder="••••••••••••••••"
-        autoFocus
-        style={{width:"100%",textAlign:"center",fontSize:20,letterSpacing:6,padding:"14px",borderRadius:12,border:`2px solid ${chyba?"#e05555":"rgba(255,255,255,.2)"}`,outline:"none",boxSizing:"border-box",marginBottom:8,background:"rgba(255,255,255,.08)",color:"#fff",transition:"border-color .2s"}}
-      />
-      {chyba&&<div style={{color:"#e05555",fontSize:12,marginBottom:8}}>Nesprávné heslo{pokusů>2?" — zkontroluj Caps Lock":""}</div>}
-      <button onClick={pokus} style={{background:"#4f7ef0",color:"#fff",border:"none",borderRadius:12,padding:"13px",width:"100%",fontSize:15,fontWeight:700,cursor:"pointer",marginTop:4,transition:"opacity .2s"}}
-        onMouseEnter={e=>e.currentTarget.style.opacity=".85"}
-        onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
-        Přihlásit se
-      </button>
-    </div>
-  </div>;
-}
-
 function AppInner() {
   const [modul,setModul]=useState(null);
   const [upravy,setUpravy]=useState(false);
@@ -6484,8 +6358,8 @@ function AppInner() {
         {modul==="ukoly"    && <UkolyTab/>}
         {modul==="spotreba" && <SpotrebaTab/>}
         {modul==="voda"     && <VodaTab/>}
-        {modul==="finance"  && <FinancePinGate/>}
-        {modul==="cashflow" && <CashflowPinGate/>}
+        {modul==="finance"  && <FinanceTab/>}
+        {modul==="cashflow" && <CashflowTab/>}
         {modul==="dum"      && <DumTab/>}
         {modul==="auta"     && <AutaTab/>}
         {modul==="poznamky" && <PoznamkyTab/>}
@@ -6498,7 +6372,7 @@ function AppInner() {
     </div>;
   }
 
-  return <AppPinGate><div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter','Segoe UI',sans-serif",color:C.text}}>
+  return <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter','Segoe UI',sans-serif",color:C.text}}>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"/>
     <style>{globalStyle}</style>
     {/* Header */}
@@ -6587,7 +6461,7 @@ function AppInner() {
         ))}
       </div>
     </div>
-  </div></AppPinGate>;
+  </div>;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
