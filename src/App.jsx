@@ -4206,6 +4206,40 @@ function AlimentyTab(){
   const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("alimenty_nastaveni").select("*"));
 
   const {data:slatky_dluhu,reload:reloadSplatky}=useData(()=>sb.from("alimenty_splatky_dluhu").select("*").order("datum",{ascending:false}));
+  const {data:ucty}=useData(()=>sb.from("fin_ucty").select("id,nazev").eq("aktivni",true).order("poradi"));
+
+  // Výchozí účet pro alimenty = Moneta běžný (fallback první účet)
+  const monetaId=(ucty||[]).find(u=>/moneta\s*běžný/i.test(u.nazev||""))?.id || (ucty||[])[0]?.id || null;
+
+  // Zrcadlení platby do cashflow (fin_transakce): otec→matce = příjem (+), matka→otci = výdaj (−).
+  // Promítne se jen platba s reálným datem a nenulovou částkou. Drží se 1:1 přes alimenty_platby.fin_transakce_id.
+  const syncPlatbaDoCashflow=async(p)=>{
+    if(!p) return;
+    const aktivni = p.typ==="alimenty" && p.datum && Number(p.castka)>0 && (p.ucet_id||monetaId);
+    if(aktivni){
+      const prijem = p.kdo_plati==="otec"; // otec platí matce = příjem; matka platí otci = výdaj
+      const tData={
+        ucet_id:p.ucet_id||monetaId,
+        datum:p.datum,
+        castka:(prijem?1:-1)*Math.abs(Number(p.castka)),
+        kategorie_id:null,
+        popis:`Alimenty${p.mesic?" "+p.mesic:""} (${p.kdo_plati}→${p.komu||""})`.trim(),
+        protistrana:"Alimenty Šíma",
+        typ:prijem?"prijem":"vydaj",
+        prevod_ucet_id:null,
+      };
+      if(p.fin_transakce_id){
+        await sb.from("fin_transakce").update(tData).eq("id",p.fin_transakce_id);
+      } else {
+        const {data:nova}=await sb.from("fin_transakce").insert(tData).select("id").single();
+        if(nova?.id) await sb.from("alimenty_platby").update({fin_transakce_id:nova.id}).eq("id",p.id);
+      }
+    } else if(p.fin_transakce_id){
+      // už nesplňuje podmínky (nulová částka / chybí datum) → zruš spárovaný pohyb
+      await sb.from("fin_transakce").delete().eq("id",p.fin_transakce_id);
+      await sb.from("alimenty_platby").update({fin_transakce_id:null}).eq("id",p.id);
+    }
+  };
 
   // Auto-vytvoření plateb pro aktuální měsíc pokud chybí
   const autoVytvorRef=useRef(false);
@@ -4280,7 +4314,7 @@ function AlimentyTab(){
 
   // ── Sdílený modal Přidat platbu ──
   const [pridatModal,setPridatModal]=useState(false);
-  const pridatForm0={typ:"alimenty",kdo_plati:"otec",komu:"matce",komu_text:"",mesic:mesice[mesice.length-1]||"",datum:"",castka:"",poznamka:""};
+  const pridatForm0={typ:"alimenty",kdo_plati:"otec",komu:"matce",komu_text:"",mesic:mesice[mesice.length-1]||"",datum:"",castka:"",poznamka:"",ucet_id:""};
   const [pf,setPf]=useState(pridatForm0);
 
   const napoveda=()=>{
@@ -4406,14 +4440,22 @@ function AlimentyTab(){
     };
 
     const ulozEditAlim=async()=>{
-      await sb.from("alimenty_platby").update({
+      const {data:upr}=await sb.from("alimenty_platby").update({
         kdo_plati:editFormA.kdo_plati,komu:editFormA.komu,komu_text:editFormA.komu_text||null,
         mesic:editFormA.mesic,castka:parseInt(editFormA.castka),
         datum:editFormA.datum||null,poznamka:editFormA.poznamka||null,
-      }).eq("id",editAlim.id);
+        ucet_id:editFormA.ucet_id||monetaId||null,
+      }).eq("id",editAlim.id).select().single();
+      if(upr) await syncPlatbaDoCashflow(upr);
       reloadPlatby();setEditAlim(null);
     };
-    const smazAlim=async(id)=>{if(!confirm("Smazat tuto platbu?"))return;await sb.from("alimenty_platby").delete().eq("id",id);reloadPlatby();};
+    const smazAlim=async(id)=>{
+      if(!confirm("Smazat tuto platbu?"))return;
+      const {data:row}=await sb.from("alimenty_platby").select("fin_transakce_id").eq("id",id).single();
+      if(row?.fin_transakce_id) await sb.from("fin_transakce").delete().eq("id",row.fin_transakce_id);
+      await sb.from("alimenty_platby").delete().eq("id",id);
+      reloadPlatby();
+    };
 
     const ulozEditMim=async()=>{
       const celkem=parseInt(editFormM.castka_celkem);
@@ -4484,7 +4526,7 @@ function AlimentyTab(){
                 <td style={{padding:"10px 12px",fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>{p.datum?new Date(p.datum).toLocaleDateString("cs-CZ"):"—"}</td>
                 <td style={{padding:"10px 12px",fontSize:12,color:C.muted}}>{p.poznamka||""}</td>
                 <td style={{padding:"10px 8px",whiteSpace:"nowrap"}}>
-                  <button onClick={()=>{setEditAlim(p);setEditFormA({kdo_plati:p.kdo_plati,komu:p.komu,komu_text:p.komu_text||"",mesic:p.mesic||"",castka:String(p.castka),datum:p.datum||"",poznamka:p.poznamka||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
+                  <button onClick={()=>{setEditAlim(p);setEditFormA({kdo_plati:p.kdo_plati,komu:p.komu,komu_text:p.komu_text||"",mesic:p.mesic||"",castka:String(p.castka),datum:p.datum||"",poznamka:p.poznamka||"",ucet_id:p.ucet_id||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
                   <button onClick={()=>smazAlim(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
                 </td>
               </tr>;
@@ -4562,6 +4604,12 @@ function AlimentyTab(){
               {f.opts.map(o=>typeof o==="string"?<option key={o} value={o}>{o}</option>:<option key={o.v} value={o.v}>{o.l}</option>)}
             </select>:<input style={inp} type={f.t} value={editFormA[f.k]||""} onChange={e=>setEditFormA(p=>({...p,[f.k]:e.target.value}))}/>}
           </div>)}
+          <div style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Účet (pro cashflow)</div>
+            <select style={inp} value={editFormA.ucet_id||monetaId||""} onChange={e=>setEditFormA(p=>({...p,ucet_id:e.target.value}))}>
+              {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
+            </select>
+          </div>
           <div style={{display:"flex",gap:10,marginTop:16}}>
             <button onClick={ulozEditAlim} style={btnC()}>Uložit</button>
             <button onClick={()=>setEditAlim(null)} style={btnC(C.muted,true)}>Zrušit</button>
@@ -4912,8 +4960,9 @@ function AlimentyTab(){
     const [zobrazit,setZobrazit]=useState("platba"); // platba | mimoradne
 
     const ulozPlatbuLocal=async()=>{
-      const data={typ:mf.typ,kdo_plati:mf.kdo_plati,komu:mf.komu,komu_text:mf.komu_text||null,mesic:mf.typ==="alimenty"?mf.mesic:null,datum:mf.datum||null,castka:parseInt(mf.castka),poznamka:mf.poznamka||null};
-      await sb.from("alimenty_platby").insert(data);
+      const data={typ:mf.typ,kdo_plati:mf.kdo_plati,komu:mf.komu,komu_text:mf.komu_text||null,mesic:mf.typ==="alimenty"?mf.mesic:null,datum:mf.datum||null,castka:parseInt(mf.castka),poznamka:mf.poznamka||null,ucet_id:mf.ucet_id||monetaId||null};
+      const {data:nova}=await sb.from("alimenty_platby").insert(data).select().single();
+      if(nova) await syncPlatbaDoCashflow(nova);
       reloadAll();setPridatModal(false);
     };
 
@@ -4968,6 +5017,13 @@ function AlimentyTab(){
           <div style={{marginBottom:12}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Datum platby</div>
             <input style={inp} type="date" value={mf.datum} onChange={e=>setMf(p=>({...p,datum:e.target.value}))}/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Účet {mf.kdo_plati==="otec"?"(kam přijde)":"(odkud odejde)"}</div>
+            <select style={inp} value={mf.ucet_id||monetaId||""} onChange={e=>setMf(p=>({...p,ucet_id:e.target.value}))}>
+              {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
+            </select>
+            <div style={{fontSize:11,color:C.dim,marginTop:5}}>Promítne se do cashflow daného měsíce jako {mf.kdo_plati==="otec"?"příjem (+)":"výdaj (−)"} — jen když má datum a nenulovou částku.</div>
           </div>
           <div style={{marginBottom:20}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Poznámka</div>
