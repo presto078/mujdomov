@@ -4224,6 +4224,15 @@ function AlimentyTab(){
   // Výchozí účet pro alimenty = Moneta běžný (fallback první účet)
   const monetaId=(ucty||[]).find(u=>/moneta\s*běžný/i.test(u.nazev||""))?.id || (ucty||[])[0]?.id || null;
   const alimentyKatId=(kategorieFin||[]).find(k=>/aliment/i.test(k.nazev||""))?.id||null;
+  const detiKatId=(kategorieFin||[]).find(k=>/^děti$|^deti$/i.test(k.nazev||""))?.id||null;
+
+  // Najde (nebo založí) kategorii dle názvu a vrátí její id.
+  const ensureKat=async(nazev,emoji,typ,barva)=>{
+    const {data:ex}=await sb.from("fin_kategorie").select("id").ilike("nazev",nazev).limit(1);
+    if(ex&&ex[0]) return ex[0].id;
+    const {data:nk}=await sb.from("fin_kategorie").insert({nazev,emoji,typ,barva,poradi:900}).select("id").single();
+    return nk?.id||null;
+  };
 
   // Zrcadlení platby do cashflow (fin_transakce): otec→matce = příjem (+), matka→otci = výdaj (−).
   // Promítne se jen platba s reálným datem a nenulovou částkou. Drží se 1:1 přes alimenty_platby.fin_transakce_id.
@@ -4232,16 +4241,7 @@ function AlimentyTab(){
     const aktivni = p.typ==="alimenty" && p.datum && Number(p.castka)>0 && (p.ucet_id||monetaId);
     if(aktivni){
       const prijem = p.kdo_plati==="otec"; // otec platí matce = příjem; matka platí otci = výdaj
-      // Zajisti kategorii „Alimenty" (ať to v cashflow není „Nezařazeno")
-      let katId=alimentyKatId;
-      if(!katId){
-        const {data:ex}=await sb.from("fin_kategorie").select("id").ilike("nazev","aliment%").limit(1);
-        katId=ex&&ex[0]?ex[0].id:null;
-        if(!katId){
-          const {data:nk}=await sb.from("fin_kategorie").insert({nazev:"Alimenty",emoji:"⚖️",typ:"prijem",barva:"#c0392b",poradi:900}).select("id").single();
-          katId=nk?.id||null;
-        }
-      }
+      const katId = alimentyKatId || await ensureKat("Alimenty","⚖️","prijem","#c0392b");
       const tData={
         ucet_id:p.ucet_id||monetaId,
         datum:p.datum,
@@ -4262,6 +4262,42 @@ function AlimentyTab(){
       // už nesplňuje podmínky (nulová částka / chybí datum) → zruš spárovaný pohyb
       await sb.from("fin_transakce").delete().eq("id",p.fin_transakce_id);
       await sb.from("alimenty_platby").update({fin_transakce_id:null}).eq("id",p.id);
+    }
+  };
+
+  // KROK 2 — zrcadlení mimořádného dětského výdaje:
+  //  • REALITA (fin_transakce): výdaj „Děti" ve výši toho, co reálně odešlo z účtu matky
+  //    (její podíl; když platila i za otce, tak celá částka).
+  //  • PLÁN (fin_cashflow_plan, aktuální měsíc): očekávaný PŘÍJEM = podíl otce, který dluží zpět
+  //    (jen když matka zaplatila za otce). Drží se přes fin_transakce_id / fin_plan_id.
+  const syncMimoradneDoCashflow=async(m)=>{
+    if(!m) return;
+    const ucetId=m.ucet_id||monetaId;
+    const vydaj = m.matka_zaplatila_za_otce ? Number(m.castka_celkem) : (m.matka_zaplatila_skolce ? Number(m.podil_matky) : 0);
+    const dluhOtce = m.matka_zaplatila_za_otce ? Number(m.podil_otce) : 0;
+
+    // 1) Realita – výdaj na děti
+    if(vydaj>0 && ucetId && m.datum){
+      const detiKat = detiKatId || await ensureKat("Děti","🧒","vydaj","#e67e22");
+      const tData={ucet_id:ucetId,datum:m.datum,castka:-Math.abs(vydaj),kategorie_id:detiKat,popis:`Mimořádné ${m.dite}: ${m.popis||""}`.trim(),protistrana:"Děti / mimořádné",typ:"vydaj",prevod_ucet_id:null};
+      if(m.fin_transakce_id) await sb.from("fin_transakce").update(tData).eq("id",m.fin_transakce_id);
+      else { const {data:nt}=await sb.from("fin_transakce").insert(tData).select("id").single(); if(nt?.id) await sb.from("alimenty_mimoradne").update({fin_transakce_id:nt.id}).eq("id",m.id); }
+    } else if(m.fin_transakce_id){
+      await sb.from("fin_transakce").delete().eq("id",m.fin_transakce_id);
+      await sb.from("alimenty_mimoradne").update({fin_transakce_id:null}).eq("id",m.id);
+    }
+
+    // 2) Plán – očekávaný příjem (podíl otce k vrácení) v měsíci výdaje
+    if(dluhOtce>0){
+      const d=m.datum?new Date(m.datum):new Date();
+      const rok=d.getFullYear(), mesic=d.getMonth()+1;
+      const alimKat = alimentyKatId || await ensureKat("Alimenty","⚖️","prijem","#c0392b");
+      const planData={rok,mesic,nazev:`Doplatek od otce (${m.dite}): ${m.popis||""}`.trim(),castka:Math.abs(dluhOtce),kategorie_id:alimKat,ucet_id:ucetId,opakovani:"jednorazove",datum_do:null,prevod_ucet_id:null,dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null,poznamka:"Podíl otce k vrácení (auto)"};
+      if(m.fin_plan_id) await sb.from("fin_cashflow_plan").update(planData).eq("id",m.fin_plan_id);
+      else { const {data:np}=await sb.from("fin_cashflow_plan").insert(planData).select("id").single(); if(np?.id) await sb.from("alimenty_mimoradne").update({fin_plan_id:np.id}).eq("id",m.id); }
+    } else if(m.fin_plan_id){
+      await sb.from("fin_cashflow_plan").delete().eq("id",m.fin_plan_id);
+      await sb.from("alimenty_mimoradne").update({fin_plan_id:null}).eq("id",m.id);
     }
   };
 
@@ -4320,7 +4356,30 @@ function AlimentyTab(){
     return total;
   };
 
-  // Měsíce od dubna 2026 do 12 měsíců dopředu
+  // KROK 1 — promítnutí očekávaných sazeb do cashflow plánu (jen tento + příští měsíc).
+  // Minulé/zamčené měsíce se nedotýká. Při opakování přepíše (neduplicituje) dle názvu.
+  const promitniPlanAlimentu=async()=>{
+    const d=new Date();
+    const cur={rok:d.getFullYear(),mesic:d.getMonth()+1};
+    const nm = cur.mesic===12?{rok:cur.rok+1,mesic:1}:{rok:cur.rok,mesic:cur.mesic+1};
+    const katId = alimentyKatId || await ensureKat("Alimenty","⚖️","prijem","#c0392b");
+    const baseCols={kategorie_id:katId,ucet_id:monetaId,opakovani:"jednorazove",datum_do:null,prevod_ucet_id:null,dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null,poznamka:"Očekávaná sazba dle rozsudku (auto)"};
+    for(const mm of [cur,nm]){
+      const key=`${mm.rok}-${String(mm.mesic).padStart(2,"0")}`;
+      const rows=[
+        {nazev:"Alimenty (otec → matka)", castka: Math.abs(getSazbaProMesic(key)||0)},
+        {nazev:"Alimenty (matka → otec)", castka: -Math.abs(getSazbaMatkaOtec(key)||0)},
+      ];
+      for(const r of rows){
+        const {data:ex}=await sb.from("fin_cashflow_plan").select("id").eq("rok",mm.rok).eq("mesic",mm.mesic).eq("nazev",r.nazev).limit(1);
+        if(!r.castka){ if(ex&&ex[0]) await sb.from("fin_cashflow_plan").delete().eq("id",ex[0].id); continue; }
+        const data={rok:mm.rok,mesic:mm.mesic,nazev:r.nazev,castka:r.castka,...baseCols};
+        if(ex&&ex[0]) await sb.from("fin_cashflow_plan").update(data).eq("id",ex[0].id);
+        else await sb.from("fin_cashflow_plan").insert(data);
+      }
+    }
+    alert("Hotovo — očekávané alimenty promítnuty do cashflow plánu (tento + příští měsíc).");
+  };
   const mesice=[];
   const mesiceAktualni=[];
   const mStart=new Date(2026,3,1);
@@ -4483,7 +4542,7 @@ function AlimentyTab(){
 
     const ulozEditMim=async()=>{
       const celkem=parseInt(editFormM.castka_celkem);
-      await sb.from("alimenty_mimoradne").update({
+      const {data:upr}=await sb.from("alimenty_mimoradne").update({
         datum:editFormM.datum,popis:editFormM.popis,dite:editFormM.dite,
         castka_celkem:celkem,podil_matky:Math.round(celkem/2),podil_otce:Math.round(celkem/2),
         matka_zaplatila_skolce:editFormM.matka_zaplatila_skolce,
@@ -4491,10 +4550,19 @@ function AlimentyTab(){
         matka_zaplatila_za_otce:editFormM.matka_zaplatila_za_otce,
         otec_zaplatil_za_matku:editFormM.otec_zaplatil_za_matku,
         poznamka:editFormM.poznamka||null,
-      }).eq("id",editMim.id);
+        ucet_id:editFormM.ucet_id||monetaId||null,
+      }).eq("id",editMim.id).select().single();
+      if(upr) await syncMimoradneDoCashflow(upr);
       reloadMim();setEditMim(null);
     };
-    const smazMim=async(id)=>{if(!confirm("Smazat tento výdaj?"))return;await sb.from("alimenty_mimoradne").delete().eq("id",id);reloadMim();};
+    const smazMim=async(id)=>{
+      if(!confirm("Smazat tento výdaj?"))return;
+      const {data:row}=await sb.from("alimenty_mimoradne").select("fin_transakce_id,fin_plan_id").eq("id",id).single();
+      if(row?.fin_transakce_id) await sb.from("fin_transakce").delete().eq("id",row.fin_transakce_id);
+      if(row?.fin_plan_id) await sb.from("fin_cashflow_plan").delete().eq("id",row.fin_plan_id);
+      await sb.from("alimenty_mimoradne").delete().eq("id",id);
+      reloadMim();
+    };
 
     return <div>
       {/* Dlaždice pro mimořádný výdaj a splátku dluhu */}
@@ -4517,7 +4585,10 @@ function AlimentyTab(){
         </div>
       </div>
 
-      {/* Upozornění na chybějící měsíce */}
+      <button onClick={promitniPlanAlimentu} style={{...btnC(C.green,true),width:"100%",padding:"12px",fontSize:13,fontWeight:700,marginBottom:20}}>
+        📅 Promítnout očekávané alimenty do cashflow plánu (tento + příští měsíc)
+      </button>
+
       {chybejiciMesice.length>0&&<div style={{background:C.orangeS,border:`1px solid ${C.orange}`,borderRadius:10,padding:"12px 16px",marginBottom:20,fontSize:13,color:C.orange}}>
         ⚠ Chybí platba za: {chybejiciMesice.map(m=>new Date(m+"-01").toLocaleDateString("cs-CZ",{month:"long",year:"numeric"})).join(", ")}
       </div>}
@@ -4603,7 +4674,7 @@ function AlimentyTab(){
                 <td style={{padding:"9px 10px",fontSize:11,color:dluhSkolka.length?C.red:C.green,fontWeight:dluhSkolka.length?700:400}}>{dluhSkolka.join(", ")||"✓ Vše uhrazeno"}</td>
                 <td style={{padding:"9px 10px",fontSize:11,color:dluhRodice.length?C.orange:C.green,fontWeight:dluhRodice.length?700:400}}>{dluhRodice.join(", ")||"✓ Vyrovnáno"}</td>
                 <td style={{padding:"9px 8px",whiteSpace:"nowrap"}}>
-                  <button onClick={()=>{setEditMim(m);setEditFormM({datum:m.datum,popis:m.popis,dite:m.dite,castka_celkem:String(m.castka_celkem),matka_zaplatila_skolce:m.matka_zaplatila_skolce,otec_zaplatil_skolce:m.otec_zaplatil_skolce,matka_zaplatila_za_otce:m.matka_zaplatila_za_otce,otec_zaplatil_za_matku:m.otec_zaplatil_za_matku,poznamka:m.poznamka||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
+                  <button onClick={()=>{setEditMim(m);setEditFormM({datum:m.datum,popis:m.popis,dite:m.dite,castka_celkem:String(m.castka_celkem),matka_zaplatila_skolce:m.matka_zaplatila_skolce,otec_zaplatil_skolce:m.otec_zaplatil_skolce,matka_zaplatila_za_otce:m.matka_zaplatila_za_otce,otec_zaplatil_za_matku:m.otec_zaplatil_za_matku,poznamka:m.poznamka||"",ucet_id:m.ucet_id||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
                   <button onClick={()=>smazMim(m.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
                 </td>
               </tr>;
@@ -4667,6 +4738,12 @@ function AlimentyTab(){
               <input type="checkbox" checked={!!editFormM[ch.k]} onChange={e=>setEditFormM(p=>({...p,[ch.k]:e.target.checked}))}/>
               {ch.l}
             </label>)}
+          </div>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Účet (pro cashflow)</div>
+            <select style={inp} value={editFormM.ucet_id||monetaId||""} onChange={e=>setEditFormM(p=>({...p,ucet_id:e.target.value}))}>
+              {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
+            </select>
           </div>
           <div style={{marginBottom:14}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Poznámka</div>
@@ -4980,7 +5057,7 @@ function AlimentyTab(){
   // ── MODAL: Přidat platbu ──
   const PridatModal=()=>{
     const [mf,setMf]=useState(pf);
-    const [mimForm,setMimForm]=useState({datum:"",popis:"",dite:"Oba",castka_celkem:"",matka_zaplatila_skolce:false,otec_zaplatil_skolce:false,matka_zaplatila_za_otce:false,otec_zaplatil_za_matku:false,poznamka:""});
+    const [mimForm,setMimForm]=useState({datum:"",popis:"",dite:"Oba",castka_celkem:"",matka_zaplatila_skolce:false,otec_zaplatil_skolce:false,matka_zaplatila_za_otce:false,otec_zaplatil_za_matku:false,poznamka:"",ucet_id:""});
     const [zobrazit,setZobrazit]=useState("platba"); // platba | mimoradne
 
     const ulozPlatbuLocal=async()=>{
@@ -4993,8 +5070,9 @@ function AlimentyTab(){
     const ulozMimoradne=async()=>{
       const celkem=parseInt(mimForm.castka_celkem);
       const podil=Math.round(celkem/2);
-      const data={datum:mimForm.datum,popis:mimForm.popis,dite:mimForm.dite,castka_celkem:celkem,podil_matky:podil,podil_otce:podil,matka_zaplatila_skolce:mimForm.matka_zaplatila_skolce,otec_zaplatil_skolce:mimForm.otec_zaplatil_skolce,matka_zaplatila_za_otce:mimForm.matka_zaplatila_za_otce,otec_zaplatil_za_matku:mimForm.otec_zaplatil_za_matku,poznamka:mimForm.poznamka||null};
-      await sb.from("alimenty_mimoradne").insert(data);
+      const data={datum:mimForm.datum,popis:mimForm.popis,dite:mimForm.dite,castka_celkem:celkem,podil_matky:podil,podil_otce:podil,matka_zaplatila_skolce:mimForm.matka_zaplatila_skolce,otec_zaplatil_skolce:mimForm.otec_zaplatil_skolce,matka_zaplatila_za_otce:mimForm.matka_zaplatila_za_otce,otec_zaplatil_za_matku:mimForm.otec_zaplatil_za_matku,poznamka:mimForm.poznamka||null,ucet_id:mimForm.ucet_id||monetaId||null};
+      const {data:nm}=await sb.from("alimenty_mimoradne").insert(data).select().single();
+      if(nm) await syncMimoradneDoCashflow(nm);
       reloadAll();setPridatModal(false);
     };
 
@@ -5086,6 +5164,13 @@ function AlimentyTab(){
               <input type="checkbox" checked={mimForm[ch.k]} onChange={e=>setMimForm(p=>({...p,[ch.k]:e.target.checked}))}/>
               {ch.l}
             </label>)}
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Účet (odkud výdaj odešel)</div>
+            <select style={inp} value={mimForm.ucet_id||monetaId||""} onChange={e=>setMimForm(p=>({...p,ucet_id:e.target.value}))}>
+              {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
+            </select>
+            <div style={{fontSize:11,color:C.dim,marginTop:5}}>Do cashflow se promítne jako výdaj „Děti" (tvůj reálný výdaj). Pokud platíš i za otce, jeho podíl se zároveň přidá do plánu jako očekávaný příjem (doplatek).</div>
           </div>
           <div style={{marginBottom:20}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Poznámka</div>
