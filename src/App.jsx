@@ -4356,29 +4356,31 @@ function AlimentyTab(){
     return total;
   };
 
-  // KROK 1 — promítnutí očekávaných sazeb do cashflow plánu (jen tento + příští měsíc).
-  // Minulé/zamčené měsíce se nedotýká. Při opakování přepíše (neduplicituje) dle názvu.
+  // KROK 1 — promítnutí očekávané sazby alimentů do cashflow plánu (jen tento + příští měsíc).
+  // Jediný řádek „Alimenty Šíma" = základní sazba BEZ splátky dluhu (ta se přidá ručně, až poběží).
+  // Minulé/zamčené měsíce se nedotýká. Ruční řádky (Tereza, kluci…) se NEMĚNÍ.
   const promitniPlanAlimentu=async(silent)=>{
     const d=new Date();
     const cur={rok:d.getFullYear(),mesic:d.getMonth()+1};
     const nm = cur.mesic===12?{rok:cur.rok+1,mesic:1}:{rok:cur.rok,mesic:cur.mesic+1};
     const katId = alimentyKatId || await ensureKat("Alimenty","⚖️","prijem","#c0392b");
-    const baseCols={kategorie_id:katId,ucet_id:monetaId,opakovani:"jednorazove",datum_do:null,prevod_ucet_id:null,dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null,poznamka:"Očekávaná sazba dle rozsudku (auto)"};
+    const baseCols={kategorie_id:katId,ucet_id:monetaId,opakovani:"jednorazove",datum_do:null,prevod_ucet_id:null,dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null,poznamka:"Očekávaná sazba alimentů Šíma (auto, bez splátky dluhu)"};
     for(const mm of [cur,nm]){
       const key=`${mm.rok}-${String(mm.mesic).padStart(2,"0")}`;
-      const rows=[
-        {nazev:"Alimenty (otec → matka)", castka: Math.abs(getSazbaProMesic(key)||0)},
-        {nazev:"Alimenty (matka → otec)", castka: -Math.abs(getSazbaMatkaOtec(key)||0)},
-      ];
-      for(const r of rows){
-        const {data:ex}=await sb.from("fin_cashflow_plan").select("id").eq("rok",mm.rok).eq("mesic",mm.mesic).eq("nazev",r.nazev).limit(1);
-        if(!r.castka){ if(ex&&ex[0]) await sb.from("fin_cashflow_plan").delete().eq("id",ex[0].id); continue; }
-        const data={rok:mm.rok,mesic:mm.mesic,nazev:r.nazev,castka:r.castka,...baseCols};
+      // úklid starých auto-řádků z předchozí verze (sloučené 9 000 / −2 500)
+      await sb.from("fin_cashflow_plan").delete().eq("rok",mm.rok).eq("mesic",mm.mesic).in("nazev",["Alimenty (otec → matka)","Alimenty (matka → otec)"]);
+      // očekávaná alimentová sazba BEZ splátky dluhu
+      const base = Math.abs((getSazbaProMesic(key)||0) - (key>=SPLATKA_OD?splatkaM:0));
+      const {data:ex}=await sb.from("fin_cashflow_plan").select("id").eq("rok",mm.rok).eq("mesic",mm.mesic).eq("nazev","Alimenty Šíma").limit(1);
+      if(base>0){
+        const data={rok:mm.rok,mesic:mm.mesic,nazev:"Alimenty Šíma",castka:base,...baseCols};
         if(ex&&ex[0]) await sb.from("fin_cashflow_plan").update(data).eq("id",ex[0].id);
         else await sb.from("fin_cashflow_plan").insert(data);
+      } else if(ex&&ex[0]) {
+        await sb.from("fin_cashflow_plan").delete().eq("id",ex[0].id);
       }
     }
-    if(!silent) alert("Hotovo — očekávané alimenty promítnuty do cashflow plánu (tento + příští měsíc).");
+    if(!silent) alert("Hotovo — Alimenty Šíma (6 500) promítnuty do plánu (tento + příští měsíc).");
   };
 
   // Automatika: po načtení sazeb/účtů se očekávané alimenty samy promítnou do cashflow plánu
