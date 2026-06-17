@@ -4358,7 +4358,7 @@ function AlimentyTab(){
 
   // KROK 1 — promítnutí očekávaných sazeb do cashflow plánu (jen tento + příští měsíc).
   // Minulé/zamčené měsíce se nedotýká. Při opakování přepíše (neduplicituje) dle názvu.
-  const promitniPlanAlimentu=async()=>{
+  const promitniPlanAlimentu=async(silent)=>{
     const d=new Date();
     const cur={rok:d.getFullYear(),mesic:d.getMonth()+1};
     const nm = cur.mesic===12?{rok:cur.rok+1,mesic:1}:{rok:cur.rok,mesic:cur.mesic+1};
@@ -4378,8 +4378,18 @@ function AlimentyTab(){
         else await sb.from("fin_cashflow_plan").insert(data);
       }
     }
-    alert("Hotovo — očekávané alimenty promítnuty do cashflow plánu (tento + příští měsíc).");
+    if(!silent) alert("Hotovo — očekávané alimenty promítnuty do cashflow plánu (tento + příští měsíc).");
   };
+
+  // Automatika: po načtení sazeb/účtů se očekávané alimenty samy promítnou do cashflow plánu
+  // (tento + příští měsíc). Běží jednou za otevření modulu; minulé/zamčené měsíce se netýká.
+  const planAutoRef=useRef(false);
+  useEffect(()=>{
+    if(planAutoRef.current) return;
+    if(sazby===null||ucty===null||kategorieFin===null) return;
+    planAutoRef.current=true;
+    promitniPlanAlimentu(true);
+  },[sazby,ucty,kategorieFin]);
   const mesice=[];
   const mesiceAktualni=[];
   const mStart=new Date(2026,3,1);
@@ -4585,9 +4595,9 @@ function AlimentyTab(){
         </div>
       </div>
 
-      <button onClick={promitniPlanAlimentu} style={{...btnC(C.green,true),width:"100%",padding:"12px",fontSize:13,fontWeight:700,marginBottom:20}}>
-        📅 Promítnout očekávané alimenty do cashflow plánu (tento + příští měsíc)
-      </button>
+      <div style={{fontSize:11.5,color:C.dim,marginBottom:20,textAlign:"center",fontStyle:"italic"}}>
+        📅 Očekávané alimenty se do cashflow plánu (tento + příští měsíc) doplňují automaticky dle sazeb.
+      </div>
 
       {chybejiciMesice.length>0&&<div style={{background:C.orangeS,border:`1px solid ${C.orange}`,borderRadius:10,padding:"12px 16px",marginBottom:20,fontSize:13,color:C.orange}}>
         ⚠ Chybí platba za: {chybejiciMesice.map(m=>new Date(m+"-01").toLocaleDateString("cs-CZ",{month:"long",year:"numeric"})).join(", ")}
