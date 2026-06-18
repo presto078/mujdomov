@@ -2308,6 +2308,7 @@ function CashflowTab(){
   const [sim,setSim]=useState(null);         // otevřený simulátor {u, idx}
   const [filtrUcet,setFiltrUcet]=useState(""); // "" = všechny účty; jinak id účtu (jen Plán měsíce)
   const [filtrKat,setFiltrKat]=useState("");   // "" = všechny kategorie; jinak id kategorie (jen Plán měsíce)
+  const [realitaPohled,setRealitaPohled]=useState("ucty"); // "ucty" | "kategorie" — pohled v Plán vs realita
   const [odemcenyMesic,setOdemcenyMesic]=useState(""); // "rok-mesic" vědomě odemčeného uplynulého měsíce v Plánu
 
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
@@ -2761,9 +2762,17 @@ function CashflowTab(){
             })}
           </div>
 
+          {/* Přepínač pohledu */}
+          <div style={{display:"flex",gap:6,marginBottom:16,background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:4,maxWidth:340}}>
+            {[{k:"ucty",l:"🏦 Podle účtů"},{k:"kategorie",l:"🏷️ Podle kategorií"}].map(o=>
+              <button key={o.k} onClick={()=>setRealitaPohled(o.k)} style={{flex:1,padding:"8px 10px",border:"none",borderRadius:7,cursor:"pointer",fontSize:13,fontWeight:700,background:realitaPohled===o.k?C.accent:"transparent",color:realitaPohled===o.k?"#fff":C.muted,transition:"all .15s"}}>{o.l}</button>
+            )}
+          </div>
+
+          {realitaPohled==="kategorie" ? <>
           {/* Po kategoriích */}
           <div className="cfp-sec" style={{fontSize:14,fontWeight:700,color:C.muted,marginBottom:9}}>🏷️ Po kategoriích ({katRadky.length})</div>
-          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",marginBottom:24}}>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",marginBottom:10}}>
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",minWidth:440}}>
                 <thead><tr><th style={thL}>Kategorie</th><th style={th}>Plán</th><th style={th}>Skutečnost</th><th style={th}>Rozdíl</th></tr></thead>
@@ -2779,7 +2788,10 @@ function CashflowTab(){
               </table>
             </div>
           </div>
-
+          <div style={{fontSize:11.5,color:C.dim,marginTop:0,marginBottom:8,lineHeight:1.5}}>
+            Skutečnost se počítá z reálných transakcí (modul Finance) za tento měsíc — dokud je nemáš zadané, bude u většiny kategorií 0.
+          </div>
+          </> : <>
           {/* Po účtech */}
           <div className="cfp-sec" style={{fontSize:14,fontWeight:700,color:C.muted,marginBottom:9}}>🏦 Po účtech — jak se lišila změna zůstatku ({uctRadky.length})</div>
           <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
@@ -2802,6 +2814,7 @@ function CashflowTab(){
           <div style={{fontSize:11.5,color:C.dim,marginTop:10,lineHeight:1.5}}>
             „Rozdíl" = skutečnost − plán; zelená = lepší pro bilanci, červená = horší. Převody mezi tvými účty se do příjmů/výdajů nezapočítávají. „Reálný zůstatek" bereme z dohraných stavů účtů (fin_stavy) za tento měsíc.
           </div>
+          </>}
         </>}
       </div>;
     })()}
@@ -6335,6 +6348,574 @@ function AutoNastaveni({auto,reload,onBack}){
   </div>;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// MODUL: ÚČTY & PC — evidence uživatelských účtů, hesel, licencí a hardwaru
+//
+// ZABEZPEČENÍ (zero-knowledge trezor):
+//   • Hardware a názvy zůstávají čitelné (kvůli přehledu a hledání).
+//   • Tajné údaje (hesla, 2FA/recovery kódy, licenční klíče, tajné poznámky)
+//     se šifrují PŘÍMO v prohlížeči — Web Crypto, AES-256-GCM, klíč je odvozen
+//     PBKDF2 (210k iterací) z "hlavního hesla". Do Supabase i do případného
+//     exportu jde jen šifrovaný text → bez hlavního hesla je nepřečte nikdo,
+//     ani správce v Supabase dashboardu.
+//   • Hlavní heslo se NIKAM neukládá (v DB je jen ověřovací blok). Když ho
+//     zapomeneš, tajné údaje jsou nenávratně ztracené — to je smysl zero-knowledge.
+//   • Trezor se po 10 min nečinnosti a po odchodu z modulu sám zamkne.
+// ══════════════════════════════════════════════════════════════════════════════
+const VAULT_META_KEY   = "it_vault_meta";       // řádek v app_nastaveni (klic)
+const VAULT_CHECK_PLAIN= "DOMOV_TREZOR_OK_v1";  // ověřovací řetězec
+const _ITenc=new TextEncoder(), _ITdec=new TextDecoder();
+const _itB64  =(buf)=>btoa(String.fromCharCode(...new Uint8Array(buf)));
+const _itUnb64=(s)=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+
+async function vaultDeriveKey(heslo,saltBytes){
+  const base=await crypto.subtle.importKey("raw",_ITenc.encode(heslo),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    {name:"PBKDF2",salt:saltBytes,iterations:210000,hash:"SHA-256"},
+    base,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]
+  );
+}
+async function vaultEncrypt(key,plain){
+  if(plain==null||plain==="") return "";
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,_ITenc.encode(String(plain)));
+  return _itB64(iv)+":"+_itB64(ct);
+}
+async function vaultDecrypt(key,payload){
+  if(!payload) return "";
+  const i=payload.indexOf(":"); if(i<0) return "";
+  const iv=_itUnb64(payload.slice(0,i)), ct=_itUnb64(payload.slice(i+1));
+  const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,ct);
+  return _ITdec.decode(pt);
+}
+// Načti metadata trezoru z app_nastaveni (null = trezor ještě neexistuje)
+async function vaultLoadMeta(){
+  const {data}=await sb.from("app_nastaveni").select("hodnota").eq("klic",VAULT_META_KEY).limit(1);
+  const row=data&&data[0];
+  if(!row?.hodnota) return null;
+  try{return JSON.parse(row.hodnota);}catch{return null;}
+}
+async function vaultSaveMeta(meta){
+  const {data:ex}=await sb.from("app_nastaveni").select("klic").eq("klic",VAULT_META_KEY).limit(1);
+  if(ex&&ex.length) {
+    const {error}=await sb.from("app_nastaveni").update({hodnota:JSON.stringify(meta)}).eq("klic",VAULT_META_KEY);
+    if(error) throw new Error(error.message);
+  } else {
+    const {error}=await sb.from("app_nastaveni").insert({klic:VAULT_META_KEY,hodnota:JSON.stringify(meta)});
+    if(error) throw new Error(error.message);
+  }
+}
+// Vytvoř trezor poprvé → vrátí odvozený klíč
+async function vaultCreate(heslo){
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const key=await vaultDeriveKey(heslo,salt);
+  const check=await vaultEncrypt(key,VAULT_CHECK_PLAIN);
+  await vaultSaveMeta({salt:_itB64(salt),check});
+  return key;
+}
+// Odemkni → ověří heslo proti uloženému check bloku, vrátí klíč
+async function vaultUnlock(heslo,meta){
+  const key=await vaultDeriveKey(heslo,_itUnb64(meta.salt));
+  let ok=false;
+  try{ ok=(await vaultDecrypt(key,meta.check))===VAULT_CHECK_PLAIN; }catch{ ok=false; }
+  if(!ok) throw new Error("Nesprávné hlavní heslo.");
+  return key;
+}
+
+// ── Číselníky ─────────────────────────────────────────────────────────────────
+const IT_ZARIZENI_TYPY={
+  pc:{label:"Stolní PC",icon:"🖥",color:C.accent},
+  notebook:{label:"Notebook",icon:"💻",color:C.purple},
+  tablet:{label:"Tablet",icon:"📱",color:C.blue},
+  telefon:{label:"Telefon",icon:"📞",color:C.green},
+  nas:{label:"NAS / server",icon:"🗄",color:C.orange},
+  jine:{label:"Jiné",icon:"🔌",color:C.muted},
+};
+const IT_SLUZBY={
+  microsoft:{label:"Microsoft",icon:"🪟",color:"#0078d4"},
+  google:{label:"Google",icon:"🔵",color:"#ea4335"},
+  apple:{label:"Apple",icon:"🍎",color:"#555"},
+  email:{label:"E-mail",icon:"✉️",color:C.blue},
+  banka:{label:"Banka / finance",icon:"🏦",color:C.green},
+  sit:{label:"Síť / router / Wi-Fi",icon:"📶",color:C.orange},
+  jiny:{label:"Jiný software",icon:"🔑",color:C.purple},
+};
+const IT_LIC_TYPY={
+  windows:{label:"Windows",icon:"🪟",color:"#0078d4"},
+  office:{label:"Office",icon:"📊",color:"#d83b01"},
+  antivir:{label:"Antivir",icon:"🛡",color:C.green},
+  jiny:{label:"Jiný SW",icon:"🎫",color:C.purple},
+};
+
+// ── Brána trezoru (setup poprvé / odemčení) ───────────────────────────────────
+function ITVaultGate({meta,onReady}){
+  const isSetup=!meta;
+  const [heslo,setHeslo]=useState("");
+  const [heslo2,setHeslo2]=useState("");
+  const [chyba,setChyba]=useState("");
+  const [busy,setBusy]=useState(false);
+  const podporovano = typeof crypto!=="undefined" && crypto.subtle;
+
+  const odeslat=async()=>{
+    setChyba("");
+    if(!heslo) { setChyba("Zadej hlavní heslo."); return; }
+    if(isSetup){
+      if(heslo.length<8){ setChyba("Hlavní heslo by mělo mít aspoň 8 znaků."); return; }
+      if(heslo!==heslo2){ setChyba("Hesla se neshodují."); return; }
+    }
+    setBusy(true);
+    try{
+      const key = isSetup ? await vaultCreate(heslo) : await vaultUnlock(heslo, meta);
+      const novaMeta = isSetup ? await vaultLoadMeta() : null;
+      onReady(key, novaMeta);
+    }catch(e){ setChyba(e.message||"Něco se nepovedlo."); }
+    finally{ setBusy(false); }
+  };
+
+  return <div style={{maxWidth:440,margin:"40px auto"}}>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderTop:`4px solid ${C.accent}`,borderRadius:16,padding:"32px 28px",boxShadow:"0 4px 20px rgba(0,0,0,.06)"}}>
+      <div style={{textAlign:"center",marginBottom:18}}>
+        <div style={{fontSize:42,marginBottom:8}}>🔐</div>
+        <div style={{fontWeight:800,fontSize:19,color:C.text}}>{isSetup?"Založit trezor účtů":"Odemknout trezor"}</div>
+        <div style={{fontSize:12.5,color:C.muted,marginTop:6,lineHeight:1.5}}>
+          {isSetup
+            ? "Nastav hlavní heslo. Tímto heslem se v prohlížeči zašifrují všechna hesla a licenční klíče — do databáze jde jen šifrovaný text."
+            : "Zadej hlavní heslo, kterým se dešifrují uložené tajné údaje."}
+        </div>
+      </div>
+
+      {!podporovano && <div style={{background:C.redS,border:`1px solid ${C.red}`,borderRadius:10,padding:"10px 14px",fontSize:12.5,color:C.red,marginBottom:14}}>
+        ⚠ Tento prohlížeč/spojení nepodporuje Web Crypto (potřeba HTTPS nebo localhost). Trezor nelze použít.
+      </div>}
+
+      <Field label="Hlavní heslo">
+        <input style={inp} type="password" value={heslo} autoFocus autoComplete="new-password"
+          onChange={e=>setHeslo(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&!isSetup)odeslat();}}
+          placeholder="••••••••"/>
+      </Field>
+      {isSetup&&<Field label="Hlavní heslo znovu">
+        <input style={inp} type="password" value={heslo2} autoComplete="new-password"
+          onChange={e=>setHeslo2(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter")odeslat();}}
+          placeholder="••••••••"/>
+      </Field>}
+
+      {isSetup&&<div style={{background:C.orangeS,border:`1px solid ${C.orange}44`,borderRadius:10,padding:"10px 14px",fontSize:12,color:C.orange,marginBottom:14,lineHeight:1.5}}>
+        ⚠ Hlavní heslo se nikam neukládá. <b>Když ho zapomeneš, tajné údaje už nikdo nedešifruje.</b> Ulož si ho na bezpečné místo (např. správce hesel nebo papír v šuplíku).
+      </div>}
+
+      {chyba&&<div style={{color:C.red,fontSize:12.5,fontWeight:600,marginBottom:12}}>⚠ {chyba}</div>}
+
+      <button onClick={odeslat} disabled={busy||!podporovano} style={{...btnC(),width:"100%",padding:"12px",fontSize:14,opacity:(busy||!podporovano)?.6:1}}>
+        {busy?"Pracuji…":(isSetup?"Založit a odemknout":"Odemknout")}
+      </button>
+    </div>
+  </div>;
+}
+
+// ── Zobrazení jednoho tajného údaje (lazy dešifrování + kopírování) ────────────
+function ITSecretRow({vaultKey,label,payload,emoji="🔑"}){
+  const [shown,setShown]=useState(false);
+  const [plain,setPlain]=useState("");
+  const [copied,setCopied]=useState(false);
+  if(!payload) return null;
+  const ensure=async()=>{ if(plain) return plain; try{const t=await vaultDecrypt(vaultKey,payload);setPlain(t);return t;}catch{setPlain("⚠ nelze dešifrovat");return "";} };
+  const toggle=async()=>{ if(!shown)await ensure(); setShown(s=>!s); };
+  const copy=async()=>{ const t=await ensure(); try{await navigator.clipboard.writeText(t);setCopied(true);setTimeout(()=>setCopied(false),1200);}catch{} };
+  return <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+    <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:96}}>{emoji} {label}</span>
+    <code style={{flex:1,fontSize:13,fontFamily:"ui-monospace,Menlo,monospace",color:C.text,wordBreak:"break-all",userSelect:"all"}}>{shown?(plain||"—"):"••••••••••"}</code>
+    <button onClick={toggle} title={shown?"Skrýt":"Zobrazit"} style={{...btnC(C.muted,true),padding:"3px 9px",fontSize:13}}>{shown?"🙈":"👁"}</button>
+    <button onClick={copy} title="Kopírovat" style={{...btnC(C.accent,true),padding:"3px 9px",fontSize:13}}>{copied?"✓":"📋"}</button>
+  </div>;
+}
+
+// ── ZAŘÍZENÍ (hardware — bez šifrování) ───────────────────────────────────────
+function ITZarizeniModal({zarizeni,onClose,onSaved}){
+  const isNew=!zarizeni;
+  const [f,setF]=useState({
+    nazev:zarizeni?.nazev||"", typ:zarizeni?.typ||"pc", uzivatel:zarizeni?.uzivatel||"",
+    vyrobce:zarizeni?.vyrobce||"", model:zarizeni?.model||"", serie_cislo:zarizeni?.serie_cislo||"",
+    cpu:zarizeni?.cpu||"", ram:zarizeni?.ram||"", disk:zarizeni?.disk||"", gpu:zarizeni?.gpu||"",
+    os:zarizeni?.os||"", mac:zarizeni?.mac||"", ip:zarizeni?.ip||"", poznamka:zarizeni?.poznamka||"",
+  });
+  const [saving,setSaving]=useState(false);
+  const [chyba,setChyba]=useState("");
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const uloz=async()=>{
+    if(!f.nazev.trim()){setChyba("Vyplň název zařízení.");return;}
+    setSaving(true);setChyba("");
+    const data={...f}; Object.keys(data).forEach(k=>{if(data[k]==="")data[k]=null;}); data.nazev=f.nazev.trim();
+    const {error}= isNew ? await sb.from("it_zarizeni").insert(data) : await sb.from("it_zarizeni").update(data).eq("id",zarizeni.id);
+    setSaving(false);
+    if(error){setChyba(error.message);return;}
+    onSaved();
+  };
+  return <Modal title={isNew?"Nové zařízení":"Upravit zařízení"} onClose={onClose} width={520}>
+    <Field label="Název *" hint="Jak zařízení voláš"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus placeholder="např. Honzíkův notebook"/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Typ"><select style={inp} value={f.typ} onChange={set("typ")}>{Object.entries(IT_ZARIZENI_TYPY).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}</select></Field>
+      <Field label="Uživatel"><input style={inp} value={f.uzivatel} onChange={set("uzivatel")} placeholder="Komu patří"/></Field>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Výrobce"><input style={inp} value={f.vyrobce} onChange={set("vyrobce")} placeholder="Dell, Lenovo, HP…"/></Field>
+      <Field label="Model"><input style={inp} value={f.model} onChange={set("model")} placeholder="Latitude 5440…"/></Field>
+    </div>
+    <Field label="Sériové číslo (S/N)"><input style={inp} value={f.serie_cislo} onChange={set("serie_cislo")} placeholder="Pro servis / záruku"/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Procesor (CPU)"><input style={inp} value={f.cpu} onChange={set("cpu")} placeholder="Intel i5-1335U"/></Field>
+      <Field label="Operační paměť (RAM)"><input style={inp} value={f.ram} onChange={set("ram")} placeholder="16 GB"/></Field>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Disk"><input style={inp} value={f.disk} onChange={set("disk")} placeholder="512 GB SSD"/></Field>
+      <Field label="Grafika (GPU)"><input style={inp} value={f.gpu} onChange={set("gpu")} placeholder="Intel Iris Xe"/></Field>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+      <Field label="OS"><input style={inp} value={f.os} onChange={set("os")} placeholder="Windows 11 Pro"/></Field>
+      <Field label="MAC adresa"><input style={inp} value={f.mac} onChange={set("mac")} placeholder="00:1A:2B…"/></Field>
+      <Field label="IP adresa"><input style={inp} value={f.ip} onChange={set("ip")} placeholder="192.168.0.10"/></Field>
+    </div>
+    <Field label="Poznámka"><textarea style={{...inp,resize:"vertical",minHeight:56}} value={f.poznamka} onChange={set("poznamka")} placeholder="Záruka do…, kde stojí, atd."/></Field>
+    {chyba&&<div style={{color:C.red,fontSize:12.5,fontWeight:600,marginBottom:10}}>⚠ {chyba}</div>}
+    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
+      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+      <button onClick={uloz} disabled={saving} style={btnC()}>{saving?"Ukládám…":"Uložit"}</button>
+    </div>
+  </Modal>;
+}
+
+function ITZarizeniSekce(){
+  const {data:zarizeni,loading,reload}=useData(()=>sb.from("it_zarizeni").select("*").order("nazev"));
+  const [modal,setModal]=useState(null); // null | "new" | objekt
+  const smaz=async(z)=>{if(!confirm(`Smazat zařízení "${z.nazev}"?`))return;await sb.from("it_zarizeni").delete().eq("id",z.id);reload();};
+  if(loading) return <Spinner/>;
+  const list=zarizeni||[];
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <div style={{color:C.text,fontWeight:800,fontSize:16}}>🖥 Zařízení <span style={{color:C.muted,fontWeight:400,fontSize:14}}>({list.length})</span></div>
+      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat zařízení</button>
+    </div>
+    {list.length===0&&<EmptyState emoji="🖥" text="Žádná zařízení" action="+ Přidat zařízení" onAction={()=>setModal("new")}/>}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+      {list.map(z=>{
+        const t=IT_ZARIZENI_TYPY[z.typ]||IT_ZARIZENI_TYPY.jine;
+        const radky=[
+          z.cpu&&["CPU",z.cpu],z.ram&&["RAM",z.ram],z.disk&&["Disk",z.disk],z.gpu&&["GPU",z.gpu],
+          z.os&&["OS",z.os],z.serie_cislo&&["S/N",z.serie_cislo],z.mac&&["MAC",z.mac],z.ip&&["IP",z.ip],
+        ].filter(Boolean);
+        return <div key={z.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:16,borderLeft:`4px solid ${t.color}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <div style={{width:42,height:42,borderRadius:11,background:`${t.color}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:21}}>{t.icon}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:800,fontSize:15,color:C.text}}>{z.nazev}</div>
+              <div style={{fontSize:12,color:C.muted}}>{[t.label,[z.vyrobce,z.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</div>
+            </div>
+          </div>
+          {z.uzivatel&&<div style={{marginBottom:8}}><Tag color={t.color}>👤 {z.uzivatel}</Tag></div>}
+          {radky.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"3px 10px",fontSize:12,marginBottom:10}}>
+            {radky.map(([k,v])=><div key={k} style={{display:"flex",gap:5,minWidth:0}}><span style={{color:C.dim,fontWeight:700}}>{k}:</span><span style={{color:C.text,wordBreak:"break-all"}}>{v}</span></div>)}
+          </div>}
+          {z.poznamka&&<div style={{fontSize:11,color:C.dim,fontStyle:"italic",marginBottom:8}}>{z.poznamka}</div>}
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setModal(z)} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
+            <button onClick={()=>smaz(z)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
+          </div>
+        </div>;
+      })}
+    </div>
+    {modal&&<ITZarizeniModal zarizeni={modal==="new"?null:modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+  </div>;
+}
+
+// ── ÚČTY / PŘIHLÁŠENÍ (heslo + 2FA + recovery šifrované) ───────────────────────
+function ITUcetModal({vaultKey,ucet,zarizeni,onClose,onSaved}){
+  const isNew=!ucet;
+  const [f,setF]=useState({nazev:ucet?.nazev||"",sluzba:ucet?.sluzba||"microsoft",login:ucet?.login||"",url:ucet?.url||"",zarizeni_id:ucet?.zarizeni_id||""});
+  const [s,setS]=useState({heslo:"",dvojfaktor:"",recovery:"",tajna_poznamka:""});
+  const [loadingSecret,setLoadingSecret]=useState(!isNew);
+  const [saving,setSaving]=useState(false);
+  const [chyba,setChyba]=useState("");
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const setS_=k=>e=>setS(p=>({...p,[k]:e.target.value}));
+  useEffect(()=>{
+    if(isNew) return;
+    (async()=>{
+      try{ const raw=await vaultDecrypt(vaultKey,ucet.tajne); const o=raw?JSON.parse(raw):{}; setS({heslo:o.heslo||"",dvojfaktor:o.dvojfaktor||"",recovery:o.recovery||"",tajna_poznamka:o.tajna_poznamka||""}); }
+      catch{ setChyba("Tajné údaje se nepodařilo dešifrovat (jiné hlavní heslo?)."); }
+      setLoadingSecret(false);
+    })();
+  },[]);
+  const uloz=async()=>{
+    if(!f.nazev.trim()){setChyba("Vyplň název účtu.");return;}
+    setSaving(true);setChyba("");
+    try{
+      const tajne=await vaultEncrypt(vaultKey,JSON.stringify({heslo:s.heslo,dvojfaktor:s.dvojfaktor,recovery:s.recovery,tajna_poznamka:s.tajna_poznamka}));
+      const data={nazev:f.nazev.trim(),sluzba:f.sluzba,login:f.login||null,url:f.url||null,zarizeni_id:f.zarizeni_id||null,tajne};
+      const {error}= isNew ? await sb.from("it_ucty").insert(data) : await sb.from("it_ucty").update(data).eq("id",ucet.id);
+      if(error) throw new Error(error.message);
+      onSaved();
+    }catch(e){ setChyba(e.message||"Uložení selhalo."); }
+    finally{ setSaving(false); }
+  };
+  return <Modal title={isNew?"Nový účet / přihlášení":"Upravit účet"} onClose={onClose} width={480} accent={C.accent}>
+    <Field label="Název *" hint="Co to je za účet"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus placeholder="např. Microsoft – Jirka"/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Služba"><select style={inp} value={f.sluzba} onChange={set("sluzba")}>{Object.entries(IT_SLUZBY).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}</select></Field>
+      <Field label="Zařízení (volitelně)"><select style={inp} value={f.zarizeni_id} onChange={set("zarizeni_id")}><option value="">— žádné —</option>{(zarizeni||[]).map(z=><option key={z.id} value={z.id}>{(IT_ZARIZENI_TYPY[z.typ]||IT_ZARIZENI_TYPY.jine).icon} {z.nazev}</option>)}</select></Field>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Přihlašovací jméno / e-mail"><input style={inp} value={f.login} onChange={set("login")} placeholder="jmeno@email.cz" autoComplete="off"/></Field>
+      <Field label="Web / adresa"><input style={inp} value={f.url} onChange={set("url")} placeholder="login.microsoft.com"/></Field>
+    </div>
+
+    <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginTop:4,marginBottom:14}}>
+      <div style={{fontSize:11,fontWeight:800,color:C.accent,letterSpacing:.5,textTransform:"uppercase",marginBottom:10}}>🔐 Šifrované údaje</div>
+      {loadingSecret?<div style={{fontSize:12,color:C.muted,padding:"6px 0"}}>Dešifruji…</div>:<>
+        <Field label="Heslo"><input style={inp} type="text" value={s.heslo} onChange={setS_("heslo")} placeholder="••••••••" autoComplete="off"/></Field>
+        <Field label="2FA / ověření" hint="TOTP klíč, kód, aplikace…"><input style={inp} value={s.dvojfaktor} onChange={setS_("dvojfaktor")} placeholder="Volitelné" autoComplete="off"/></Field>
+        <Field label="Záložní (recovery) kódy"><textarea style={{...inp,resize:"vertical",minHeight:50}} value={s.recovery} onChange={setS_("recovery")} placeholder="Volitelné — jeden na řádek" autoComplete="off"/></Field>
+        <Field label="Tajná poznámka"><textarea style={{...inp,resize:"vertical",minHeight:44}} value={s.tajna_poznamka} onChange={setS_("tajna_poznamka")} placeholder="Bezpečnostní otázky apod."/></Field>
+      </>}
+    </div>
+
+    {chyba&&<div style={{color:C.red,fontSize:12.5,fontWeight:600,marginBottom:10}}>⚠ {chyba}</div>}
+    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
+      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+      <button onClick={uloz} disabled={saving||loadingSecret} style={btnC()}>{saving?"Šifruji a ukládám…":"Uložit"}</button>
+    </div>
+  </Modal>;
+}
+
+function ITUcetDetail({vaultKey,ucet,zarizeni,onEdit,onClose}){
+  const sl=IT_SLUZBY[ucet.sluzba]||IT_SLUZBY.jiny;
+  const z=(zarizeni||[]).find(x=>String(x.id)===String(ucet.zarizeni_id));
+  return <Modal title={`${sl.icon} ${ucet.nazev}`} onClose={onClose} width={460} accent={sl.color}>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16,padding:14,background:C.bg,borderRadius:12}}>
+      <div style={{width:48,height:48,borderRadius:12,background:`${sl.color}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>{sl.icon}</div>
+      <div style={{minWidth:0}}>
+        <div style={{fontWeight:800,fontSize:16,color:C.text}}>{ucet.nazev}</div>
+        <div style={{fontSize:12,color:C.muted}}>{sl.label}{z?` · 🖥 ${z.nazev}`:""}</div>
+      </div>
+    </div>
+    {ucet.login&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+      <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:96}}>👤 Login</span>
+      <code style={{flex:1,fontSize:13,fontFamily:"ui-monospace,Menlo,monospace",color:C.text,wordBreak:"break-all",userSelect:"all"}}>{ucet.login}</code>
+      <button onClick={()=>navigator.clipboard.writeText(ucet.login)} title="Kopírovat" style={{...btnC(C.accent,true),padding:"3px 9px",fontSize:13}}>📋</button>
+    </div>}
+    {ucet.url&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+      <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:96}}>🌐 Web</span>
+      <span style={{flex:1,fontSize:13,color:C.text,wordBreak:"break-all"}}>{ucet.url}</span>
+    </div>}
+    <ITSecretsBlok vaultKey={vaultKey} payload={ucet.tajne}/>
+    <div style={{display:"flex",justifyContent:"flex-end",marginTop:18}}>
+      <button onClick={onEdit} style={btnC()}>✎ Upravit</button>
+    </div>
+  </Modal>;
+}
+
+// Řádek s už dešifrovanou hodnotou (maskuje, odhalí, kopíruje) — bez dalšího šifrování
+function ITPlainSecretRow({label,value,emoji="🔑"}){
+  const [shown,setShown]=useState(false);
+  const [copied,setCopied]=useState(false);
+  if(!value) return null;
+  const copy=async()=>{ try{await navigator.clipboard.writeText(value);setCopied(true);setTimeout(()=>setCopied(false),1200);}catch{} };
+  return <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+    <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:96}}>{emoji} {label}</span>
+    <code style={{flex:1,fontSize:13,fontFamily:"ui-monospace,Menlo,monospace",color:C.text,wordBreak:"break-all",whiteSpace:"pre-wrap",userSelect:"all"}}>{shown?value:"••••••••••"}</code>
+    <button onClick={()=>setShown(s=>!s)} title={shown?"Skrýt":"Zobrazit"} style={{...btnC(C.muted,true),padding:"3px 9px",fontSize:13}}>{shown?"🙈":"👁"}</button>
+    <button onClick={copy} title="Kopírovat" style={{...btnC(C.accent,true),padding:"3px 9px",fontSize:13}}>{copied?"✓":"📋"}</button>
+  </div>;
+}
+// Rozbalí šifrovaný JSON blok účtu a vykreslí jednotlivé tajné řádky
+function ITSecretsBlok({vaultKey,payload}){
+  const [obj,setObj]=useState(undefined); // undefined=načítám, null=chyba, {}
+  useEffect(()=>{
+    let alive=true;
+    (async()=>{
+      try{ const raw=await vaultDecrypt(vaultKey,payload); if(alive) setObj(raw?JSON.parse(raw):{}); }
+      catch{ if(alive) setObj(null); }
+    })();
+    return ()=>{alive=false;};
+  },[payload]);
+  if(obj===undefined) return <div style={{fontSize:12,color:C.muted,padding:"8px 0"}}>Dešifruji…</div>;
+  if(obj===null) return <div style={{fontSize:12.5,color:C.red,padding:"8px 0",fontWeight:600}}>⚠ Tajné údaje nelze dešifrovat tímto hlavním heslem.</div>;
+  const nic=!obj.heslo&&!obj.dvojfaktor&&!obj.recovery&&!obj.tajna_poznamka;
+  if(nic) return <div style={{fontSize:12,color:C.dim,padding:"8px 0"}}>U tohoto účtu nejsou uložené žádné tajné údaje.</div>;
+  return <div>
+    <ITPlainSecretRow label="Heslo"    value={obj.heslo}          emoji="🔑"/>
+    <ITPlainSecretRow label="2FA"      value={obj.dvojfaktor}     emoji="📱"/>
+    <ITPlainSecretRow label="Recovery" value={obj.recovery}       emoji="🆘"/>
+    <ITPlainSecretRow label="Poznámka" value={obj.tajna_poznamka} emoji="📝"/>
+  </div>;
+}
+
+function ITUctySekce({vaultKey}){
+  const {data:ucty,loading,reload}=useData(()=>sb.from("it_ucty").select("*").order("nazev"));
+  const {data:zarizeni}=useData(()=>sb.from("it_zarizeni").select("id,nazev,typ").order("nazev"));
+  const [modal,setModal]=useState(null);   // null | "new" | objekt (edit)
+  const [detail,setDetail]=useState(null);
+  const [hledat,setHledat]=useState("");
+  const smaz=async(u)=>{if(!confirm(`Smazat účet "${u.nazev}"?`))return;await sb.from("it_ucty").delete().eq("id",u.id);reload();};
+  if(loading) return <Spinner/>;
+  const list=(ucty||[]).filter(u=>!hledat||`${u.nazev} ${u.login||""}`.toLowerCase().includes(hledat.toLowerCase()));
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+      <div style={{color:C.text,fontWeight:800,fontSize:16}}>🔑 Účty & přihlášení <span style={{color:C.muted,fontWeight:400,fontSize:14}}>({(ucty||[]).length})</span></div>
+      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat účet</button>
+    </div>
+    <input style={{...inp,maxWidth:320,marginBottom:14}} value={hledat} onChange={e=>setHledat(e.target.value)} placeholder="🔎 Hledat podle názvu nebo loginu…"/>
+    {list.length===0&&<EmptyState emoji="🔑" text="Žádné účty" action="+ Přidat účet" onAction={()=>setModal("new")}/>}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:10}}>
+      {list.map(u=>{
+        const sl=IT_SLUZBY[u.sluzba]||IT_SLUZBY.jiny;
+        return <div key={u.id} onClick={()=>setDetail(u)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:14,borderLeft:`4px solid ${sl.color}`,cursor:"pointer"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+            <div style={{width:40,height:40,borderRadius:10,background:`${sl.color}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{sl.icon}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:14,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.nazev}</div>
+              <div style={{fontSize:12,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.login||sl.label}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6}} onClick={e=>e.stopPropagation()}>
+            <span style={{flex:1,fontSize:11,color:C.dim}}>🔐 šifrováno</span>
+            <button onClick={()=>setDetail(u)} style={{...btnC(C.accent,true),padding:"3px 9px",fontSize:12}}>👁 Otevřít</button>
+            <button onClick={()=>setModal(u)} style={{...btnC(C.muted,true),padding:"3px 9px",fontSize:12}}>✎</button>
+            <button onClick={()=>smaz(u)} style={{...btnC(C.red,true),padding:"3px 9px",fontSize:12}}>✕</button>
+          </div>
+        </div>;
+      })}
+    </div>
+    {detail&&<ITUcetDetail vaultKey={vaultKey} ucet={detail} zarizeni={zarizeni} onEdit={()=>{const u=detail;setDetail(null);setModal(u);}} onClose={()=>setDetail(null)}/>}
+    {modal&&<ITUcetModal vaultKey={vaultKey} ucet={modal==="new"?null:modal} zarizeni={zarizeni} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+  </div>;
+}
+
+// ── LICENCE (klíč šifrovaný) ──────────────────────────────────────────────────
+function ITLicenceModal({vaultKey,licence,zarizeni,onClose,onSaved}){
+  const isNew=!licence;
+  const [f,setF]=useState({nazev:licence?.nazev||"",typ:licence?.typ||"windows",verze:licence?.verze||"",email_uctu:licence?.email_uctu||"",zarizeni_id:licence?.zarizeni_id||"",poznamka:licence?.poznamka||""});
+  const [klic,setKlic]=useState("");
+  const [loadingSecret,setLoadingSecret]=useState(!isNew);
+  const [saving,setSaving]=useState(false);
+  const [chyba,setChyba]=useState("");
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  useEffect(()=>{
+    if(isNew) return;
+    (async()=>{ try{ setKlic(await vaultDecrypt(vaultKey,licence.klic)); }catch{ setChyba("Klíč se nepodařilo dešifrovat (jiné hlavní heslo?)."); } setLoadingSecret(false); })();
+  },[]);
+  const uloz=async()=>{
+    if(!f.nazev.trim()){setChyba("Vyplň název licence.");return;}
+    setSaving(true);setChyba("");
+    try{
+      const klicEnc=await vaultEncrypt(vaultKey,klic);
+      const data={nazev:f.nazev.trim(),typ:f.typ,verze:f.verze||null,email_uctu:f.email_uctu||null,zarizeni_id:f.zarizeni_id||null,poznamka:f.poznamka||null,klic:klicEnc};
+      const {error}= isNew ? await sb.from("it_licence").insert(data) : await sb.from("it_licence").update(data).eq("id",licence.id);
+      if(error) throw new Error(error.message);
+      onSaved();
+    }catch(e){ setChyba(e.message||"Uložení selhalo."); }
+    finally{ setSaving(false); }
+  };
+  return <Modal title={isNew?"Nová licence":"Upravit licenci"} onClose={onClose} width={460} accent={C.orange}>
+    <Field label="Název *"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus placeholder="např. Windows 11 Pro – PC obývák"/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Typ"><select style={inp} value={f.typ} onChange={set("typ")}>{Object.entries(IT_LIC_TYPY).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}</select></Field>
+      <Field label="Verze / edice"><input style={inp} value={f.verze} onChange={set("verze")} placeholder="Pro, 2021, 365…"/></Field>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <Field label="Účet / e-mail licence"><input style={inp} value={f.email_uctu} onChange={set("email_uctu")} placeholder="Kde je registrovaná"/></Field>
+      <Field label="Zařízení (volitelně)"><select style={inp} value={f.zarizeni_id} onChange={set("zarizeni_id")}><option value="">— žádné —</option>{(zarizeni||[]).map(z=><option key={z.id} value={z.id}>{(IT_ZARIZENI_TYPY[z.typ]||IT_ZARIZENI_TYPY.jine).icon} {z.nazev}</option>)}</select></Field>
+    </div>
+    <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:14}}>
+      <div style={{fontSize:11,fontWeight:800,color:C.orange,letterSpacing:.5,textTransform:"uppercase",marginBottom:10}}>🔐 Šifrovaný klíč</div>
+      {loadingSecret?<div style={{fontSize:12,color:C.muted}}>Dešifruji…</div>:
+        <Field label="Licenční klíč"><input style={{...inp,fontFamily:"ui-monospace,Menlo,monospace"}} value={klic} onChange={e=>setKlic(e.target.value)} placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" autoComplete="off"/></Field>}
+    </div>
+    <Field label="Poznámka"><input style={inp} value={f.poznamka} onChange={set("poznamka")} placeholder="Datum nákupu, kde koupeno…"/></Field>
+    {chyba&&<div style={{color:C.red,fontSize:12.5,fontWeight:600,marginBottom:10}}>⚠ {chyba}</div>}
+    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
+      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+      <button onClick={uloz} disabled={saving||loadingSecret} style={btnC()}>{saving?"Šifruji a ukládám…":"Uložit"}</button>
+    </div>
+  </Modal>;
+}
+
+function ITLicenceSekce({vaultKey}){
+  const {data:licence,loading,reload}=useData(()=>sb.from("it_licence").select("*").order("nazev"));
+  const {data:zarizeni}=useData(()=>sb.from("it_zarizeni").select("id,nazev,typ").order("nazev"));
+  const [modal,setModal]=useState(null);
+  const smaz=async(l)=>{if(!confirm(`Smazat licenci "${l.nazev}"?`))return;await sb.from("it_licence").delete().eq("id",l.id);reload();};
+  if(loading) return <Spinner/>;
+  const list=licence||[];
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+      <div style={{color:C.text,fontWeight:800,fontSize:16}}>🎫 Licence <span style={{color:C.muted,fontWeight:400,fontSize:14}}>({list.length})</span></div>
+      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat licenci</button>
+    </div>
+    {list.length===0&&<EmptyState emoji="🎫" text="Žádné licence" action="+ Přidat licenci" onAction={()=>setModal("new")}/>}
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {list.map(l=>{
+        const t=IT_LIC_TYPY[l.typ]||IT_LIC_TYPY.jiny;
+        const z=(zarizeni||[]).find(x=>String(x.id)===String(l.zarizeni_id));
+        return <div key={l.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",borderLeft:`4px solid ${t.color}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:20}}>{t.icon}</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:14,color:C.text}}>{l.nazev}</div>
+              <div style={{fontSize:12,color:C.muted}}>{[t.label,l.verze,z&&`🖥 ${z.nazev}`,l.email_uctu].filter(Boolean).join(" · ")}</div>
+            </div>
+            <button onClick={()=>setModal(l)} style={{...btnC(C.muted,true),padding:"3px 9px",fontSize:12}}>✎</button>
+            <button onClick={()=>smaz(l)} style={{...btnC(C.red,true),padding:"3px 9px",fontSize:12}}>✕</button>
+          </div>
+          <ITSecretRow vaultKey={vaultKey} label="Klíč" payload={l.klic} emoji="🎫"/>
+          {l.poznamka&&<div style={{fontSize:11,color:C.dim,fontStyle:"italic",marginTop:6}}>{l.poznamka}</div>}
+        </div>;
+      })}
+    </div>
+    {modal&&<ITLicenceModal vaultKey={vaultKey} licence={modal==="new"?null:modal} zarizeni={zarizeni} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+  </div>;
+}
+
+// ── Hlavní dlaždice modulu ────────────────────────────────────────────────────
+function UctyTab(){
+  const [meta,setMeta]=useState(undefined); // undefined=načítám, null=trezor neexistuje, obj=existuje
+  const [vaultKey,setVaultKey]=useState(null);
+  const [zal,setZal]=useState("zarizeni");
+
+  useEffect(()=>{ vaultLoadMeta().then(setMeta); },[]);
+
+  // Auto-zámek po 10 minutách nečinnosti
+  useEffect(()=>{
+    if(!vaultKey) return;
+    let t;
+    const reset=()=>{ clearTimeout(t); t=setTimeout(()=>setVaultKey(null),10*60*1000); };
+    const evs=["mousemove","keydown","click","touchstart"];
+    evs.forEach(e=>window.addEventListener(e,reset)); reset();
+    return ()=>{ clearTimeout(t); evs.forEach(e=>window.removeEventListener(e,reset)); };
+  },[vaultKey]);
+
+  if(meta===undefined) return <Spinner/>;
+  if(!vaultKey) return <ITVaultGate meta={meta} onReady={(k,novaMeta)=>{ if(novaMeta)setMeta(novaMeta); setVaultKey(k); }}/>;
+
+  const tabs=[{id:"zarizeni",l:"🖥 Zařízení"},{id:"ucty",l:"🔑 Účty"},{id:"licence",l:"🎫 Licence"}];
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+      <h2 style={{margin:0,fontSize:22,fontWeight:800}}>🔐 Účty &amp; PC</h2>
+      <button onClick={()=>setVaultKey(null)} title="Zamknout trezor" style={{...btnC(C.muted,true),fontSize:12,padding:"7px 14px"}}>🔒 Zamknout</button>
+    </div>
+    <div style={{background:C.greenS,border:`1px solid ${C.green}44`,borderRadius:10,padding:"8px 14px",marginBottom:18,fontSize:12,color:C.green,fontWeight:600}}>
+      🔓 Trezor je odemčený. Tajné údaje jsou v databázi šifrované a zamknou se po 10 min nečinnosti.
+    </div>
+    <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`}}>
+      {tabs.map(t=><button key={t.id} onClick={()=>setZal(t.id)} style={{padding:"9px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zal===t.id?C.accent:C.muted,borderBottom:zal===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
+    </div>
+    {zal==="zarizeni"&&<ITZarizeniSekce/>}
+    {zal==="ucty"&&<ITUctySekce vaultKey={vaultKey}/>}
+    {zal==="licence"&&<ITLicenceSekce vaultKey={vaultKey}/>}
+  </div>;
+}
+
+
 const TILES=[
   {id:"deti",     emoji:"👨‍👩‍👧‍👦", label:"Rodina",    popis:"Profily a info",         barva:"#4f7ef0"},
   {id:"obleceni", emoji:"👕", label:"Oblečení",  popis:"Sklady a velikosti",     barva:"#3b6fd4"},
@@ -6353,6 +6934,7 @@ const TILES=[
   {id:"kalendar", emoji:"📅",  label:"Kalendář",  popis:"Google Calendar",         barva:"#1a7a4a"},
   {id:"zvirata",  emoji:"🐾",  label:"Zvířata",   popis:"Profily a péče",           barva:"#7a5c3a"},
   {id:"dokumenty",emoji:"📁",  label:"Dokumenty", popis:"Centrální kartotéka",      barva:"#5a6acf"},
+  {id:"ucty",     emoji:"🔐",  label:"Účty & PC", popis:"Hesla, licence, hardware",   barva:"#334155"},
 ];
 
 // ── TÝDENNÍ WIDGET NA HOMEPAGE ───────────────────────────────────────────────
@@ -6562,6 +7144,7 @@ function AppInner() {
         {modul==="kalendar" && <KalendarTab/>}
         {modul==="zvirata"  && <ZvirataTab/>}
         {modul==="dokumenty"&& <DokumentyTab/>}
+        {modul==="ucty"     && <UctyTab/>}
       </div>
     </div>;
   }
