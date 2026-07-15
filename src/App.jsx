@@ -6877,10 +6877,126 @@ function ITLicenceSekce({vaultKey}){
 }
 
 // ── Hlavní dlaždice modulu ────────────────────────────────────────────────────
+// ── Globální vyhledávání napříč zařízeními, účty a licencemi ──────────────────
+// Hledá v ČITELNÝCH polích (názvy, login, hardware, poznámky…). Šifrovaná tajemství
+// (hesla, klíče, recovery) se zámerně neprohledávají.
+const _itNorm=(s)=>(s==null?"":String(s)).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+function ITZvyrazni({text,q}){
+  const t=text==null?"":String(text);
+  if(!q) return <>{t}</>;
+  const nt=_itNorm(t), nq=_itNorm(q);
+  const i=nt.indexOf(nq);
+  if(i<0) return <>{t}</>;
+  return <>{t.slice(0,i)}<mark style={{background:"#fff1a8",color:C.text,borderRadius:3,padding:"0 1px"}}>{t.slice(i,i+q.length)}</mark>{t.slice(i+q.length)}</>;
+}
+
+function ITHledani({query,vaultKey}){
+  const {data:zarizeni,loading:lz,reload:rz}=useData(()=>sb.from("it_zarizeni").select("*").order("nazev"));
+  const {data:ucty,loading:lu,reload:ru}=useData(()=>sb.from("it_ucty").select("*").order("nazev"));
+  const {data:licence,loading:ll,reload:rl}=useData(()=>sb.from("it_licence").select("*").order("nazev"));
+  const [detail,setDetail]=useState(null); // {kind, item}
+  const reloadAll=()=>{rz();ru();rl();};
+
+  if(lz||lu||ll) return <Spinner/>;
+  const q=query.trim();
+  const nq=_itNorm(q);
+  const allZar=zarizeni||[];
+
+  // Najde popisek pole, ve kterém se shoda našla (pro nápovědu „kde")
+  const najdiPole=(obj,pole)=>{
+    for(const [k,label] of pole){ if(_itNorm(obj[k]).includes(nq)) return {pole:label,hodnota:obj[k]}; }
+    return null;
+  };
+  const ZAR_POLE=[["nazev","Název"],["uzivatel","Uživatel"],["vyrobce","Výrobce"],["model","Model"],["serie_cislo","S/N"],["cpu","CPU"],["ram","RAM"],["disk","Disk"],["gpu","GPU"],["os","OS"],["mac","MAC"],["ip","IP"],["poznamka","Poznámka"]];
+  const UCET_POLE=[["nazev","Název"],["login","Login"],["url","Web"]];
+  const LIC_POLE=[["nazev","Název"],["verze","Verze"],["email_uctu","Účet"],["poznamka","Poznámka"]];
+
+  const zarMatch=allZar.map(z=>({z,m:najdiPole(z,ZAR_POLE)})).filter(x=>x.m);
+  const ucetMatch=(ucty||[]).map(u=>({u,m:najdiPole(u,UCET_POLE)})).filter(x=>x.m);
+  const licMatch=(licence||[]).map(l=>({l,m:najdiPole(l,LIC_POLE)})).filter(x=>x.m);
+  const celkem=zarMatch.length+ucetMatch.length+licMatch.length;
+
+  const zarById=(id)=>allZar.find(z=>String(z.id)===String(id));
+  const kdeRadek=(m)=>m&&m.pole!=="Název"?<span style={{fontSize:11,color:C.muted}}> · nalezeno v: <b>{m.pole}</b> — <ITZvyrazni text={m.hodnota} q={q}/></span>:null;
+
+  return <div>
+    <div style={{fontSize:13,color:C.muted,marginBottom:14}}>
+      Výsledky pro <b style={{color:C.text}}>„{q}"</b> — <b style={{color:C.accent}}>{celkem}</b> {celkem===1?"výskyt":celkem>=2&&celkem<=4?"výskyty":"výskytů"}
+    </div>
+
+    {celkem===0&&<div style={{padding:"30px 0",textAlign:"center",color:C.dim,fontSize:14}}>Nic nenalezeno. (Hesla a klíče se z bezpečnostních důvodů neprohledávají.)</div>}
+
+    {/* Zařízení */}
+    {zarMatch.length>0&&<div style={{marginBottom:20}}>
+      <div style={{fontSize:12,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:C.muted,marginBottom:8}}>🖥 Zařízení ({zarMatch.length})</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {zarMatch.map(({z,m})=>{
+          const t=IT_ZARIZENI_TYPY[z.typ]||IT_ZARIZENI_TYPY.jine;
+          return <div key={z.id} onClick={()=>setDetail({kind:"zar",item:z})} style={{display:"flex",alignItems:"center",gap:10,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 14px",borderLeft:`4px solid ${t.color}`,cursor:"pointer"}}>
+            <span style={{fontSize:19}}>{t.icon}</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:14,color:C.text}}><ITZvyrazni text={z.nazev} q={q}/></div>
+              <div style={{fontSize:11.5,color:C.muted}}>{t.label}{z.uzivatel?` · 👤 ${z.uzivatel}`:""}{kdeRadek(m)}</div>
+            </div>
+            <span style={{fontSize:13,color:C.dim}}>›</span>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {/* Účty */}
+    {ucetMatch.length>0&&<div style={{marginBottom:20}}>
+      <div style={{fontSize:12,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:C.muted,marginBottom:8}}>🔑 Účty ({ucetMatch.length})</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {ucetMatch.map(({u,m})=>{
+          const sl=IT_SLUZBY[u.sluzba]||IT_SLUZBY.jiny;
+          return <div key={u.id} onClick={()=>setDetail({kind:"ucet",item:u})} style={{display:"flex",alignItems:"center",gap:10,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 14px",borderLeft:`4px solid ${sl.color}`,cursor:"pointer"}}>
+            <span style={{fontSize:19}}>{sl.icon}</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:14,color:C.text}}><ITZvyrazni text={u.nazev} q={q}/></div>
+              <div style={{fontSize:11.5,color:C.muted}}>{sl.label}{u.login?` · ${u.login}`:""}{kdeRadek(m)}</div>
+            </div>
+            <span style={{fontSize:11,color:C.dim,marginRight:6}}>🔐</span>
+            <span style={{fontSize:13,color:C.dim}}>›</span>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {/* Licence */}
+    {licMatch.length>0&&<div style={{marginBottom:20}}>
+      <div style={{fontSize:12,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:C.muted,marginBottom:8}}>🎫 Licence ({licMatch.length})</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {licMatch.map(({l,m})=>{
+          const t=IT_LIC_TYPY[l.typ]||IT_LIC_TYPY.jiny;
+          const z=zarById(l.zarizeni_id);
+          return <div key={l.id} onClick={()=>setDetail({kind:"lic",item:l})} style={{display:"flex",alignItems:"center",gap:10,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 14px",borderLeft:`4px solid ${t.color}`,cursor:"pointer"}}>
+            <span style={{fontSize:19}}>{t.icon}</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:14,color:C.text}}><ITZvyrazni text={l.nazev} q={q}/></div>
+              <div style={{fontSize:11.5,color:C.muted}}>{[t.label,l.verze,z&&`🖥 ${z.nazev}`].filter(Boolean).join(" · ")}{kdeRadek(m)}</div>
+            </div>
+            <span style={{fontSize:11,color:C.dim,marginRight:6}}>🔐</span>
+            <span style={{fontSize:13,color:C.dim}}>›</span>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {/* Otevření detailu / editace z výsledku */}
+    {detail?.kind==="ucet"&&<ITUcetDetail vaultKey={vaultKey} ucet={detail.item} zarizeni={allZar} onEdit={()=>setDetail({kind:"ucetEdit",item:detail.item})} onClose={()=>setDetail(null)}/>}
+    {detail?.kind==="ucetEdit"&&<ITUcetModal vaultKey={vaultKey} ucet={detail.item} zarizeni={allZar} onClose={()=>setDetail(null)} onSaved={()=>{setDetail(null);reloadAll();}}/>}
+    {detail?.kind==="zar"&&<ITZarizeniModal zarizeni={detail.item} onClose={()=>setDetail(null)} onSaved={()=>{setDetail(null);reloadAll();}}/>}
+    {detail?.kind==="lic"&&<ITLicenceModal vaultKey={vaultKey} licence={detail.item} zarizeni={allZar} onClose={()=>setDetail(null)} onSaved={()=>{setDetail(null);reloadAll();}}/>}
+  </div>;
+}
+
+
 function UctyTab(){
   const [meta,setMeta]=useState(undefined); // undefined=načítám, null=trezor neexistuje, obj=existuje
   const [vaultKey,setVaultKey]=useState(null);
   const [zal,setZal]=useState("zarizeni");
+  const [q,setQ]=useState("");
 
   useEffect(()=>{ vaultLoadMeta().then(setMeta); },[]);
 
@@ -6906,12 +7022,22 @@ function UctyTab(){
     <div style={{background:C.greenS,border:`1px solid ${C.green}44`,borderRadius:10,padding:"8px 14px",marginBottom:18,fontSize:12,color:C.green,fontWeight:600}}>
       🔓 Trezor je odemčený. Tajné údaje jsou v databázi šifrované a zamknou se po 10 min nečinnosti.
     </div>
-    <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`}}>
-      {tabs.map(t=><button key={t.id} onClick={()=>setZal(t.id)} style={{padding:"9px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zal===t.id?C.accent:C.muted,borderBottom:zal===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
+    {/* Globální vyhledávání napříč vším */}
+    <div style={{position:"relative",marginBottom:20}}>
+      <input style={{...inp,padding:"11px 38px 11px 14px",fontSize:14}} value={q} onChange={e=>setQ(e.target.value)} placeholder="🔎 Hledat ve všem — zařízení, účty i licence (např. longchamp)…"/>
+      {q&&<button onClick={()=>setQ("")} title="Vymazat" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16,color:C.muted}}>✕</button>}
     </div>
-    {zal==="zarizeni"&&<ITZarizeniSekce/>}
-    {zal==="ucty"&&<ITUctySekce vaultKey={vaultKey}/>}
-    {zal==="licence"&&<ITLicenceSekce vaultKey={vaultKey}/>}
+
+    {q.trim()
+      ? <ITHledani query={q} vaultKey={vaultKey}/>
+      : <>
+        <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`}}>
+          {tabs.map(t=><button key={t.id} onClick={()=>setZal(t.id)} style={{padding:"9px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zal===t.id?C.accent:C.muted,borderBottom:zal===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
+        </div>
+        {zal==="zarizeni"&&<ITZarizeniSekce/>}
+        {zal==="ucty"&&<ITUctySekce vaultKey={vaultKey}/>}
+        {zal==="licence"&&<ITLicenceSekce vaultKey={vaultKey}/>}
+      </>}
   </div>;
 }
 
@@ -7183,7 +7309,6 @@ function AppInner() {
         <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
           <div style={{fontSize:13,color:C.dim}}>{new Date().toLocaleDateString("cs-CZ",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
           <PocasiWidget/>
-          <OdpocetWidget/>
           {/* Přepínač úprav */}
           <button onClick={()=>setUpravy(u=>!u)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 16px",borderRadius:10,border:`1px solid ${upravy?C.orange:C.border}`,background:upravy?C.orangeS:C.surface,cursor:"pointer",transition:"all .2s"}}>
             <div style={{width:32,height:18,borderRadius:99,background:upravy?C.orange:C.border,position:"relative",transition:"all .2s"}}>
