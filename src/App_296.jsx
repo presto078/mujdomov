@@ -11,7 +11,7 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const GOOGLE_REDIRECT = window.location.origin+"/auth/callback";
 const GOOGLE_SCOPES = "https://www.googleapis.com/auth/calendar.readonly";
 const sb = createClient(SUPA_URL, SUPA_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 });
 
 // Google Calendar IDs
@@ -89,11 +89,7 @@ function vekText(narozen){if(!narozen)return"";const d=new Date(narozen),now=new
 function Spinner(){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:60,color:C.muted,fontSize:14,gap:10}}><div style={{width:18,height:18,border:`2px solid ${C.border}`,borderTop:`2px solid ${C.accent}`,borderRadius:"50%",animation:"spin .8s linear infinite"}}/>Načítám…<style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;}
 function Tag({color,children}){return <span style={{background:`${color}22`,color,padding:"2px 9px",borderRadius:20,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{children}</span>;}
 function Field({label,hint,children}){return <div style={{marginBottom:14}}><div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:5}}>{label}</div>{children}{hint&&<div style={{color:C.dim,fontSize:11,marginTop:3}}>{hint}</div>}</div>;}
-// Větší/vzdušnější varianta Field pro CashflowModal. MUSÍ být na úrovni modulu —
-// definovaná uvnitř komponenty by se při každém renderu vytvořila znovu a inputy
-// by po každém znaku ztrácely fokus (remount).
-function FL({label,hint,children,style}){return <div style={{marginBottom:0,...style}}><div style={{color:C.muted,fontSize:12.5,fontWeight:800,letterSpacing:.4,textTransform:"uppercase",marginBottom:7}}>{label}</div>{children}{hint&&<div style={{color:C.dim,fontSize:11.5,marginTop:6,lineHeight:1.4}}>{hint}</div>}</div>;}
-function Modal({title,onClose,children,width=460,bg,accent}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}} onClick={onClose}><div style={{background:bg||C.card,border:`1px solid ${C.border}`,borderTop:accent?`4px solid ${accent}`:`1px solid ${C.border}`,borderRadius:16,padding:28,width,maxWidth:"95vw",maxHeight:"92vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}><div style={{color:accent||C.text,fontWeight:800,fontSize:18}}>{title}</div><button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22}}>✕</button></div>{children}</div></div>;}
+function Modal({title,onClose,children,width=460}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}} onClick={onClose}><div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:28,width,maxWidth:"95vw",maxHeight:"92vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}><div style={{color:C.text,fontWeight:800,fontSize:18}}>{title}</div><button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22}}>✕</button></div>{children}</div></div>;}
 function EmptyState({emoji,text,action,onAction}){return <div style={{textAlign:"center",padding:"60px 0",color:C.dim}}><div style={{fontSize:48,marginBottom:12}}>{emoji}</div><div style={{fontSize:14,marginBottom:16}}>{text}</div>{action&&<button onClick={onAction} style={btnC()}>{action}</button>}</div>;}
 function StatCard({label,val,color=C.accent}){return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 16px",textAlign:"center"}}><div style={{fontSize:22,fontWeight:800,color}}>{val}</div><div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginTop:2}}>{label}</div></div>;}
 
@@ -134,26 +130,24 @@ function vazbaZPolozky(p){
 // PK entit jsou SMÍŠENÉ (deti=uuid, zvirata=bigint, …) → ID posíláme jako string.
 // PostgREST string korektně přetypuje na uuid i bigint; číslo by do uuid neprošlo.
 function vazbaNaSloupce(v){
-  const base={dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,zaznam_id:null,je_majetek:false,sklad_kategorie_id:null};
+  const base={dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null};
   if(!v) return base;
   const i=v.indexOf(":"); const t=v.slice(0,i), id=v.slice(i+1);
   if(t==="dite")   return {...base,dite_id:id};
   if(t==="zvire")  return {...base,zvire_id:id};
   if(t==="oprava") return {...base,oprava_id:id};
   if(t==="auto")   return {...base,auto_id:id};
-  if(t==="zaznam") return {...base,zaznam_id:id};
   if(t==="sklad")  return {...base,je_majetek:true,sklad_kategorie_id:id==="obecne"?null:id};
   return base;
 }
 // Položka cashflow → {emoji,label,color} pro zobrazení Tagu vazby (nebo null)
 function cashflowVazbaInfo(p,zdroje={}){
-  const {deti,zvirata,opravy,auta,zaznamy,skladKat}=zdroje;
+  const {deti,zvirata,opravy,auta,skladKat}=zdroje;
   const eq=(a,b)=>String(a)===String(b);
   if(p.dite_id){const d=(deti||[]).find(x=>eq(x.id,p.dite_id));return{emoji:d?.emoji||"👤",label:d?.jmeno||"Člen rodiny",color:d?.barva||C.blue};}
   if(p.zvire_id){const z=(zvirata||[]).find(x=>eq(x.id,p.zvire_id));return{emoji:z?.emoji||"🐾",label:z?.jmeno||"Zvíře",color:z?.barva||"#7a5c3a"};}
   if(p.oprava_id){const o=(opravy||[]).find(x=>eq(x.id,p.oprava_id));return{emoji:"🔧",label:o?.nazev||"Oprava",color:C.orange};}
   if(p.auto_id){const a=(auta||[]).find(x=>eq(x.id,p.auto_id));return{emoji:"🚗",label:a?.nazev||a?.spz||"Auto",color:C.accent};}
-  if(p.zaznam_id){const z=(zaznamy||[]).find(x=>eq(x.id,p.zaznam_id));return{emoji:"⚖️",label:z?"Právník · "+z.id:"Právník",color:C.purple};}
   if(p.je_majetek){const k=(skladKat||[]).find(x=>eq(x.id,p.sklad_kategorie_id));return{emoji:k?.emoji||"📦",label:k?`Majetek · ${k.nazev}`:"Majetek / sklad",color:C.purple};}
   return null;
 }
@@ -162,20 +156,18 @@ function cashflowVazbaInfo(p,zdroje={}){
 // Volitelný `lock` předvybere a uzamkne vazbu: {dite_id} | {zvire_id} | {oprava_id} | {majetek:true}
 function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCastka,lock,onClose,onSaved}){
   const dnes=new Date();
-  const {data:kategorie,reload:reloadKat}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
+  const {data:kategorie}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("id,nazev,typ,mena").eq("aktivni",true).order("poradi"));
   const {data:deti}=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:zvirata}=useData(()=>sb.from("zvirata").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:opravy}=useData(()=>sb.from("dum_opravy").select("id,nazev,stav").order("nazev"));
   const {data:auta}=useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
   const {data:skladKat}=useData(()=>sb.from("sklad_kategorie").select("id,nazev,emoji").order("poradi"));
-  const {data:zaznamy}=useData(()=>sb.from("pravnici_zaznam").select("id,pripad_id").order("datum",{ascending:false}));
 
   const lockVazba = lock?.dite_id   ? "dite:"+lock.dite_id
     : lock?.zvire_id  ? "zvire:"+lock.zvire_id
     : lock?.oprava_id ? "oprava:"+lock.oprava_id
     : lock?.auto_id   ? "auto:"+lock.auto_id
-    : lock?.zaznam_id ? "zaznam:"+lock.zaznam_id
     : lock?.majetek   ? "sklad:obecne"
     : null;
 
@@ -201,35 +193,16 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
   });
   const [typ,setTyp]=useState(initTyp);          // "prijem" | "vydej" | "prevod"
   const [saving,setSaving]=useState(false);
-  const [novaKatOtevreno,setNovaKatOtevreno]=useState(false);
-  const [novaKat,setNovaKat]=useState({nazev:"",emoji:"💰"});
-  const [ukladamKat,setUkladamKat]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const isNew=!polozka;
   const jePrevod = typ==="prevod";                // odvozené – řídí zobrazení polí i uložení
-  const nacitam = kategorie===null||ucty===null||deti===null||zvirata===null||opravy===null||auta===null||skladKat===null||zaznamy===null;
+  const nacitam = kategorie===null||ucty===null||deti===null||zvirata===null||opravy===null||auta===null||skladKat===null;
   // Uzamčená vazba na konkrétní entitu (ne majetek) → předvybraný a zakázaný dropdown
-  const lockInfo = (lock && !lock.majetek) ? cashflowVazbaInfo(vazbaNaSloupce(lockVazba),{deti,zvirata,opravy,auta,zaznamy,skladKat}) : null;
-
-  // Rychlé přidání kategorie přímo z tohoto okna (bez odskoku do editoru kategorií).
-  const pridejKategorii=async()=>{
-    if(!novaKat.nazev.trim()) return;
-    setUkladamKat(true);
-    const katTyp = typ==="prijem" ? "prijem" : "vydaj";
-    const {data:vlozeno,error} = await sb.from("fin_kategorie")
-      .insert({nazev:novaKat.nazev.trim(), emoji:(novaKat.emoji||"💰").trim()||"💰", typ:katTyp, barva:"#4f7ef0", poradi:(kategorie||[]).length})
-      .select().single();
-    setUkladamKat(false);
-    if(error){ alert("Kategorii se nepodařilo přidat:\n"+(error.message||"neznámá chyba")); return; }
-    await reloadKat();
-    if(vlozeno?.id!=null) setF(p=>({...p,kategorie_id:vlozeno.id}));
-    setNovaKat({nazev:"",emoji:"💰"}); setNovaKatOtevreno(false);
-  };
+  const lockInfo = (lock && !lock.majetek) ? cashflowVazbaInfo(vazbaNaSloupce(lockVazba),{deti,zvirata,opravy,auta,skladKat}) : null;
 
   const prevodNeplatny = jePrevod && (!f.ucet_id || !f.prevod_ucet_id || String(f.ucet_id)===String(f.prevod_ucet_id));
-  const ucetChybi = !f.ucet_id; // účet je povinný u všech typů (jinak se položka nepromítne do predikce účtu)
   const uloz=async()=>{
-    if(!f.nazev.trim()||f.castka===""||ucetChybi) return;
+    if(!f.nazev.trim()||f.castka==="") return;
     if(prevodNeplatny) return;
     setSaving(true);
     const data={
@@ -260,13 +233,17 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
   };
 
   // ── Lokální designové tokeny (větší, vzdušnější varianty C / inp) ──────────────
-  const inpL    = {...inp, fontSize:15, padding:"0 14px", height:48, borderRadius:10, boxSizing:"border-box", background:C.bg};
-  const inpAmt  = {...inp, fontSize:24, fontWeight:800, padding:"0 56px 0 16px", height:62, borderRadius:14, boxSizing:"border-box", background:C.bg};
-  const sekce   = {background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:16, marginBottom:14, boxShadow:"0 1px 3px rgba(0,0,0,.04)"};
+  const inpL    = {...inp, fontSize:15, padding:"0 14px", height:48, borderRadius:10, boxSizing:"border-box"};
+  const inpAmt  = {...inp, fontSize:24, fontWeight:800, padding:"0 56px 0 16px", height:62, borderRadius:14, boxSizing:"border-box"};
+  const sekce   = {background:C.bg, border:`1px solid ${C.border}`, borderRadius:14, padding:16, marginBottom:14};
   const sekceLbl= {fontSize:12, fontWeight:800, color:C.muted, letterSpacing:.6, textTransform:"uppercase", margin:"0 2px 12px"};
-  // Barva celého okna podle typu transakce — výrazný signál (příjem zelená, výdej červená, převod modrá)
-  const typAccent = typ==="prijem" ? C.green : typ==="vydej" ? C.red : C.accent;
-  const typBg     = typ==="prijem" ? C.greenS : typ==="vydej" ? C.redS : C.accentS;
+  const FL=({label,hint,children,style})=>(
+    <div style={{marginBottom:0,...style}}>
+      <div style={{color:C.muted,fontSize:12.5,fontWeight:800,letterSpacing:.4,textTransform:"uppercase",marginBottom:7}}>{label}</div>
+      {children}
+      {hint&&<div style={{color:C.dim,fontSize:11.5,marginTop:6,lineHeight:1.4}}>{hint}</div>}
+    </div>
+  );
   const TYPY = lock
     ? [{v:"prijem",l:"Příjem",c:C.green},{v:"vydej",l:"Výdej",c:C.red}]
     : [{v:"prijem",l:"Příjem",c:C.green},{v:"vydej",l:"Výdej",c:C.red},{v:"prevod",l:"Převod",c:C.accent}];
@@ -282,7 +259,7 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
     : typ==="vydej" ? "Zadej kladné číslo — uloží se jako výdaj (−)"
     : "Zadej kladné číslo — uloží se jako příjem (+)";
 
-  return <Modal title={isNew?"Nová finanční položka":"Upravit položku"} onClose={onClose} width={470} bg={typBg} accent={typAccent}>
+  return <Modal title={isNew?"Nová finanční položka":"Upravit položku"} onClose={onClose} width={470}>
     {nacitam?<Spinner/>:<div>
       <style>{`
         .cf-amount::-webkit-outer-spin-button,.cf-amount::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
@@ -291,7 +268,7 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
       `}</style>
 
       {/* 1) Segmentovaný přepínač typu transakce — hlavní navigace */}
-      <div style={{display:"flex",gap:8,marginBottom:18,background:C.surface,padding:6,borderRadius:13,border:`1px solid ${C.border}`,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
+      <div style={{display:"flex",gap:8,marginBottom:18,background:C.bg,padding:6,borderRadius:13,border:`1px solid ${C.border}`}}>
         {TYPY.map(t=>(
           <button key={t.v} onClick={()=>setTyp(t.v)} style={tabBtn(typ===t.v,t.c)}>{t.l}</button>
         ))}
@@ -331,11 +308,6 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
             <option value="">{jePrevod?"— vyberte zdrojový účet —":"— vyberte účet —"}</option>
             {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}{u.typ==="deti"?" · 👶 dětský":""}</option>)}
           </select>
-          {!jePrevod&&ucetChybi&&(
-            <div style={{marginTop:8,background:C.redS||"#fdecec",border:`1px solid ${C.red}`,borderRadius:10,padding:"9px 12px",fontSize:12,fontWeight:600,color:C.red}}>
-              ⚠ Vyber účet, kterého se {typ==="vydej"?"výdaj":"příjem"} týká — jinak se položka nepromítne do predikce zůstatku ani do filtru účtu.
-            </div>
-          )}
         </FL>
 
         {jePrevod&&(
@@ -346,14 +318,6 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
                 {(ucty||[]).filter(u=>String(u.id)!==String(f.ucet_id)).map(u=><option key={u.id} value={u.id}>{u.nazev}{u.typ==="deti"?" · 👶 dětský":""}</option>)}
               </select>
             </FL>
-            {prevodNeplatny&&(
-              <div style={{marginTop:10,background:C.redS||"#fdecec",border:`1px solid ${C.red}`,borderRadius:10,padding:"9px 12px",fontSize:12,fontWeight:600,color:C.red}}>
-                {!f.ucet_id?"⚠ Vyber zdrojový účet (Z účtu), ze kterého se peníze odešlou."
-                  :!f.prevod_ucet_id?"⚠ Vyber cílový účet (Na účet), kam peníze dorazí."
-                  :"⚠ Zdrojový a cílový účet musí být různé."}
-                {" "}Dokud to neplatí, převod nelze uložit.
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -364,25 +328,11 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
           <div style={sekceLbl}>Zařazení</div>
 
           <FL label="Kategorie" style={{marginBottom:14}}>
-            <div style={{display:"flex",gap:8}}>
-              <select style={{...inpL,flex:1,minWidth:0}} value={f.kategorie_id} onChange={set("kategorie_id")}>
-                <option value="">— bez kategorie —</option>
-                <optgroup label="Příjmy">{(kategorie||[]).filter(k=>k.typ==="prijem").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
-                <optgroup label="Výdaje">{(kategorie||[]).filter(k=>k.typ==="vydaj").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
-              </select>
-              <button type="button" onClick={()=>setNovaKatOtevreno(o=>!o)} style={{...btnC(C.accent,true),padding:"0 14px",height:48,whiteSpace:"nowrap",borderRadius:10,fontSize:13,fontWeight:700}}>{novaKatOtevreno?"✕ Zavřít":"+ Nová"}</button>
-            </div>
-            {novaKatOtevreno&&(
-              <div style={{marginTop:10,background:typBg,border:`1px solid ${C.border}`,borderRadius:10,padding:12,animation:"cfSlide .2s ease"}}>
-                <div style={{fontSize:11.5,fontWeight:700,color:C.muted,marginBottom:8}}>Rychlé přidání kategorie — typ „{typ==="prijem"?"Příjem":"Výdaj"}"</div>
-                <div style={{display:"flex",gap:8}}>
-                  <input style={{...inpL,width:62,textAlign:"center",flex:"0 0 auto"}} value={novaKat.emoji} onChange={e=>setNovaKat(p=>({...p,emoji:e.target.value}))} placeholder="💰" maxLength={4}/>
-                  <input style={{...inpL,flex:1,minWidth:0}} value={novaKat.nazev} onChange={e=>setNovaKat(p=>({...p,nazev:e.target.value}))} placeholder="Název kategorie" onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();pridejKategorii();}}}/>
-                  <button type="button" onClick={pridejKategorii} disabled={ukladamKat||!novaKat.nazev.trim()} style={{...btnC(),padding:"0 16px",height:48,whiteSpace:"nowrap",borderRadius:10,fontSize:13}}>{ukladamKat?"…":"Přidat"}</button>
-                </div>
-                <div style={{fontSize:11,color:C.dim,marginTop:7}}>Po přidání se kategorie rovnou vybere. Barvu/přesné nastavení doladíš v editoru kategorií.</div>
-              </div>
-            )}
+            <select style={inpL} value={f.kategorie_id} onChange={set("kategorie_id")}>
+              <option value="">— bez kategorie —</option>
+              <optgroup label="Příjmy">{(kategorie||[]).filter(k=>k.typ==="prijem").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
+              <optgroup label="Výdaje">{(kategorie||[]).filter(k=>k.typ==="vydaj").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
+            </select>
           </FL>
 
           {lockInfo ? (
@@ -440,7 +390,7 @@ function CashflowModal({polozka,defaultRok,defaultMesic,defaultNazev,defaultCast
       {/* Akce */}
       <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:4}}>
         <button onClick={onClose} style={{...btnC(C.muted,true),padding:"12px 22px",fontSize:14,borderRadius:10}}>Zrušit</button>
-        <button onClick={uloz} disabled={saving||!f.nazev.trim()||f.castka===""||ucetChybi||prevodNeplatny} style={{...btnC(),padding:"12px 24px",fontSize:14,borderRadius:10}}>{saving?"Ukládám…":"Uložit položku"}</button>
+        <button onClick={uloz} disabled={saving||!f.nazev.trim()||f.castka===""||prevodNeplatny} style={{...btnC(),padding:"12px 24px",fontSize:14,borderRadius:10}}>{saving?"Ukládám…":"Uložit položku"}</button>
       </div>
     </div>}
   </Modal>;
@@ -1447,6 +1397,84 @@ function SpotrebaTab(){
 // ══════════════════════════════════════════════════════════════════════════════
 // FINANCE
 // ══════════════════════════════════════════════════════════════════════════════
+// ── FINANCE PIN GATE ─────────────────────────────────────────────────────────
+const FINANCE_PIN = "780519";
+
+function FinancePinGate(){
+  const [odemceno,setOdemceno]=useState(()=>sessionStorage.getItem("finance_pin")==="ok");
+  const [pin,setPin]=useState("");
+  const [chyba,setChyba]=useState(false);
+
+  const pokus=()=>{
+    if(pin===FINANCE_PIN){
+      sessionStorage.setItem("finance_pin","ok");
+      setOdemceno(true);
+    } else {
+      setChyba(true);
+      setPin("");
+      setTimeout(()=>setChyba(false),2000);
+    }
+  };
+
+  if(odemceno)return <FinanceTab/>;
+
+  return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:400}}>
+    <div style={{background:"#fff",borderRadius:20,padding:"40px 36px",maxWidth:320,width:"100%",textAlign:"center",boxShadow:"0 8px 32px rgba(0,0,0,.1)"}}>
+      <div style={{fontSize:48,marginBottom:12}}>🔒</div>
+      <h2 style={{fontSize:20,fontWeight:800,margin:"0 0 6px"}}>Finance</h2>
+      <p style={{color:"#6b7280",fontSize:13,marginBottom:24}}>Zadej PIN pro přístup</p>
+      <input
+        type="password"
+        inputMode="numeric"
+        maxLength={6}
+        value={pin}
+        onChange={e=>setPin(e.target.value)}
+        onKeyDown={e=>e.key==="Enter"&&pokus()}
+        placeholder="• • • • • •"
+        autoFocus
+        style={{width:"100%",textAlign:"center",fontSize:22,letterSpacing:6,padding:"12px",borderRadius:10,border:`2px solid ${chyba?"#e05555":"#e2e6f0"}`,outline:"none",boxSizing:"border-box",marginBottom:8,transition:"border-color .2s"}}
+      />
+      {chyba&&<div style={{color:"#e05555",fontSize:12,marginBottom:8}}>Špatný PIN, zkus znovu</div>}
+      <button
+        onClick={pokus}
+        style={{background:"#3b6fd4",color:"#fff",border:"none",borderRadius:10,padding:"11px",width:"100%",fontSize:14,fontWeight:700,cursor:"pointer",marginTop:4}}
+      >Přihlásit se</button>
+    </div>
+  </div>;
+}
+
+// Cashflow modul sdílí stejný PIN i odemčení jako Finance (Realita).
+function CashflowPinGate(){
+  const [odemceno,setOdemceno]=useState(()=>sessionStorage.getItem("finance_pin")==="ok");
+  const [pin,setPin]=useState("");
+  const [chyba,setChyba]=useState(false);
+
+  const pokus=()=>{
+    if(pin===FINANCE_PIN){
+      sessionStorage.setItem("finance_pin","ok");
+      setOdemceno(true);
+    } else {
+      setChyba(true);setPin("");
+      setTimeout(()=>setChyba(false),2000);
+    }
+  };
+
+  if(odemceno)return <CashflowTab/>;
+
+  return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:400}}>
+    <div style={{background:"#fff",borderRadius:20,padding:"40px 36px",maxWidth:320,width:"100%",textAlign:"center",boxShadow:"0 8px 32px rgba(0,0,0,.1)"}}>
+      <div style={{fontSize:48,marginBottom:12}}>🔒</div>
+      <h2 style={{fontSize:20,fontWeight:800,margin:"0 0 6px"}}>Cashflow</h2>
+      <p style={{color:"#6b7280",fontSize:13,marginBottom:24}}>Zadej PIN pro přístup</p>
+      <input type="password" inputMode="numeric" maxLength={6} value={pin}
+        onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&pokus()}
+        placeholder="• • • • • •" autoFocus
+        style={{width:"100%",textAlign:"center",fontSize:22,letterSpacing:6,padding:"12px",borderRadius:10,border:`2px solid ${chyba?"#e05555":"#e2e6f0"}`,outline:"none",boxSizing:"border-box",marginBottom:8,transition:"border-color .2s"}}/>
+      {chyba&&<div style={{color:"#e05555",fontSize:12,marginBottom:8}}>Špatný PIN, zkus znovu</div>}
+      <button onClick={pokus} style={{background:"#3b6fd4",color:"#fff",border:"none",borderRadius:10,padding:"11px",width:"100%",fontSize:14,fontWeight:700,cursor:"pointer",marginTop:4}}>Přihlásit se</button>
+    </div>
+  </div>;
+}
 
 function FinanceTab(){
   const [zalozka,setZalozka]=useState("dashboard");
@@ -2310,10 +2338,6 @@ function CashflowTab(){
   const [modal,setModal]=useState(null); // null | "nova" | položka
   const [simulace,setSimulace]=useState([]); // hypotetické převody [{from,to,amount,rok,mesic}]
   const [sim,setSim]=useState(null);         // otevřený simulátor {u, idx}
-  const [filtrUcet,setFiltrUcet]=useState(""); // "" = všechny účty; jinak id účtu (jen Plán měsíce)
-  const [filtrKat,setFiltrKat]=useState("");   // "" = všechny kategorie; jinak id kategorie (jen Plán měsíce)
-  const [realitaPohled,setRealitaPohled]=useState("ucty"); // "ucty" | "kategorie" — pohled v Plán vs realita
-  const [odemcenyMesic,setOdemcenyMesic]=useState(""); // "rok-mesic" vědomě odemčeného uplynulého měsíce v Plánu
 
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
   const {data:plan,reload:reloadPlan}=useData(()=>sb.from("fin_cashflow_plan").select("*").order("rok").order("mesic"));
@@ -2325,11 +2349,6 @@ function CashflowTab(){
   const {data:opravy}=useData(()=>sb.from("dum_opravy").select("id,nazev").order("nazev"));
   const {data:auta}=useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
   const {data:skladKat}=useData(()=>sb.from("sklad_kategorie").select("id,nazev,emoji").order("poradi"));
-  // Reálné transakce jen za vybraný měsíc (reaktivně na rok/mesic) — pro porovnání plán vs realita
-  const _mStart=`${rok}-${String(mesic).padStart(2,"0")}-01`;
-  const _nmR=mesic===12?1:mesic+1, _nyR=mesic===12?rok+1:rok;
-  const _mEnd=`${_nyR}-${String(_nmR).padStart(2,"0")}-01`;
-  const {data:transMesic}=useData(()=>sb.from("fin_transakce").select("*").gte("datum",_mStart).lt("datum",_mEnd).limit(3000),[rok,mesic]);
   const stavy=[...(stavy1||[]),...(stavy2||[])];
 
   const nacitam=ucty===null||plan===null||stavy1===null||stavy2===null;
@@ -2395,33 +2414,10 @@ function CashflowTab(){
 
   // ── PLÁN MĚSÍCE ──
   const planMesice=(plan||[]).filter(p=>p.rok===rok&&p.mesic===mesic&&(zahrnoutDeti||!jeDetskyUcet(p.ucet_id,detiSet)));
-  // Zámek uplynulých měsíců — chrání historický otisk plánu pro zpětné porovnání s realitou.
-  const jeMinuly = rok<dnes.getFullYear() || (rok===dnes.getFullYear() && mesic<dnes.getMonth()+1);
-  const zamceno = jeMinuly && odemcenyMesic!==`${rok}-${mesic}`;
   const bezne=planMesice.filter(p=>!jePrevodP(p));
   const prevody=planMesice.filter(jePrevodP);
-
-  // Filtr na konkrétní účet (volitelný). Převod se týká účtu, pokud je zdroj NEBO cíl.
-  const filtrAktivni=!!filtrUcet;
-  const filtrKatAktivni=!!filtrKat;
-  const naUcte=(p)=>String(p.ucet_id)===String(filtrUcet);
-  const naUcteCil=(p)=>String(p.prevod_ucet_id)===String(filtrUcet);
-  const vKat=(p)=>String(p.kategorie_id)===String(filtrKat);
-  let bezneF = bezne;
-  if(filtrAktivni) bezneF=bezneF.filter(naUcte);
-  if(filtrKatAktivni) bezneF=bezneF.filter(vKat);
-  // Převody nemají kategorii → při filtru kategorie se nezobrazují
-  let prevodyF = filtrKatAktivni ? [] : (filtrAktivni ? prevody.filter(p=>naUcte(p)||naUcteCil(p)) : prevody);
-  // Souhrny: u filtrovaného účtu se do příjmů/výdajů započítají i převody dle směru.
-  let prijmy=bezneF.filter(p=>+(p.castka)>0).reduce((a,p)=>a+(+p.castka),0);
-  let vydaje=bezneF.filter(p=>+(p.castka)<0).reduce((a,p)=>a+Math.abs(+p.castka),0);
-  if(filtrAktivni){
-    prevodyF.forEach(p=>{
-      const amt=Math.abs(+p.castka);
-      if(naUcteCil(p)) prijmy+=amt;        // příchozí převod = přírůstek na účtu
-      else if(naUcte(p)) vydaje+=amt;      // odchozí převod = úbytek z účtu
-    });
-  }
+  const prijmy=bezne.filter(p=>+(p.castka)>0).reduce((a,p)=>a+(+p.castka),0);
+  const vydaje=bezne.filter(p=>+(p.castka)<0).reduce((a,p)=>a+Math.abs(+p.castka),0);
 
   const smaz=async(id)=>{if(!confirm("Smazat položku?"))return;await sb.from("fin_cashflow_plan").delete().eq("id",id);reloadPlan();};
 
@@ -2449,7 +2445,7 @@ function CashflowTab(){
     reloadPlan();alert(`Zkopírováno ${kNovym.length} položek do ${MESICE[nm-1]} ${nr}.`);
   };
 
-  const tabs=[{id:"likvidita",l:"📊 Predikce likvidity"},{id:"plan",l:"📋 Plán měsíce"},{id:"realita",l:"🎯 Plán vs. realita"}];
+  const tabs=[{id:"likvidita",l:"📊 Predikce likvidity"},{id:"plan",l:"📋 Plán měsíce"}];
   // Zápis (na)plánovaného převodu z likvidity do fin_cashflow_plan.
   const ulozPrevod=async(t)=>{
     await sb.from("fin_cashflow_plan").insert({
@@ -2554,106 +2550,52 @@ function CashflowTab(){
 
     {/* ── PLÁN MĚSÍCE ── */}
     {zalozka==="plan"&&<div>
-      <style>{`
-        .cfp-cards{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
-        .cfp-card-l{ font-size:11.5px; }
-        .cfp-card-v{ font-size:20px; }
-        .cfp-row{ display:flex; align-items:center; gap:12px; padding:13px 16px; flex-wrap:wrap; }
-        .cfp-main{ flex:1 1 auto; min-width:150px; }
-        .cfp-name{ font-weight:600; font-size:15.5px; line-height:1.3; }
-        .cfp-meta{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:3px; }
-        .cfp-right{ display:flex; align-items:center; gap:8px; margin-left:auto; }
-        .cfp-amt{ font-weight:800; font-size:16.5px; white-space:nowrap; }
-        .cfp-chip{ font-size:12px; font-weight:700; border-radius:20px; padding:2px 9px; white-space:nowrap; display:inline-flex; align-items:center; gap:4px; }
-        .cfp-sec{ font-size:14px; font-weight:700; margin-bottom:9px; }
-        @media (max-width:560px){
-          .cfp-cards{ gap:8px; }
-          .cfp-card-v{ font-size:17px; }
-          .cfp-card-l{ font-size:10px; letter-spacing:.3px; }
-          .cfp-name{ font-size:16px; }
-          .cfp-amt{ font-size:18px; }
-          .cfp-row{ padding:14px 13px; gap:9px 10px; }
-        }
-      `}</style>
-
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:10}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <button onClick={()=>{if(mesic===1){setMesic(12);setRok(r=>r-1);}else setMesic(m=>m-1);}} style={{...btnC(C.muted,true),padding:"6px 12px"}}>←</button>
           <div style={{fontWeight:800,fontSize:18,minWidth:140,textAlign:"center"}}>{MESICE[mesic-1]} {rok}</div>
           <button onClick={()=>{if(mesic===12){setMesic(1);setRok(r=>r+1);}else setMesic(m=>m+1);}} style={{...btnC(C.muted,true),padding:"6px 12px"}}>→</button>
         </div>
         <div style={{display:"flex",gap:8}}>
-          <button onClick={kopirujMesic} disabled={zamceno} title={zamceno?"Uplynulý měsíc je zamčený":""} style={{...btnC(C.muted,true),fontSize:12,padding:"6px 12px",opacity:zamceno?.5:1,cursor:zamceno?"not-allowed":"pointer"}}>📋 Kopírovat →</button>
-          <button onClick={()=>setModal("nova")} disabled={zamceno} style={{...btnC(),opacity:zamceno?.5:1,cursor:zamceno?"not-allowed":"pointer"}}>+ Přidat položku</button>
+          <button onClick={kopirujMesic} style={{...btnC(C.muted,true),fontSize:12,padding:"6px 12px"}}>📋 Kopírovat →</button>
+          <button onClick={()=>setModal("nova")} style={btnC()}>+ Přidat položku</button>
         </div>
       </div>
 
-      {jeMinuly&&(
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",background:zamceno?C.accentS:C.redS,border:`1px solid ${zamceno?C.accent:C.red}`,borderRadius:10,padding:"10px 14px",marginBottom:16}}>
-          <div style={{fontSize:12.5,fontWeight:600,color:zamceno?C.accent:C.red}}>
-            {zamceno
-              ? "🔒 Uplynulý měsíc — plán je zamčený jako otisk pro zpětné porovnání s realitou."
-              : "🔓 Uplynulý měsíc odemčen — úpravy teď přepíšou historický otisk plánu. Po dokončení zase zamkni."}
-          </div>
-          <button onClick={()=>setOdemcenyMesic(zamceno?`${rok}-${mesic}`:"")} style={{...btnC(zamceno?C.accent:C.red,true),fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}}>{zamceno?"🔓 Přesto upravit":"🔒 Zamknout"}</button>
-        </div>
-      )}
-
-      {/* Filtry: účet + kategorie */}
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,flexWrap:"wrap"}}>
-        <label style={{fontSize:13,fontWeight:700,color:C.muted}}>🏦 Účet:</label>
-        <select value={filtrUcet} onChange={e=>setFiltrUcet(e.target.value)} style={{...inp,flex:"1 1 160px",maxWidth:240,fontSize:14,padding:"0 12px",height:44,borderRadius:10}}>
-          <option value="">Všechny účty</option>
-          {uctyView.map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
-        </select>
-        <label style={{fontSize:13,fontWeight:700,color:C.muted}}>🏷️ Kategorie:</label>
-        <select value={filtrKat} onChange={e=>setFiltrKat(e.target.value)} style={{...inp,flex:"1 1 160px",maxWidth:240,fontSize:14,padding:"0 12px",height:44,borderRadius:10}}>
-          <option value="">Všechny kategorie</option>
-          <optgroup label="Příjmy">{(kategorie||[]).filter(k=>k.typ==="prijem").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
-          <optgroup label="Výdaje">{(kategorie||[]).filter(k=>k.typ==="vydaj").map(k=><option key={k.id} value={k.id}>{k.emoji} {k.nazev}</option>)}</optgroup>
-        </select>
-        {(filtrAktivni||filtrKatAktivni)&&<button onClick={()=>{setFiltrUcet("");setFiltrKat("");}} style={{...btnC(C.muted,true),fontSize:12,padding:"8px 12px"}}>✕ Zrušit filtry</button>}
-      </div>
-
-      <div className="cfp-cards">
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
         {[
-          {l:filtrAktivni?"Přijde na účet":"Plánované příjmy",v:`${prijmy.toLocaleString("cs")} Kč`,c:C.green},
-          {l:filtrAktivni?"Odejde z účtu":"Plánované výdaje",v:`${vydaje.toLocaleString("cs")} Kč`,c:C.red},
-          {l:filtrAktivni?"Čistá změna":"Bilance",v:`${(prijmy-vydaje>0?"+":"")}${(prijmy-vydaje).toLocaleString("cs")} Kč`,c:prijmy>=vydaje?C.green:C.red},
+          {l:"Plánované příjmy",v:`${prijmy.toLocaleString("cs")} Kč`,c:C.green},
+          {l:"Plánované výdaje",v:`${vydaje.toLocaleString("cs")} Kč`,c:C.red},
+          {l:"Bilance",v:`${(prijmy-vydaje).toLocaleString("cs")} Kč`,c:prijmy>=vydaje?C.green:C.red},
         ].map(k=><div key={k.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${k.c}`}}>
-          <div className="cfp-card-l" style={{fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{k.l}</div>
-          <div className="cfp-card-v" style={{fontWeight:800,color:k.c}}>{k.v}</div>
+          <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{k.l}</div>
+          <div style={{fontSize:18,fontWeight:800,color:k.c}}>{k.v}</div>
         </div>)}
       </div>
 
-      {[{label:"📥 Příjmy",arr:bezneF.filter(p=>+(p.castka)>0)},{label:"📤 Výdaje",arr:bezneF.filter(p=>+(p.castka)<0)}].map(({label,arr})=>{
+      {[{label:"📥 Příjmy",arr:bezne.filter(p=>+(p.castka)>0)},{label:"📤 Výdaje",arr:bezne.filter(p=>+(p.castka)<0)}].map(({label,arr})=>{
         const polozky=[...arr].sort((a,b)=>Math.abs(+(b.castka))-Math.abs(+(a.castka)));
         return <div key={label} style={{marginBottom:20}}>
-          <div className="cfp-sec" style={{color:C.muted}}>{label} ({polozky.length})</div>
-          {polozky.length===0?<div style={{padding:"13px 16px",color:C.dim,fontSize:14,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>Žádné položky{filtrAktivni?` na účtu ${ucetNazev(filtrUcet)}`:""}</div>:
+          <div style={{fontSize:13,fontWeight:700,color:C.muted,marginBottom:8}}>{label} ({polozky.length})</div>
+          {polozky.length===0?<div style={{padding:"12px 16px",color:C.dim,fontSize:13,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>Žádné položky</div>:
           <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
             {polozky.map((p,i)=>{
               const kat=(kategorie||[]).find(k=>k.id===p.kategorie_id);
               const vi=cashflowVazbaInfo(p,{deti,zvirata,opravy,auta,skladKat});
-              const kladna=+(p.castka)>0;
-              return <div key={p.id} className="cfp-row" style={{borderBottom:i<polozky.length-1?`1px solid ${C.border}`:"none"}}>
-                <span style={{fontSize:20}}>{kat?.emoji||"💰"}</span>
-                <div className="cfp-main">
-                  <div className="cfp-name">{p.nazev}</div>
-                  <div className="cfp-meta">
-                    {p.ucet_id
-                      ? <span className="cfp-chip" style={{color:C.blue,background:C.blueS}}>🏦 {ucetNazev(p.ucet_id)}</span>
-                      : <span className="cfp-chip" style={{color:C.red,background:C.redS||"#fdecec",border:`1px solid ${C.red}`}}>⚠ bez účtu</span>}
-                    {kat&&<span style={{fontSize:12,color:C.muted}}>{kat.nazev}</span>}
-                    {vi&&<span className="cfp-chip" style={{background:`${vi.color}1a`,color:vi.color}}>{vi.emoji} {vi.label}</span>}
-                    {p.opakovani!=="jednorazove"&&<span className="cfp-chip" style={{background:C.accentS,color:C.accent}}>🔄 {p.opakovani==="mesicni"?"měsíčně":"ročně"}</span>}
+              return <div key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderBottom:i<polozky.length-1?`1px solid ${C.border}`:"none"}}>
+                <span style={{fontSize:18}}>{kat?.emoji||"💰"}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:14}}>{p.nazev}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:2}}>
+                    {p.ucet_id&&<span style={{fontSize:11,fontWeight:700,color:C.blue,background:C.blueS,borderRadius:20,padding:"1px 8px"}}>🏦 {ucetNazev(p.ucet_id)}</span>}
+                    {kat&&<span style={{fontSize:11,color:C.muted}}>{kat.nazev}</span>}
+                    {vi&&<span style={{display:"inline-flex",alignItems:"center",gap:4,background:`${vi.color}1a`,color:vi.color,borderRadius:20,padding:"1px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{vi.emoji} {vi.label}</span>}
                   </div>
                 </div>
-                <div className="cfp-right">
-                  <div className="cfp-amt" style={{color:kladna?C.green:C.red}}>{kladna?"+":""}{(+p.castka).toLocaleString("cs")} Kč</div>
-                  <button onClick={()=>setModal(p)} disabled={zamceno} style={{...btnC(C.accent,true),padding:"6px 10px",fontSize:13,opacity:zamceno?.45:1,cursor:zamceno?"not-allowed":"pointer"}}>✏</button>
-                  <button onClick={()=>smaz(p.id)} disabled={zamceno} style={{...btnC(C.red,true),padding:"6px 10px",fontSize:13,opacity:zamceno?.45:1,cursor:zamceno?"not-allowed":"pointer"}}>🗑</button>
-                </div>
+                {p.opakovani!=="jednorazove"&&<span style={{fontSize:10,background:C.accentS,color:C.accent,borderRadius:99,padding:"2px 8px",fontWeight:700}}>🔄 {p.opakovani==="mesicni"?"měsíčně":"ročně"}</span>}
+                <div style={{fontWeight:800,fontSize:15,color:+(p.castka)>0?C.green:C.red}}>{+(p.castka)>0?"+":""}{(+p.castka).toLocaleString("cs")} Kč</div>
+                <button onClick={()=>setModal(p)} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
+                <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
               </div>;
             })}
           </div>}
@@ -2662,166 +2604,22 @@ function CashflowTab(){
 
       {/* Plánované převody mezi účty */}
       <div style={{marginBottom:20}}>
-        <div className="cfp-sec" style={{color:C.muted}}>↔️ {filtrAktivni?`Převody týkající se účtu ${ucetNazev(filtrUcet)}`:"Plánované převody mezi účty"} ({prevodyF.length})</div>
-        {prevodyF.length===0?<div style={{padding:"13px 16px",color:C.dim,fontSize:14,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>{filtrAktivni?`Žádné převody na účtu ${ucetNazev(filtrUcet)}.`:"Žádné plánované převody — přidej je tlačítkem + Přidat položku a zvol typ Převod."}</div>:
+        <div style={{fontSize:13,fontWeight:700,color:C.muted,marginBottom:8}}>↔️ Plánované převody mezi účty ({prevody.length})</div>
+        {prevody.length===0?<div style={{padding:"12px 16px",color:C.dim,fontSize:13,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>Žádné plánované převody — přidej je tlačítkem „+ Přidat položku" a zaškrtni „Plánovaný převod".</div>:
         <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-          {prevodyF.map((p,i)=>{
-            // Směr vůči vybranému účtu (při filtru): odchozí = úbytek, příchozí = přírůstek
-            const odchozi=filtrAktivni&&naUcte(p);
-            const prichozi=filtrAktivni&&naUcteCil(p);
-            const amtColor=odchozi?C.red:prichozi?C.green:C.blue;
-            const amtPrefix=odchozi?"−":prichozi?"+":"";
-            const smer=odchozi?`→ ${ucetNazev(p.prevod_ucet_id)}`
-              :prichozi?`← ${ucetNazev(p.ucet_id)}`
-              :`${ucetNazev(p.ucet_id)} → ${ucetNazev(p.prevod_ucet_id)}`;
-            return <div key={p.id} className="cfp-row" style={{borderBottom:i<prevodyF.length-1?`1px solid ${C.border}`:"none"}}>
-              <span style={{fontSize:20}}>{odchozi?"📤":prichozi?"📥":"↔️"}</span>
-              <div className="cfp-main">
-                <div className="cfp-name">{p.nazev}</div>
-                <div className="cfp-meta"><span className="cfp-chip" style={{color:amtColor,background:`${amtColor}14`}}>🏦 {smer}</span></div>
-              </div>
-              <div className="cfp-right">
-                <div className="cfp-amt" style={{color:amtColor}}>{amtPrefix}{Math.abs(+p.castka).toLocaleString("cs")} Kč</div>
-                <button onClick={()=>setModal(p)} disabled={zamceno} style={{...btnC(C.accent,true),padding:"6px 10px",fontSize:13,opacity:zamceno?.45:1,cursor:zamceno?"not-allowed":"pointer"}}>✏</button>
-                <button onClick={()=>smaz(p.id)} disabled={zamceno} style={{...btnC(C.red,true),padding:"6px 10px",fontSize:13,opacity:zamceno?.45:1,cursor:zamceno?"not-allowed":"pointer"}}>🗑</button>
-              </div>
-            </div>;
-          })}
+          {prevody.map((p,i)=><div key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderBottom:i<prevody.length-1?`1px solid ${C.border}`:"none"}}>
+            <span style={{fontSize:18}}>↔️</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:14}}>{p.nazev}</div>
+              <div style={{fontSize:11,color:C.muted}}>🏦 {ucetNazev(p.ucet_id)} → {ucetNazev(p.prevod_ucet_id)}</div>
+            </div>
+            <div style={{fontWeight:800,fontSize:15,color:C.blue}}>{Math.abs(+p.castka).toLocaleString("cs")} Kč</div>
+            <button onClick={()=>setModal(p)} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
+            <button onClick={()=>smaz(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
+          </div>)}
         </div>}
       </div>
     </div>}
-
-    {/* ── PLÁN vs. REALITA ── */}
-    {zalozka==="realita"&&(()=>{
-      const fmtS=(v)=>`${v>0?"+":""}${Math.round(v).toLocaleString("cs")} Kč`;
-      const fmt=(v)=>`${Math.round(v).toLocaleString("cs")} Kč`;
-      const rozdilBarva=(v)=>v>0?C.green:v<0?C.red:C.dim;
-      const th={padding:"10px 12px",textAlign:"right",fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.4,whiteSpace:"nowrap",borderBottom:`2px solid ${C.border}`};
-      const thL={...th,textAlign:"left"};
-      const td={padding:"11px 12px",textAlign:"right",fontSize:14,fontWeight:700,whiteSpace:"nowrap"};
-      const tdL={...td,textAlign:"left",fontWeight:600};
-
-      const planM=(plan||[]).filter(p=>p.rok===rok&&p.mesic===mesic&&(zahrnoutDeti||!jeDetskyUcet(p.ucet_id,detiSet)));
-      const trans=(transMesic||[]).filter(t=>zahrnoutDeti||!jeDetskyUcet(t.ucet_id,detiSet));
-      const planBezne=planM.filter(p=>!jePrevodP(p));
-      const transBezne=trans.filter(t=>!t.prevod_ucet_id);
-
-      // Souhrny
-      const pPrijmy=planBezne.filter(p=>+p.castka>0).reduce((a,p)=>a+(+p.castka),0);
-      const pVydaje=planBezne.filter(p=>+p.castka<0).reduce((a,p)=>a+Math.abs(+p.castka),0);
-      const rPrijmy=transBezne.filter(t=>+t.castka>0).reduce((a,t)=>a+(+t.castka),0);
-      const rVydaje=transBezne.filter(t=>+t.castka<0).reduce((a,t)=>a+Math.abs(+t.castka),0);
-      const souhrn=[
-        {l:"Příjmy",  plan:pPrijmy, real:rPrijmy, vetsiLepsi:true},
-        {l:"Výdaje",  plan:pVydaje, real:rVydaje, vetsiLepsi:false},
-        {l:"Bilance", plan:pPrijmy-pVydaje, real:rPrijmy-rVydaje, vetsiLepsi:true},
-      ];
-
-      // Po kategoriích (bez převodů)
-      const katMap={};
-      const pridej=(kid,key,val)=>{const k=kid==null?"none":String(kid);(katMap[k]=katMap[k]||{plan:0,real:0})[key]+=val;};
-      planBezne.forEach(p=>pridej(p.kategorie_id,"plan",+p.castka));
-      transBezne.forEach(t=>pridej(t.kategorie_id,"real",+t.castka));
-      const katRadky=Object.entries(katMap).map(([k,v])=>{
-        const kat=k==="none"?null:(kategorie||[]).find(x=>String(x.id)===k);
-        return {id:k, nazev:kat?`${kat.emoji} ${kat.nazev}`:"❔ Nezařazeno", plan:v.plan, real:v.real, rozdil:v.real-v.plan};
-      }).sort((a,b)=>Math.max(Math.abs(b.plan),Math.abs(b.real))-Math.max(Math.abs(a.plan),Math.abs(a.real)));
-
-      // Po účtech: plánovaná vs skutečná změna + reálný zůstatek (fin_stavy)
-      const realDelta=(ucetId)=>{let d=0;trans.forEach(t=>{if(t.prevod_ucet_id){const amt=Math.abs(+t.castka);if(String(t.ucet_id)===String(ucetId))d-=amt;if(String(t.prevod_ucet_id)===String(ucetId))d+=amt;}else if(String(t.ucet_id)===String(ucetId)){d+=(+t.castka);}});return d;};
-      const realStav=(ucetId)=>{const s=(stavy||[]).find(x=>String(x.ucet_id)===String(ucetId)&&x.rok===rok&&x.mesic===mesic);return s?+s.stav:null;};
-      const uctRadky=uctyView.map(u=>{
-        const pd=planDelta(u.id,rok,mesic), rd=realDelta(u.id), rs=realStav(u.id);
-        return {u, pd, rd, rozdil:rd-pd, rs};
-      }).filter(r=>r.pd!==0||r.rd!==0||r.rs!=null);
-
-      const prazdno=planM.length===0&&trans.length===0;
-
-      return <div>
-        {/* Navigace měsíce */}
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:18,flexWrap:"wrap"}}>
-          <button onClick={()=>{if(mesic===1){setMesic(12);setRok(r=>r-1);}else setMesic(m=>m-1);}} style={{...btnC(C.muted,true),padding:"6px 12px"}}>←</button>
-          <div style={{fontWeight:800,fontSize:18,minWidth:140,textAlign:"center"}}>{MESICE[mesic-1]} {rok}</div>
-          <button onClick={()=>{if(mesic===12){setMesic(1);setRok(r=>r+1);}else setMesic(m=>m+1);}} style={{...btnC(C.muted,true),padding:"6px 12px"}}>→</button>
-          <div style={{fontSize:12,color:C.dim,marginLeft:6}}>Plán z „Plánu měsíce" vs. reálné transakce daného měsíce.</div>
-        </div>
-
-        {transMesic===null?<Spinner/>:prazdno?(
-          <div style={{padding:"16px 18px",color:C.dim,fontSize:14,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12}}>
-            Za {MESICE[mesic-1]} {rok} zatím není co porovnávat — chybí plán i reálné transakce.
-          </div>
-        ):<>
-          {/* Souhrnné karty */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:22}}>
-            {souhrn.map(s=>{
-              const rozdil=s.real-s.plan;
-              const dobre=s.vetsiLepsi?rozdil>=0:rozdil<=0;
-              const barva=rozdil===0?C.dim:(dobre?C.green:C.red);
-              return <div key={s.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${barva}`}}>
-                <div style={{fontSize:11.5,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:8}}>{s.l}</div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.muted,marginBottom:2}}><span>Plán</span><b style={{color:C.text}}>{fmt(s.plan)}</b></div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.muted,marginBottom:6}}><span>Skutečnost</span><b style={{color:C.text}}>{fmt(s.real)}</b></div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:14,fontWeight:800,borderTop:`1px solid ${C.border}`,paddingTop:6,color:barva}}><span>Rozdíl</span><span>{fmtS(rozdil)}</span></div>
-              </div>;
-            })}
-          </div>
-
-          {/* Přepínač pohledu */}
-          <div style={{display:"flex",gap:6,marginBottom:16,background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:4,maxWidth:340}}>
-            {[{k:"ucty",l:"🏦 Podle účtů"},{k:"kategorie",l:"🏷️ Podle kategorií"}].map(o=>
-              <button key={o.k} onClick={()=>setRealitaPohled(o.k)} style={{flex:1,padding:"8px 10px",border:"none",borderRadius:7,cursor:"pointer",fontSize:13,fontWeight:700,background:realitaPohled===o.k?C.accent:"transparent",color:realitaPohled===o.k?"#fff":C.muted,transition:"all .15s"}}>{o.l}</button>
-            )}
-          </div>
-
-          {realitaPohled==="kategorie" ? <>
-          {/* Po kategoriích */}
-          <div className="cfp-sec" style={{fontSize:14,fontWeight:700,color:C.muted,marginBottom:9}}>🏷️ Po kategoriích ({katRadky.length})</div>
-          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",marginBottom:10}}>
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",minWidth:440}}>
-                <thead><tr><th style={thL}>Kategorie</th><th style={th}>Plán</th><th style={th}>Skutečnost</th><th style={th}>Rozdíl</th></tr></thead>
-                <tbody>
-                  {katRadky.length===0?<tr><td colSpan={4} style={{...tdL,color:C.dim}}>Žádné položky.</td></tr>:
-                   katRadky.map((r,i)=><tr key={r.id} style={{borderBottom:i<katRadky.length-1?`1px solid ${C.border}`:"none"}}>
-                    <td style={tdL}>{r.nazev}</td>
-                    <td style={{...td,color:C.muted}}>{fmtS(r.plan)}</td>
-                    <td style={td}>{fmtS(r.real)}</td>
-                    <td style={{...td,fontWeight:800,color:rozdilBarva(r.rozdil)}}>{fmtS(r.rozdil)}</td>
-                  </tr>)}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div style={{fontSize:11.5,color:C.dim,marginTop:0,marginBottom:8,lineHeight:1.5}}>
-            Skutečnost se počítá z reálných transakcí (modul Finance) za tento měsíc — dokud je nemáš zadané, bude u většiny kategorií 0.
-          </div>
-          </> : <>
-          {/* Po účtech */}
-          <div className="cfp-sec" style={{fontSize:14,fontWeight:700,color:C.muted,marginBottom:9}}>🏦 Po účtech — jak se lišila změna zůstatku ({uctRadky.length})</div>
-          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",minWidth:560}}>
-                <thead><tr><th style={thL}>Účet</th><th style={th}>Plánovaná změna</th><th style={th}>Skutečná změna</th><th style={th}>Rozdíl</th><th style={th}>Reálný zůstatek</th></tr></thead>
-                <tbody>
-                  {uctRadky.length===0?<tr><td colSpan={5} style={{...tdL,color:C.dim}}>Žádný pohyb na účtech.</td></tr>:
-                   uctRadky.map((r,i)=><tr key={r.u.id} style={{borderBottom:i<uctRadky.length-1?`1px solid ${C.border}`:"none"}}>
-                    <td style={tdL}>🏦 {r.u.nazev}</td>
-                    <td style={{...td,color:C.muted}}>{fmtS(r.pd)}</td>
-                    <td style={td}>{fmtS(r.rd)}</td>
-                    <td style={{...td,fontWeight:800,color:rozdilBarva(r.rozdil)}}>{fmtS(r.rozdil)}</td>
-                    <td style={{...td,color:r.rs==null?C.dim:C.text}}>{r.rs==null?"— nezadáno":fmt(r.rs)}</td>
-                  </tr>)}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div style={{fontSize:11.5,color:C.dim,marginTop:10,lineHeight:1.5}}>
-            „Rozdíl" = skutečnost − plán; zelená = lepší pro bilanci, červená = horší. Převody mezi tvými účty se do příjmů/výdajů nezapočítávají. „Reálný zůstatek" bereme z dohraných stavů účtů (fin_stavy) za tento měsíc.
-          </div>
-          </>}
-        </>}
-      </div>;
-    })()}
 
     {modal&&<CashflowModal
       polozka={modal==="nova"?null:modal}
@@ -3629,25 +3427,10 @@ function ProjektyTab(){
   const [aktivni,setAktivni]=useState(null); // projekt_id nebo null
   const [modal,setModal]=useState(false);
   const [form,setForm]=useState({nazev:"",emoji:"🏗",datum:"",cas:"",misto:"",barva:"#4f7ef0"});
-  const [saving,setSaving]=useState(false);
 
   const ulozProjekt=async()=>{
-    if(!form.nazev.trim()||saving) return;
-    setSaving(true);
-    const {error}=await sb.from("projekty").insert({...form,datum:form.datum||null,cas:form.cas||null});
-    setSaving(false);
-    if(error){ alert("Projekt se nepodařilo uložit:\n"+(error.message||"neznámá chyba")); return; }
-    setForm({nazev:"",emoji:"🏗",datum:"",cas:"",misto:"",barva:"#4f7ef0"});
+    await sb.from("projekty").insert({...form,datum:form.datum||null,cas:form.cas||null});
     setModal(false);reload();
-  };
-
-  const smazProjekt=async(e,p)=>{
-    e.stopPropagation();
-    if(!confirm(`Smazat projekt „${p.nazev}"?\nSmažou se i jeho rozpočtové položky. Tuto akci nelze vrátit.`)) return;
-    await sb.from("projekty_rozpocet").delete().eq("projekt_id",p.id);
-    const {error}=await sb.from("projekty").delete().eq("id",p.id);
-    if(error){ alert("Smazání se nepovedlo:\n"+(error.message||"neznámá chyba")); return; }
-    reload();
   };
 
   if(loading)return <Spinner/>;
@@ -3678,11 +3461,9 @@ function ProjektyTab(){
       {(projekty||[]).map(p=>{
         const dniZbyvá=odpocet(p.datum);
         return <div key={p.id} onClick={()=>setAktivni(p.id)}
-          style={{position:"relative",background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",cursor:"pointer",transition:"all .2s",boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}
+          style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",cursor:"pointer",transition:"all .2s",boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}
           onMouseEnter={e=>e.currentTarget.style.transform="translateY(-3px)"}
           onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
-          <button onClick={(e)=>smazProjekt(e,p)} title="Smazat projekt"
-            style={{position:"absolute",top:10,right:10,zIndex:2,background:"rgba(0,0,0,.25)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>🗑</button>
           <div style={{background:p.barva||C.accent,padding:"20px 20px 16px"}}>
             <div style={{fontSize:32,marginBottom:6}}>{p.emoji}</div>
             <div style={{fontWeight:800,fontSize:16,color:"#fff"}}>{p.nazev}</div>
@@ -3714,7 +3495,7 @@ function ProjektyTab(){
           <input style={inp} type={f.t} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
         </div>)}
         <div style={{display:"flex",gap:10,marginTop:16}}>
-          <button onClick={ulozProjekt} disabled={saving||!form.nazev.trim()} style={{...btnC(),opacity:(saving||!form.nazev.trim())?.6:1,cursor:(saving||!form.nazev.trim())?"not-allowed":"pointer"}}>{saving?"Ukládám…":"Uložit"}</button>
+          <button onClick={ulozProjekt} style={btnC()}>Uložit</button>
           <button onClick={()=>setModal(false)} style={btnC(C.muted,true)}>Zrušit</button>
         </div>
       </div>
@@ -4235,88 +4016,6 @@ function AlimentyTab(){
   const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("alimenty_nastaveni").select("*"));
 
   const {data:slatky_dluhu,reload:reloadSplatky}=useData(()=>sb.from("alimenty_splatky_dluhu").select("*").order("datum",{ascending:false}));
-  const {data:ucty}=useData(()=>sb.from("fin_ucty").select("id,nazev").eq("aktivni",true).order("poradi"));
-  const {data:kategorieFin}=useData(()=>sb.from("fin_kategorie").select("id,nazev,typ").order("poradi"));
-
-  // Výchozí účet pro alimenty = Moneta běžný (fallback první účet)
-  const monetaId=(ucty||[]).find(u=>/moneta\s*běžný/i.test(u.nazev||""))?.id || (ucty||[])[0]?.id || null;
-  const alimentyKatId=(kategorieFin||[]).find(k=>/aliment/i.test(k.nazev||""))?.id||null;
-  const detiKatId=(kategorieFin||[]).find(k=>/^děti$|^deti$/i.test(k.nazev||""))?.id||null;
-
-  // Najde (nebo založí) kategorii dle názvu a vrátí její id.
-  const ensureKat=async(nazev,emoji,typ,barva)=>{
-    const {data:ex}=await sb.from("fin_kategorie").select("id").ilike("nazev",nazev).limit(1);
-    if(ex&&ex[0]) return ex[0].id;
-    const {data:nk}=await sb.from("fin_kategorie").insert({nazev,emoji,typ,barva,poradi:900}).select("id").single();
-    return nk?.id||null;
-  };
-
-  // Zrcadlení platby do cashflow (fin_transakce): otec→matce = příjem (+), matka→otci = výdaj (−).
-  // Promítne se jen platba s reálným datem a nenulovou částkou. Drží se 1:1 přes alimenty_platby.fin_transakce_id.
-  const syncPlatbaDoCashflow=async(p)=>{
-    if(!p) return;
-    const aktivni = p.typ==="alimenty" && p.datum && Number(p.castka)>0 && (p.ucet_id||monetaId);
-    if(aktivni){
-      const prijem = p.kdo_plati==="otec"; // otec platí matce = příjem; matka platí otci = výdaj
-      const katId = alimentyKatId || await ensureKat("Alimenty","⚖️","prijem","#c0392b");
-      const tData={
-        ucet_id:p.ucet_id||monetaId,
-        datum:p.datum,
-        castka:(prijem?1:-1)*Math.abs(Number(p.castka)),
-        kategorie_id:katId,
-        popis:`Alimenty${p.mesic?" "+p.mesic:""} (${p.kdo_plati}→${p.komu||""})`.trim(),
-        protistrana:"Alimenty Šíma",
-        typ:prijem?"prijem":"vydaj",
-        prevod_ucet_id:null,
-      };
-      if(p.fin_transakce_id){
-        await sb.from("fin_transakce").update(tData).eq("id",p.fin_transakce_id);
-      } else {
-        const {data:nova}=await sb.from("fin_transakce").insert(tData).select("id").single();
-        if(nova?.id) await sb.from("alimenty_platby").update({fin_transakce_id:nova.id}).eq("id",p.id);
-      }
-    } else if(p.fin_transakce_id){
-      // už nesplňuje podmínky (nulová částka / chybí datum) → zruš spárovaný pohyb
-      await sb.from("fin_transakce").delete().eq("id",p.fin_transakce_id);
-      await sb.from("alimenty_platby").update({fin_transakce_id:null}).eq("id",p.id);
-    }
-  };
-
-  // KROK 2 — zrcadlení mimořádného dětského výdaje:
-  //  • REALITA (fin_transakce): výdaj „Děti" ve výši toho, co reálně odešlo z účtu matky
-  //    (její podíl; když platila i za otce, tak celá částka).
-  //  • PLÁN (fin_cashflow_plan, aktuální měsíc): očekávaný PŘÍJEM = podíl otce, který dluží zpět
-  //    (jen když matka zaplatila za otce). Drží se přes fin_transakce_id / fin_plan_id.
-  const syncMimoradneDoCashflow=async(m)=>{
-    if(!m) return;
-    const ucetId=m.ucet_id||monetaId;
-    const vydaj = m.matka_zaplatila_za_otce ? Number(m.castka_celkem) : (m.matka_zaplatila_skolce ? Number(m.podil_matky) : 0);
-    const dluhOtce = m.matka_zaplatila_za_otce ? Number(m.podil_otce) : 0;
-
-    // 1) Realita – výdaj na děti
-    if(vydaj>0 && ucetId && m.datum){
-      const detiKat = detiKatId || await ensureKat("Děti","🧒","vydaj","#e67e22");
-      const tData={ucet_id:ucetId,datum:m.datum,castka:-Math.abs(vydaj),kategorie_id:detiKat,popis:`Mimořádné ${m.dite}: ${m.popis||""}`.trim(),protistrana:"Děti / mimořádné",typ:"vydaj",prevod_ucet_id:null};
-      if(m.fin_transakce_id) await sb.from("fin_transakce").update(tData).eq("id",m.fin_transakce_id);
-      else { const {data:nt}=await sb.from("fin_transakce").insert(tData).select("id").single(); if(nt?.id) await sb.from("alimenty_mimoradne").update({fin_transakce_id:nt.id}).eq("id",m.id); }
-    } else if(m.fin_transakce_id){
-      await sb.from("fin_transakce").delete().eq("id",m.fin_transakce_id);
-      await sb.from("alimenty_mimoradne").update({fin_transakce_id:null}).eq("id",m.id);
-    }
-
-    // 2) Plán – očekávaný příjem (podíl otce k vrácení) v měsíci výdaje
-    if(dluhOtce>0){
-      const d=m.datum?new Date(m.datum):new Date();
-      const rok=d.getFullYear(), mesic=d.getMonth()+1;
-      const alimKat = alimentyKatId || await ensureKat("Alimenty","⚖️","prijem","#c0392b");
-      const planData={rok,mesic,nazev:`Doplatek od otce (${m.dite}): ${m.popis||""}`.trim(),castka:Math.abs(dluhOtce),kategorie_id:alimKat,ucet_id:ucetId,opakovani:"jednorazove",datum_do:null,prevod_ucet_id:null,dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null,poznamka:"Podíl otce k vrácení (auto)"};
-      if(m.fin_plan_id) await sb.from("fin_cashflow_plan").update(planData).eq("id",m.fin_plan_id);
-      else { const {data:np}=await sb.from("fin_cashflow_plan").insert(planData).select("id").single(); if(np?.id) await sb.from("alimenty_mimoradne").update({fin_plan_id:np.id}).eq("id",m.id); }
-    } else if(m.fin_plan_id){
-      await sb.from("fin_cashflow_plan").delete().eq("id",m.fin_plan_id);
-      await sb.from("alimenty_mimoradne").update({fin_plan_id:null}).eq("id",m.id);
-    }
-  };
 
   // Auto-vytvoření plateb pro aktuální měsíc pokud chybí
   const autoVytvorRef=useRef(false);
@@ -4373,42 +4072,7 @@ function AlimentyTab(){
     return total;
   };
 
-  // KROK 1 — promítnutí očekávané sazby alimentů do cashflow plánu (jen tento + příští měsíc).
-  // Jediný řádek „Alimenty Šíma" = základní sazba BEZ splátky dluhu (ta se přidá ručně, až poběží).
-  // Minulé/zamčené měsíce se nedotýká. Ruční řádky (Tereza, kluci…) se NEMĚNÍ.
-  const promitniPlanAlimentu=async(silent)=>{
-    const d=new Date();
-    const cur={rok:d.getFullYear(),mesic:d.getMonth()+1};
-    const nm = cur.mesic===12?{rok:cur.rok+1,mesic:1}:{rok:cur.rok,mesic:cur.mesic+1};
-    const katId = alimentyKatId || await ensureKat("Alimenty","⚖️","prijem","#c0392b");
-    const baseCols={kategorie_id:katId,ucet_id:monetaId,opakovani:"jednorazove",datum_do:null,prevod_ucet_id:null,dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null,poznamka:"Očekávaná sazba alimentů Šíma (auto, bez splátky dluhu)"};
-    for(const mm of [cur,nm]){
-      const key=`${mm.rok}-${String(mm.mesic).padStart(2,"0")}`;
-      // úklid starých auto-řádků z předchozí verze (sloučené 9 000 / −2 500)
-      await sb.from("fin_cashflow_plan").delete().eq("rok",mm.rok).eq("mesic",mm.mesic).in("nazev",["Alimenty (otec → matka)","Alimenty (matka → otec)"]);
-      // očekávaná alimentová sazba BEZ splátky dluhu
-      const base = Math.abs((getSazbaProMesic(key)||0) - (key>=SPLATKA_OD?splatkaM:0));
-      const {data:ex}=await sb.from("fin_cashflow_plan").select("id").eq("rok",mm.rok).eq("mesic",mm.mesic).eq("nazev","Alimenty Šíma").limit(1);
-      if(base>0){
-        const data={rok:mm.rok,mesic:mm.mesic,nazev:"Alimenty Šíma",castka:base,...baseCols};
-        if(ex&&ex[0]) await sb.from("fin_cashflow_plan").update(data).eq("id",ex[0].id);
-        else await sb.from("fin_cashflow_plan").insert(data);
-      } else if(ex&&ex[0]) {
-        await sb.from("fin_cashflow_plan").delete().eq("id",ex[0].id);
-      }
-    }
-    if(!silent) alert("Hotovo — Alimenty Šíma (6 500) promítnuty do plánu (tento + příští měsíc).");
-  };
-
-  // Automatika: po načtení sazeb/účtů se očekávané alimenty samy promítnou do cashflow plánu
-  // (tento + příští měsíc). Běží jednou za otevření modulu; minulé/zamčené měsíce se netýká.
-  const planAutoRef=useRef(false);
-  useEffect(()=>{
-    if(planAutoRef.current) return;
-    if(sazby===null||ucty===null||kategorieFin===null) return;
-    planAutoRef.current=true;
-    promitniPlanAlimentu(true);
-  },[sazby,ucty,kategorieFin]);
+  // Měsíce od dubna 2026 do 12 měsíců dopředu
   const mesice=[];
   const mesiceAktualni=[];
   const mStart=new Date(2026,3,1);
@@ -4426,7 +4090,7 @@ function AlimentyTab(){
 
   // ── Sdílený modal Přidat platbu ──
   const [pridatModal,setPridatModal]=useState(false);
-  const pridatForm0={typ:"alimenty",kdo_plati:"otec",komu:"matce",komu_text:"",mesic:mesice[mesice.length-1]||"",datum:"",castka:"",poznamka:"",ucet_id:""};
+  const pridatForm0={typ:"alimenty",kdo_plati:"otec",komu:"matce",komu_text:"",mesic:mesice[mesice.length-1]||"",datum:"",castka:"",poznamka:""};
   const [pf,setPf]=useState(pridatForm0);
 
   const napoveda=()=>{
@@ -4552,26 +4216,18 @@ function AlimentyTab(){
     };
 
     const ulozEditAlim=async()=>{
-      const {data:upr}=await sb.from("alimenty_platby").update({
+      await sb.from("alimenty_platby").update({
         kdo_plati:editFormA.kdo_plati,komu:editFormA.komu,komu_text:editFormA.komu_text||null,
         mesic:editFormA.mesic,castka:parseInt(editFormA.castka),
         datum:editFormA.datum||null,poznamka:editFormA.poznamka||null,
-        ucet_id:editFormA.ucet_id||monetaId||null,
-      }).eq("id",editAlim.id).select().single();
-      if(upr) await syncPlatbaDoCashflow(upr);
+      }).eq("id",editAlim.id);
       reloadPlatby();setEditAlim(null);
     };
-    const smazAlim=async(id)=>{
-      if(!confirm("Smazat tuto platbu?"))return;
-      const {data:row}=await sb.from("alimenty_platby").select("fin_transakce_id").eq("id",id).single();
-      if(row?.fin_transakce_id) await sb.from("fin_transakce").delete().eq("id",row.fin_transakce_id);
-      await sb.from("alimenty_platby").delete().eq("id",id);
-      reloadPlatby();
-    };
+    const smazAlim=async(id)=>{if(!confirm("Smazat tuto platbu?"))return;await sb.from("alimenty_platby").delete().eq("id",id);reloadPlatby();};
 
     const ulozEditMim=async()=>{
       const celkem=parseInt(editFormM.castka_celkem);
-      const {data:upr}=await sb.from("alimenty_mimoradne").update({
+      await sb.from("alimenty_mimoradne").update({
         datum:editFormM.datum,popis:editFormM.popis,dite:editFormM.dite,
         castka_celkem:celkem,podil_matky:Math.round(celkem/2),podil_otce:Math.round(celkem/2),
         matka_zaplatila_skolce:editFormM.matka_zaplatila_skolce,
@@ -4579,19 +4235,10 @@ function AlimentyTab(){
         matka_zaplatila_za_otce:editFormM.matka_zaplatila_za_otce,
         otec_zaplatil_za_matku:editFormM.otec_zaplatil_za_matku,
         poznamka:editFormM.poznamka||null,
-        ucet_id:editFormM.ucet_id||monetaId||null,
-      }).eq("id",editMim.id).select().single();
-      if(upr) await syncMimoradneDoCashflow(upr);
+      }).eq("id",editMim.id);
       reloadMim();setEditMim(null);
     };
-    const smazMim=async(id)=>{
-      if(!confirm("Smazat tento výdaj?"))return;
-      const {data:row}=await sb.from("alimenty_mimoradne").select("fin_transakce_id,fin_plan_id").eq("id",id).single();
-      if(row?.fin_transakce_id) await sb.from("fin_transakce").delete().eq("id",row.fin_transakce_id);
-      if(row?.fin_plan_id) await sb.from("fin_cashflow_plan").delete().eq("id",row.fin_plan_id);
-      await sb.from("alimenty_mimoradne").delete().eq("id",id);
-      reloadMim();
-    };
+    const smazMim=async(id)=>{if(!confirm("Smazat tento výdaj?"))return;await sb.from("alimenty_mimoradne").delete().eq("id",id);reloadMim();};
 
     return <div>
       {/* Dlaždice pro mimořádný výdaj a splátku dluhu */}
@@ -4614,10 +4261,7 @@ function AlimentyTab(){
         </div>
       </div>
 
-      <div style={{fontSize:11.5,color:C.dim,marginBottom:20,textAlign:"center",fontStyle:"italic"}}>
-        📅 Očekávané alimenty se do cashflow plánu (tento + příští měsíc) doplňují automaticky dle sazeb.
-      </div>
-
+      {/* Upozornění na chybějící měsíce */}
       {chybejiciMesice.length>0&&<div style={{background:C.orangeS,border:`1px solid ${C.orange}`,borderRadius:10,padding:"12px 16px",marginBottom:20,fontSize:13,color:C.orange}}>
         ⚠ Chybí platba za: {chybejiciMesice.map(m=>new Date(m+"-01").toLocaleDateString("cs-CZ",{month:"long",year:"numeric"})).join(", ")}
       </div>}
@@ -4650,7 +4294,7 @@ function AlimentyTab(){
                 <td style={{padding:"10px 12px",fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>{p.datum?new Date(p.datum).toLocaleDateString("cs-CZ"):"—"}</td>
                 <td style={{padding:"10px 12px",fontSize:12,color:C.muted}}>{p.poznamka||""}</td>
                 <td style={{padding:"10px 8px",whiteSpace:"nowrap"}}>
-                  <button onClick={()=>{setEditAlim(p);setEditFormA({kdo_plati:p.kdo_plati,komu:p.komu,komu_text:p.komu_text||"",mesic:p.mesic||"",castka:String(p.castka),datum:p.datum||"",poznamka:p.poznamka||"",ucet_id:p.ucet_id||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
+                  <button onClick={()=>{setEditAlim(p);setEditFormA({kdo_plati:p.kdo_plati,komu:p.komu,komu_text:p.komu_text||"",mesic:p.mesic||"",castka:String(p.castka),datum:p.datum||"",poznamka:p.poznamka||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
                   <button onClick={()=>smazAlim(p.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
                 </td>
               </tr>;
@@ -4703,7 +4347,7 @@ function AlimentyTab(){
                 <td style={{padding:"9px 10px",fontSize:11,color:dluhSkolka.length?C.red:C.green,fontWeight:dluhSkolka.length?700:400}}>{dluhSkolka.join(", ")||"✓ Vše uhrazeno"}</td>
                 <td style={{padding:"9px 10px",fontSize:11,color:dluhRodice.length?C.orange:C.green,fontWeight:dluhRodice.length?700:400}}>{dluhRodice.join(", ")||"✓ Vyrovnáno"}</td>
                 <td style={{padding:"9px 8px",whiteSpace:"nowrap"}}>
-                  <button onClick={()=>{setEditMim(m);setEditFormM({datum:m.datum,popis:m.popis,dite:m.dite,castka_celkem:String(m.castka_celkem),matka_zaplatila_skolce:m.matka_zaplatila_skolce,otec_zaplatil_skolce:m.otec_zaplatil_skolce,matka_zaplatila_za_otce:m.matka_zaplatila_za_otce,otec_zaplatil_za_matku:m.otec_zaplatil_za_matku,poznamka:m.poznamka||"",ucet_id:m.ucet_id||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
+                  <button onClick={()=>{setEditMim(m);setEditFormM({datum:m.datum,popis:m.popis,dite:m.dite,castka_celkem:String(m.castka_celkem),matka_zaplatila_skolce:m.matka_zaplatila_skolce,otec_zaplatil_skolce:m.otec_zaplatil_skolce,matka_zaplatila_za_otce:m.matka_zaplatila_za_otce,otec_zaplatil_za_matku:m.otec_zaplatil_za_matku,poznamka:m.poznamka||""});}} style={{...btnC(C.accent,true),padding:"3px 8px",fontSize:11,marginRight:4}}>✏</button>
                   <button onClick={()=>smazMim(m.id)} style={{...btnC(C.red,true),padding:"3px 8px",fontSize:11}}>🗑</button>
                 </td>
               </tr>;
@@ -4728,12 +4372,6 @@ function AlimentyTab(){
               {f.opts.map(o=>typeof o==="string"?<option key={o} value={o}>{o}</option>:<option key={o.v} value={o.v}>{o.l}</option>)}
             </select>:<input style={inp} type={f.t} value={editFormA[f.k]||""} onChange={e=>setEditFormA(p=>({...p,[f.k]:e.target.value}))}/>}
           </div>)}
-          <div style={{marginBottom:11}}>
-            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Účet (pro cashflow)</div>
-            <select style={inp} value={editFormA.ucet_id||monetaId||""} onChange={e=>setEditFormA(p=>({...p,ucet_id:e.target.value}))}>
-              {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
-            </select>
-          </div>
           <div style={{display:"flex",gap:10,marginTop:16}}>
             <button onClick={ulozEditAlim} style={btnC()}>Uložit</button>
             <button onClick={()=>setEditAlim(null)} style={btnC(C.muted,true)}>Zrušit</button>
@@ -4767,12 +4405,6 @@ function AlimentyTab(){
               <input type="checkbox" checked={!!editFormM[ch.k]} onChange={e=>setEditFormM(p=>({...p,[ch.k]:e.target.checked}))}/>
               {ch.l}
             </label>)}
-          </div>
-          <div style={{marginBottom:14}}>
-            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Účet (pro cashflow)</div>
-            <select style={inp} value={editFormM.ucet_id||monetaId||""} onChange={e=>setEditFormM(p=>({...p,ucet_id:e.target.value}))}>
-              {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
-            </select>
           </div>
           <div style={{marginBottom:14}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Poznámka</div>
@@ -5086,22 +4718,20 @@ function AlimentyTab(){
   // ── MODAL: Přidat platbu ──
   const PridatModal=()=>{
     const [mf,setMf]=useState(pf);
-    const [mimForm,setMimForm]=useState({datum:"",popis:"",dite:"Oba",castka_celkem:"",matka_zaplatila_skolce:false,otec_zaplatil_skolce:false,matka_zaplatila_za_otce:false,otec_zaplatil_za_matku:false,poznamka:"",ucet_id:""});
+    const [mimForm,setMimForm]=useState({datum:"",popis:"",dite:"Oba",castka_celkem:"",matka_zaplatila_skolce:false,otec_zaplatil_skolce:false,matka_zaplatila_za_otce:false,otec_zaplatil_za_matku:false,poznamka:""});
     const [zobrazit,setZobrazit]=useState("platba"); // platba | mimoradne
 
     const ulozPlatbuLocal=async()=>{
-      const data={typ:mf.typ,kdo_plati:mf.kdo_plati,komu:mf.komu,komu_text:mf.komu_text||null,mesic:mf.typ==="alimenty"?mf.mesic:null,datum:mf.datum||null,castka:parseInt(mf.castka),poznamka:mf.poznamka||null,ucet_id:mf.ucet_id||monetaId||null};
-      const {data:nova}=await sb.from("alimenty_platby").insert(data).select().single();
-      if(nova) await syncPlatbaDoCashflow(nova);
+      const data={typ:mf.typ,kdo_plati:mf.kdo_plati,komu:mf.komu,komu_text:mf.komu_text||null,mesic:mf.typ==="alimenty"?mf.mesic:null,datum:mf.datum||null,castka:parseInt(mf.castka),poznamka:mf.poznamka||null};
+      await sb.from("alimenty_platby").insert(data);
       reloadAll();setPridatModal(false);
     };
 
     const ulozMimoradne=async()=>{
       const celkem=parseInt(mimForm.castka_celkem);
       const podil=Math.round(celkem/2);
-      const data={datum:mimForm.datum,popis:mimForm.popis,dite:mimForm.dite,castka_celkem:celkem,podil_matky:podil,podil_otce:podil,matka_zaplatila_skolce:mimForm.matka_zaplatila_skolce,otec_zaplatil_skolce:mimForm.otec_zaplatil_skolce,matka_zaplatila_za_otce:mimForm.matka_zaplatila_za_otce,otec_zaplatil_za_matku:mimForm.otec_zaplatil_za_matku,poznamka:mimForm.poznamka||null,ucet_id:mimForm.ucet_id||monetaId||null};
-      const {data:nm}=await sb.from("alimenty_mimoradne").insert(data).select().single();
-      if(nm) await syncMimoradneDoCashflow(nm);
+      const data={datum:mimForm.datum,popis:mimForm.popis,dite:mimForm.dite,castka_celkem:celkem,podil_matky:podil,podil_otce:podil,matka_zaplatila_skolce:mimForm.matka_zaplatila_skolce,otec_zaplatil_skolce:mimForm.otec_zaplatil_skolce,matka_zaplatila_za_otce:mimForm.matka_zaplatila_za_otce,otec_zaplatil_za_matku:mimForm.otec_zaplatil_za_matku,poznamka:mimForm.poznamka||null};
+      await sb.from("alimenty_mimoradne").insert(data);
       reloadAll();setPridatModal(false);
     };
 
@@ -5149,13 +4779,6 @@ function AlimentyTab(){
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Datum platby</div>
             <input style={inp} type="date" value={mf.datum} onChange={e=>setMf(p=>({...p,datum:e.target.value}))}/>
           </div>
-          <div style={{marginBottom:12}}>
-            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Účet {mf.kdo_plati==="otec"?"(kam přijde)":"(odkud odejde)"}</div>
-            <select style={inp} value={mf.ucet_id||monetaId||""} onChange={e=>setMf(p=>({...p,ucet_id:e.target.value}))}>
-              {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
-            </select>
-            <div style={{fontSize:11,color:C.dim,marginTop:5}}>Promítne se do cashflow daného měsíce jako {mf.kdo_plati==="otec"?"příjem (+)":"výdaj (−)"} — jen když má datum a nenulovou částku.</div>
-          </div>
           <div style={{marginBottom:20}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Poznámka</div>
             <input style={inp} type="text" placeholder="volitelně..." value={mf.poznamka} onChange={e=>setMf(p=>({...p,poznamka:e.target.value}))}/>
@@ -5193,13 +4816,6 @@ function AlimentyTab(){
               <input type="checkbox" checked={mimForm[ch.k]} onChange={e=>setMimForm(p=>({...p,[ch.k]:e.target.checked}))}/>
               {ch.l}
             </label>)}
-          </div>
-          <div style={{marginBottom:12}}>
-            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Účet (odkud výdaj odešel)</div>
-            <select style={inp} value={mimForm.ucet_id||monetaId||""} onChange={e=>setMimForm(p=>({...p,ucet_id:e.target.value}))}>
-              {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
-            </select>
-            <div style={{fontSize:11,color:C.dim,marginTop:5}}>Do cashflow se promítne jako výdaj „Děti" (tvůj reálný výdaj). Pokud platíš i za otce, jeho podíl se zároveň přidá do plánu jako očekávaný příjem (doplatek).</div>
           </div>
           <div style={{marginBottom:20}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>Poznámka</div>
@@ -6352,1033 +5968,6 @@ function AutoNastaveni({auto,reload,onBack}){
   </div>;
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// MODUL: ÚČTY & PC — evidence uživatelských účtů, hesel, licencí a hardwaru
-//
-// ZABEZPEČENÍ (zero-knowledge trezor):
-//   • Hardware a názvy zůstávají čitelné (kvůli přehledu a hledání).
-//   • Tajné údaje (hesla, 2FA/recovery kódy, licenční klíče, tajné poznámky)
-//     se šifrují PŘÍMO v prohlížeči — Web Crypto, AES-256-GCM, klíč je odvozen
-//     PBKDF2 (210k iterací) z "hlavního hesla". Do Supabase i do případného
-//     exportu jde jen šifrovaný text → bez hlavního hesla je nepřečte nikdo,
-//     ani správce v Supabase dashboardu.
-//   • Hlavní heslo se NIKAM neukládá (v DB je jen ověřovací blok). Když ho
-//     zapomeneš, tajné údaje jsou nenávratně ztracené — to je smysl zero-knowledge.
-//   • Trezor se po 10 min nečinnosti a po odchodu z modulu sám zamkne.
-// ══════════════════════════════════════════════════════════════════════════════
-const VAULT_META_KEY   = "it_vault_meta";       // řádek v app_nastaveni (klic)
-const VAULT_CHECK_PLAIN= "DOMOV_TREZOR_OK_v1";  // ověřovací řetězec
-const _ITenc=new TextEncoder(), _ITdec=new TextDecoder();
-const _itB64  =(buf)=>btoa(String.fromCharCode(...new Uint8Array(buf)));
-const _itUnb64=(s)=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
-
-async function vaultDeriveKey(heslo,saltBytes){
-  const base=await crypto.subtle.importKey("raw",_ITenc.encode(heslo),"PBKDF2",false,["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    {name:"PBKDF2",salt:saltBytes,iterations:210000,hash:"SHA-256"},
-    base,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]
-  );
-}
-async function vaultEncrypt(key,plain){
-  if(plain==null||plain==="") return "";
-  const iv=crypto.getRandomValues(new Uint8Array(12));
-  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,_ITenc.encode(String(plain)));
-  return _itB64(iv)+":"+_itB64(ct);
-}
-async function vaultDecrypt(key,payload){
-  if(!payload) return "";
-  const i=payload.indexOf(":"); if(i<0) return "";
-  const iv=_itUnb64(payload.slice(0,i)), ct=_itUnb64(payload.slice(i+1));
-  const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,ct);
-  return _ITdec.decode(pt);
-}
-// Načti metadata trezoru z app_nastaveni (null = trezor ještě neexistuje)
-async function vaultLoadMeta(){
-  const {data}=await sb.from("app_nastaveni").select("hodnota").eq("klic",VAULT_META_KEY).limit(1);
-  const row=data&&data[0];
-  if(!row?.hodnota) return null;
-  try{return JSON.parse(row.hodnota);}catch{return null;}
-}
-async function vaultSaveMeta(meta){
-  const {data:ex}=await sb.from("app_nastaveni").select("klic").eq("klic",VAULT_META_KEY).limit(1);
-  if(ex&&ex.length) {
-    const {error}=await sb.from("app_nastaveni").update({hodnota:JSON.stringify(meta)}).eq("klic",VAULT_META_KEY);
-    if(error) throw new Error(error.message);
-  } else {
-    const {error}=await sb.from("app_nastaveni").insert({klic:VAULT_META_KEY,hodnota:JSON.stringify(meta)});
-    if(error) throw new Error(error.message);
-  }
-}
-// Vytvoř trezor poprvé → vrátí odvozený klíč
-async function vaultCreate(heslo){
-  const salt=crypto.getRandomValues(new Uint8Array(16));
-  const key=await vaultDeriveKey(heslo,salt);
-  const check=await vaultEncrypt(key,VAULT_CHECK_PLAIN);
-  await vaultSaveMeta({salt:_itB64(salt),check});
-  return key;
-}
-// Odemkni → ověří heslo proti uloženému check bloku, vrátí klíč
-async function vaultUnlock(heslo,meta){
-  const key=await vaultDeriveKey(heslo,_itUnb64(meta.salt));
-  let ok=false;
-  try{ ok=(await vaultDecrypt(key,meta.check))===VAULT_CHECK_PLAIN; }catch{ ok=false; }
-  if(!ok) throw new Error("Nesprávné hlavní heslo.");
-  return key;
-}
-
-// ── Číselníky ─────────────────────────────────────────────────────────────────
-const IT_ZARIZENI_TYPY={
-  pc:{label:"Stolní PC",icon:"🖥",color:C.accent},
-  notebook:{label:"Notebook",icon:"💻",color:C.purple},
-  tablet:{label:"Tablet",icon:"📱",color:C.blue},
-  telefon:{label:"Telefon",icon:"📞",color:C.green},
-  nas:{label:"NAS / server",icon:"🗄",color:C.orange},
-  jine:{label:"Jiné",icon:"🔌",color:C.muted},
-};
-const IT_SLUZBY={
-  microsoft:{label:"Microsoft",icon:"🪟",color:"#0078d4"},
-  google:{label:"Google",icon:"🔵",color:"#ea4335"},
-  apple:{label:"Apple",icon:"🍎",color:"#555"},
-  email:{label:"E-mail",icon:"✉️",color:C.blue},
-  banka:{label:"Banka / finance",icon:"🏦",color:C.green},
-  sit:{label:"Síť / router / Wi-Fi",icon:"📶",color:C.orange},
-  jiny:{label:"Jiný software",icon:"🔑",color:C.purple},
-};
-const IT_LIC_TYPY={
-  windows:{label:"Windows",icon:"🪟",color:"#0078d4"},
-  office:{label:"Office",icon:"📊",color:"#d83b01"},
-  antivir:{label:"Antivir",icon:"🛡",color:C.green},
-  jiny:{label:"Jiný SW",icon:"🎫",color:C.purple},
-};
-
-// ── Brána trezoru (setup poprvé / odemčení) ───────────────────────────────────
-function ITVaultGate({meta,onReady}){
-  const isSetup=!meta;
-  const [heslo,setHeslo]=useState("");
-  const [heslo2,setHeslo2]=useState("");
-  const [chyba,setChyba]=useState("");
-  const [busy,setBusy]=useState(false);
-  const podporovano = typeof crypto!=="undefined" && crypto.subtle;
-
-  const odeslat=async()=>{
-    setChyba("");
-    if(!heslo) { setChyba("Zadej hlavní heslo."); return; }
-    if(isSetup){
-      if(heslo.length<8){ setChyba("Hlavní heslo by mělo mít aspoň 8 znaků."); return; }
-      if(heslo!==heslo2){ setChyba("Hesla se neshodují."); return; }
-    }
-    setBusy(true);
-    try{
-      const key = isSetup ? await vaultCreate(heslo) : await vaultUnlock(heslo, meta);
-      const novaMeta = isSetup ? await vaultLoadMeta() : null;
-      onReady(key, novaMeta);
-    }catch(e){ setChyba(e.message||"Něco se nepovedlo."); }
-    finally{ setBusy(false); }
-  };
-
-  return <div style={{maxWidth:440,margin:"40px auto"}}>
-    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderTop:`4px solid ${C.accent}`,borderRadius:16,padding:"32px 28px",boxShadow:"0 4px 20px rgba(0,0,0,.06)"}}>
-      <div style={{textAlign:"center",marginBottom:18}}>
-        <div style={{fontSize:42,marginBottom:8}}>🔐</div>
-        <div style={{fontWeight:800,fontSize:19,color:C.text}}>{isSetup?"Založit trezor účtů":"Odemknout trezor"}</div>
-        <div style={{fontSize:12.5,color:C.muted,marginTop:6,lineHeight:1.5}}>
-          {isSetup
-            ? "Nastav hlavní heslo. Tímto heslem se v prohlížeči zašifrují všechna hesla a licenční klíče — do databáze jde jen šifrovaný text."
-            : "Zadej hlavní heslo, kterým se dešifrují uložené tajné údaje."}
-        </div>
-      </div>
-
-      {!podporovano && <div style={{background:C.redS,border:`1px solid ${C.red}`,borderRadius:10,padding:"10px 14px",fontSize:12.5,color:C.red,marginBottom:14}}>
-        ⚠ Tento prohlížeč/spojení nepodporuje Web Crypto (potřeba HTTPS nebo localhost). Trezor nelze použít.
-      </div>}
-
-      <Field label="Hlavní heslo">
-        <input style={inp} type="password" value={heslo} autoFocus autoComplete="new-password"
-          onChange={e=>setHeslo(e.target.value)}
-          onKeyDown={e=>{if(e.key==="Enter"&&!isSetup)odeslat();}}
-          placeholder="••••••••"/>
-      </Field>
-      {isSetup&&<Field label="Hlavní heslo znovu">
-        <input style={inp} type="password" value={heslo2} autoComplete="new-password"
-          onChange={e=>setHeslo2(e.target.value)}
-          onKeyDown={e=>{if(e.key==="Enter")odeslat();}}
-          placeholder="••••••••"/>
-      </Field>}
-
-      {isSetup&&<div style={{background:C.orangeS,border:`1px solid ${C.orange}44`,borderRadius:10,padding:"10px 14px",fontSize:12,color:C.orange,marginBottom:14,lineHeight:1.5}}>
-        ⚠ Hlavní heslo se nikam neukládá. <b>Když ho zapomeneš, tajné údaje už nikdo nedešifruje.</b> Ulož si ho na bezpečné místo (např. správce hesel nebo papír v šuplíku).
-      </div>}
-
-      {chyba&&<div style={{color:C.red,fontSize:12.5,fontWeight:600,marginBottom:12}}>⚠ {chyba}</div>}
-
-      <button onClick={odeslat} disabled={busy||!podporovano} style={{...btnC(),width:"100%",padding:"12px",fontSize:14,opacity:(busy||!podporovano)?.6:1}}>
-        {busy?"Pracuji…":(isSetup?"Založit a odemknout":"Odemknout")}
-      </button>
-    </div>
-  </div>;
-}
-
-// ── Zobrazení jednoho tajného údaje (lazy dešifrování + kopírování) ────────────
-function ITSecretRow({vaultKey,label,payload,emoji="🔑"}){
-  const [shown,setShown]=useState(false);
-  const [plain,setPlain]=useState("");
-  const [copied,setCopied]=useState(false);
-  if(!payload) return null;
-  const ensure=async()=>{ if(plain) return plain; try{const t=await vaultDecrypt(vaultKey,payload);setPlain(t);return t;}catch{setPlain("⚠ nelze dešifrovat");return "";} };
-  const toggle=async()=>{ if(!shown)await ensure(); setShown(s=>!s); };
-  const copy=async()=>{ const t=await ensure(); try{await navigator.clipboard.writeText(t);setCopied(true);setTimeout(()=>setCopied(false),1200);}catch{} };
-  return <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-    <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:96}}>{emoji} {label}</span>
-    <code style={{flex:1,fontSize:13,fontFamily:"ui-monospace,Menlo,monospace",color:C.text,wordBreak:"break-all",userSelect:"all"}}>{shown?(plain||"—"):"••••••••••"}</code>
-    <button onClick={toggle} title={shown?"Skrýt":"Zobrazit"} style={{...btnC(C.muted,true),padding:"3px 9px",fontSize:13}}>{shown?"🙈":"👁"}</button>
-    <button onClick={copy} title="Kopírovat" style={{...btnC(C.accent,true),padding:"3px 9px",fontSize:13}}>{copied?"✓":"📋"}</button>
-  </div>;
-}
-
-// ── ZAŘÍZENÍ (hardware — bez šifrování) ───────────────────────────────────────
-function ITZarizeniModal({zarizeni,onClose,onSaved}){
-  const isNew=!zarizeni;
-  const [f,setF]=useState({
-    nazev:zarizeni?.nazev||"", typ:zarizeni?.typ||"pc", uzivatel:zarizeni?.uzivatel||"",
-    vyrobce:zarizeni?.vyrobce||"", model:zarizeni?.model||"", serie_cislo:zarizeni?.serie_cislo||"",
-    cpu:zarizeni?.cpu||"", ram:zarizeni?.ram||"", disk:zarizeni?.disk||"", gpu:zarizeni?.gpu||"",
-    os:zarizeni?.os||"", mac:zarizeni?.mac||"", ip:zarizeni?.ip||"", poznamka:zarizeni?.poznamka||"",
-  });
-  const [saving,setSaving]=useState(false);
-  const [chyba,setChyba]=useState("");
-  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  const uloz=async()=>{
-    if(!f.nazev.trim()){setChyba("Vyplň název zařízení.");return;}
-    setSaving(true);setChyba("");
-    const data={...f}; Object.keys(data).forEach(k=>{if(data[k]==="")data[k]=null;}); data.nazev=f.nazev.trim();
-    const {error}= isNew ? await sb.from("it_zarizeni").insert(data) : await sb.from("it_zarizeni").update(data).eq("id",zarizeni.id);
-    setSaving(false);
-    if(error){setChyba(error.message);return;}
-    onSaved();
-  };
-  return <Modal title={isNew?"Nové zařízení":"Upravit zařízení"} onClose={onClose} width={520}>
-    <Field label="Název *" hint="Jak zařízení voláš"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus placeholder="např. Honzíkův notebook"/></Field>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Typ"><select style={inp} value={f.typ} onChange={set("typ")}>{Object.entries(IT_ZARIZENI_TYPY).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}</select></Field>
-      <Field label="Uživatel"><input style={inp} value={f.uzivatel} onChange={set("uzivatel")} placeholder="Komu patří"/></Field>
-    </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Výrobce"><input style={inp} value={f.vyrobce} onChange={set("vyrobce")} placeholder="Dell, Lenovo, HP…"/></Field>
-      <Field label="Model"><input style={inp} value={f.model} onChange={set("model")} placeholder="Latitude 5440…"/></Field>
-    </div>
-    <Field label="Sériové číslo (S/N)"><input style={inp} value={f.serie_cislo} onChange={set("serie_cislo")} placeholder="Pro servis / záruku"/></Field>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Procesor (CPU)"><input style={inp} value={f.cpu} onChange={set("cpu")} placeholder="Intel i5-1335U"/></Field>
-      <Field label="Operační paměť (RAM)"><input style={inp} value={f.ram} onChange={set("ram")} placeholder="16 GB"/></Field>
-    </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Disk"><input style={inp} value={f.disk} onChange={set("disk")} placeholder="512 GB SSD"/></Field>
-      <Field label="Grafika (GPU)"><input style={inp} value={f.gpu} onChange={set("gpu")} placeholder="Intel Iris Xe"/></Field>
-    </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-      <Field label="OS"><input style={inp} value={f.os} onChange={set("os")} placeholder="Windows 11 Pro"/></Field>
-      <Field label="MAC adresa"><input style={inp} value={f.mac} onChange={set("mac")} placeholder="00:1A:2B…"/></Field>
-      <Field label="IP adresa"><input style={inp} value={f.ip} onChange={set("ip")} placeholder="192.168.0.10"/></Field>
-    </div>
-    <Field label="Poznámka"><textarea style={{...inp,resize:"vertical",minHeight:56}} value={f.poznamka} onChange={set("poznamka")} placeholder="Záruka do…, kde stojí, atd."/></Field>
-    {chyba&&<div style={{color:C.red,fontSize:12.5,fontWeight:600,marginBottom:10}}>⚠ {chyba}</div>}
-    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
-      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
-      <button onClick={uloz} disabled={saving} style={btnC()}>{saving?"Ukládám…":"Uložit"}</button>
-    </div>
-  </Modal>;
-}
-
-function ITZarizeniSekce(){
-  const {data:zarizeni,loading,reload}=useData(()=>sb.from("it_zarizeni").select("*").order("nazev"));
-  const [modal,setModal]=useState(null); // null | "new" | objekt
-  const smaz=async(z)=>{if(!confirm(`Smazat zařízení "${z.nazev}"?`))return;await sb.from("it_zarizeni").delete().eq("id",z.id);reload();};
-  if(loading) return <Spinner/>;
-  const list=zarizeni||[];
-  return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-      <div style={{color:C.text,fontWeight:800,fontSize:16}}>🖥 Zařízení <span style={{color:C.muted,fontWeight:400,fontSize:14}}>({list.length})</span></div>
-      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat zařízení</button>
-    </div>
-    {list.length===0&&<EmptyState emoji="🖥" text="Žádná zařízení" action="+ Přidat zařízení" onAction={()=>setModal("new")}/>}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
-      {list.map(z=>{
-        const t=IT_ZARIZENI_TYPY[z.typ]||IT_ZARIZENI_TYPY.jine;
-        const radky=[
-          z.cpu&&["CPU",z.cpu],z.ram&&["RAM",z.ram],z.disk&&["Disk",z.disk],z.gpu&&["GPU",z.gpu],
-          z.os&&["OS",z.os],z.serie_cislo&&["S/N",z.serie_cislo],z.mac&&["MAC",z.mac],z.ip&&["IP",z.ip],
-        ].filter(Boolean);
-        return <div key={z.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:16,borderLeft:`4px solid ${t.color}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-            <div style={{width:42,height:42,borderRadius:11,background:`${t.color}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:21}}>{t.icon}</div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:800,fontSize:15,color:C.text}}>{z.nazev}</div>
-              <div style={{fontSize:12,color:C.muted}}>{[t.label,[z.vyrobce,z.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</div>
-            </div>
-          </div>
-          {z.uzivatel&&<div style={{marginBottom:8}}><Tag color={t.color}>👤 {z.uzivatel}</Tag></div>}
-          {radky.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"3px 10px",fontSize:12,marginBottom:10}}>
-            {radky.map(([k,v])=><div key={k} style={{display:"flex",gap:5,minWidth:0}}><span style={{color:C.dim,fontWeight:700}}>{k}:</span><span style={{color:C.text,wordBreak:"break-all"}}>{v}</span></div>)}
-          </div>}
-          {z.poznamka&&<div style={{fontSize:11,color:C.dim,fontStyle:"italic",marginBottom:8}}>{z.poznamka}</div>}
-          <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setModal(z)} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
-            <button onClick={()=>smaz(z)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
-          </div>
-        </div>;
-      })}
-    </div>
-    {modal&&<ITZarizeniModal zarizeni={modal==="new"?null:modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
-  </div>;
-}
-
-// ── ÚČTY / PŘIHLÁŠENÍ (heslo + 2FA + recovery šifrované) ───────────────────────
-function ITUcetModal({vaultKey,ucet,zarizeni,onClose,onSaved}){
-  const isNew=!ucet;
-  const [f,setF]=useState({nazev:ucet?.nazev||"",sluzba:ucet?.sluzba||"microsoft",login:ucet?.login||"",url:ucet?.url||"",zarizeni_id:ucet?.zarizeni_id||""});
-  const [s,setS]=useState({heslo:"",dvojfaktor:"",recovery:"",tajna_poznamka:""});
-  const [loadingSecret,setLoadingSecret]=useState(!isNew);
-  const [saving,setSaving]=useState(false);
-  const [chyba,setChyba]=useState("");
-  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  const setS_=k=>e=>setS(p=>({...p,[k]:e.target.value}));
-  useEffect(()=>{
-    if(isNew) return;
-    (async()=>{
-      try{ const raw=await vaultDecrypt(vaultKey,ucet.tajne); const o=raw?JSON.parse(raw):{}; setS({heslo:o.heslo||"",dvojfaktor:o.dvojfaktor||"",recovery:o.recovery||"",tajna_poznamka:o.tajna_poznamka||""}); }
-      catch{ setChyba("Tajné údaje se nepodařilo dešifrovat (jiné hlavní heslo?)."); }
-      setLoadingSecret(false);
-    })();
-  },[]);
-  const uloz=async()=>{
-    if(!f.nazev.trim()){setChyba("Vyplň název účtu.");return;}
-    setSaving(true);setChyba("");
-    try{
-      const tajne=await vaultEncrypt(vaultKey,JSON.stringify({heslo:s.heslo,dvojfaktor:s.dvojfaktor,recovery:s.recovery,tajna_poznamka:s.tajna_poznamka}));
-      const data={nazev:f.nazev.trim(),sluzba:f.sluzba,login:f.login||null,url:f.url||null,zarizeni_id:f.zarizeni_id||null,tajne};
-      const {error}= isNew ? await sb.from("it_ucty").insert(data) : await sb.from("it_ucty").update(data).eq("id",ucet.id);
-      if(error) throw new Error(error.message);
-      onSaved();
-    }catch(e){ setChyba(e.message||"Uložení selhalo."); }
-    finally{ setSaving(false); }
-  };
-  return <Modal title={isNew?"Nový účet / přihlášení":"Upravit účet"} onClose={onClose} width={480} accent={C.accent}>
-    <Field label="Název *" hint="Co to je za účet"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus placeholder="např. Microsoft – Jirka"/></Field>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Služba"><select style={inp} value={f.sluzba} onChange={set("sluzba")}>{Object.entries(IT_SLUZBY).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}</select></Field>
-      <Field label="Zařízení (volitelně)"><select style={inp} value={f.zarizeni_id} onChange={set("zarizeni_id")}><option value="">— žádné —</option>{(zarizeni||[]).map(z=><option key={z.id} value={z.id}>{(IT_ZARIZENI_TYPY[z.typ]||IT_ZARIZENI_TYPY.jine).icon} {z.nazev}</option>)}</select></Field>
-    </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Přihlašovací jméno / e-mail"><input style={inp} value={f.login} onChange={set("login")} placeholder="jmeno@email.cz" autoComplete="off"/></Field>
-      <Field label="Web / adresa"><input style={inp} value={f.url} onChange={set("url")} placeholder="login.microsoft.com"/></Field>
-    </div>
-
-    <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginTop:4,marginBottom:14}}>
-      <div style={{fontSize:11,fontWeight:800,color:C.accent,letterSpacing:.5,textTransform:"uppercase",marginBottom:10}}>🔐 Šifrované údaje</div>
-      {loadingSecret?<div style={{fontSize:12,color:C.muted,padding:"6px 0"}}>Dešifruji…</div>:<>
-        <Field label="Heslo"><input style={inp} type="text" value={s.heslo} onChange={setS_("heslo")} placeholder="••••••••" autoComplete="off"/></Field>
-        <Field label="2FA / ověření" hint="TOTP klíč, kód, aplikace…"><input style={inp} value={s.dvojfaktor} onChange={setS_("dvojfaktor")} placeholder="Volitelné" autoComplete="off"/></Field>
-        <Field label="Záložní (recovery) kódy"><textarea style={{...inp,resize:"vertical",minHeight:50}} value={s.recovery} onChange={setS_("recovery")} placeholder="Volitelné — jeden na řádek" autoComplete="off"/></Field>
-        <Field label="Tajná poznámka"><textarea style={{...inp,resize:"vertical",minHeight:44}} value={s.tajna_poznamka} onChange={setS_("tajna_poznamka")} placeholder="Bezpečnostní otázky apod."/></Field>
-      </>}
-    </div>
-
-    {chyba&&<div style={{color:C.red,fontSize:12.5,fontWeight:600,marginBottom:10}}>⚠ {chyba}</div>}
-    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
-      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
-      <button onClick={uloz} disabled={saving||loadingSecret} style={btnC()}>{saving?"Šifruji a ukládám…":"Uložit"}</button>
-    </div>
-  </Modal>;
-}
-
-function ITUcetDetail({vaultKey,ucet,zarizeni,onEdit,onClose}){
-  const sl=IT_SLUZBY[ucet.sluzba]||IT_SLUZBY.jiny;
-  const z=(zarizeni||[]).find(x=>String(x.id)===String(ucet.zarizeni_id));
-  return <Modal title={`${sl.icon} ${ucet.nazev}`} onClose={onClose} width={460} accent={sl.color}>
-    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16,padding:14,background:C.bg,borderRadius:12}}>
-      <div style={{width:48,height:48,borderRadius:12,background:`${sl.color}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>{sl.icon}</div>
-      <div style={{minWidth:0}}>
-        <div style={{fontWeight:800,fontSize:16,color:C.text}}>{ucet.nazev}</div>
-        <div style={{fontSize:12,color:C.muted}}>{sl.label}{z?` · 🖥 ${z.nazev}`:""}</div>
-      </div>
-    </div>
-    {ucet.login&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-      <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:96}}>👤 Login</span>
-      <code style={{flex:1,fontSize:13,fontFamily:"ui-monospace,Menlo,monospace",color:C.text,wordBreak:"break-all",userSelect:"all"}}>{ucet.login}</code>
-      <button onClick={()=>navigator.clipboard.writeText(ucet.login)} title="Kopírovat" style={{...btnC(C.accent,true),padding:"3px 9px",fontSize:13}}>📋</button>
-    </div>}
-    {ucet.url&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-      <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:96}}>🌐 Web</span>
-      <span style={{flex:1,fontSize:13,color:C.text,wordBreak:"break-all"}}>{ucet.url}</span>
-    </div>}
-    <ITSecretsBlok vaultKey={vaultKey} payload={ucet.tajne}/>
-    <div style={{display:"flex",justifyContent:"flex-end",marginTop:18}}>
-      <button onClick={onEdit} style={btnC()}>✎ Upravit</button>
-    </div>
-  </Modal>;
-}
-
-// Řádek s už dešifrovanou hodnotou (maskuje, odhalí, kopíruje) — bez dalšího šifrování
-function ITPlainSecretRow({label,value,emoji="🔑"}){
-  const [shown,setShown]=useState(false);
-  const [copied,setCopied]=useState(false);
-  if(!value) return null;
-  const copy=async()=>{ try{await navigator.clipboard.writeText(value);setCopied(true);setTimeout(()=>setCopied(false),1200);}catch{} };
-  return <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-    <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:96}}>{emoji} {label}</span>
-    <code style={{flex:1,fontSize:13,fontFamily:"ui-monospace,Menlo,monospace",color:C.text,wordBreak:"break-all",whiteSpace:"pre-wrap",userSelect:"all"}}>{shown?value:"••••••••••"}</code>
-    <button onClick={()=>setShown(s=>!s)} title={shown?"Skrýt":"Zobrazit"} style={{...btnC(C.muted,true),padding:"3px 9px",fontSize:13}}>{shown?"🙈":"👁"}</button>
-    <button onClick={copy} title="Kopírovat" style={{...btnC(C.accent,true),padding:"3px 9px",fontSize:13}}>{copied?"✓":"📋"}</button>
-  </div>;
-}
-// Rozbalí šifrovaný JSON blok účtu a vykreslí jednotlivé tajné řádky
-function ITSecretsBlok({vaultKey,payload}){
-  const [obj,setObj]=useState(undefined); // undefined=načítám, null=chyba, {}
-  useEffect(()=>{
-    let alive=true;
-    (async()=>{
-      try{ const raw=await vaultDecrypt(vaultKey,payload); if(alive) setObj(raw?JSON.parse(raw):{}); }
-      catch{ if(alive) setObj(null); }
-    })();
-    return ()=>{alive=false;};
-  },[payload]);
-  if(obj===undefined) return <div style={{fontSize:12,color:C.muted,padding:"8px 0"}}>Dešifruji…</div>;
-  if(obj===null) return <div style={{fontSize:12.5,color:C.red,padding:"8px 0",fontWeight:600}}>⚠ Tajné údaje nelze dešifrovat tímto hlavním heslem.</div>;
-  const nic=!obj.heslo&&!obj.dvojfaktor&&!obj.recovery&&!obj.tajna_poznamka;
-  if(nic) return <div style={{fontSize:12,color:C.dim,padding:"8px 0"}}>U tohoto účtu nejsou uložené žádné tajné údaje.</div>;
-  return <div>
-    <ITPlainSecretRow label="Heslo"    value={obj.heslo}          emoji="🔑"/>
-    <ITPlainSecretRow label="2FA"      value={obj.dvojfaktor}     emoji="📱"/>
-    <ITPlainSecretRow label="Recovery" value={obj.recovery}       emoji="🆘"/>
-    <ITPlainSecretRow label="Poznámka" value={obj.tajna_poznamka} emoji="📝"/>
-  </div>;
-}
-
-function ITUctySekce({vaultKey}){
-  const {data:ucty,loading,reload}=useData(()=>sb.from("it_ucty").select("*").order("nazev"));
-  const {data:zarizeni}=useData(()=>sb.from("it_zarizeni").select("id,nazev,typ").order("nazev"));
-  const [modal,setModal]=useState(null);   // null | "new" | objekt (edit)
-  const [detail,setDetail]=useState(null);
-  const [hledat,setHledat]=useState("");
-  const smaz=async(u)=>{if(!confirm(`Smazat účet "${u.nazev}"?`))return;await sb.from("it_ucty").delete().eq("id",u.id);reload();};
-  if(loading) return <Spinner/>;
-  const list=(ucty||[]).filter(u=>!hledat||`${u.nazev} ${u.login||""}`.toLowerCase().includes(hledat.toLowerCase()));
-  return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
-      <div style={{color:C.text,fontWeight:800,fontSize:16}}>🔑 Účty & přihlášení <span style={{color:C.muted,fontWeight:400,fontSize:14}}>({(ucty||[]).length})</span></div>
-      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat účet</button>
-    </div>
-    <input style={{...inp,maxWidth:320,marginBottom:14}} value={hledat} onChange={e=>setHledat(e.target.value)} placeholder="🔎 Hledat podle názvu nebo loginu…"/>
-    {list.length===0&&<EmptyState emoji="🔑" text="Žádné účty" action="+ Přidat účet" onAction={()=>setModal("new")}/>}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:10}}>
-      {list.map(u=>{
-        const sl=IT_SLUZBY[u.sluzba]||IT_SLUZBY.jiny;
-        return <div key={u.id} onClick={()=>setDetail(u)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:14,borderLeft:`4px solid ${sl.color}`,cursor:"pointer"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-            <div style={{width:40,height:40,borderRadius:10,background:`${sl.color}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{sl.icon}</div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:14,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.nazev}</div>
-              <div style={{fontSize:12,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.login||sl.label}</div>
-            </div>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:6}} onClick={e=>e.stopPropagation()}>
-            <span style={{flex:1,fontSize:11,color:C.dim}}>🔐 šifrováno</span>
-            <button onClick={()=>setDetail(u)} style={{...btnC(C.accent,true),padding:"3px 9px",fontSize:12}}>👁 Otevřít</button>
-            <button onClick={()=>setModal(u)} style={{...btnC(C.muted,true),padding:"3px 9px",fontSize:12}}>✎</button>
-            <button onClick={()=>smaz(u)} style={{...btnC(C.red,true),padding:"3px 9px",fontSize:12}}>✕</button>
-          </div>
-        </div>;
-      })}
-    </div>
-    {detail&&<ITUcetDetail vaultKey={vaultKey} ucet={detail} zarizeni={zarizeni} onEdit={()=>{const u=detail;setDetail(null);setModal(u);}} onClose={()=>setDetail(null)}/>}
-    {modal&&<ITUcetModal vaultKey={vaultKey} ucet={modal==="new"?null:modal} zarizeni={zarizeni} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
-  </div>;
-}
-
-// ── LICENCE (klíč šifrovaný) ──────────────────────────────────────────────────
-function ITLicenceModal({vaultKey,licence,zarizeni,onClose,onSaved}){
-  const isNew=!licence;
-  const [f,setF]=useState({nazev:licence?.nazev||"",typ:licence?.typ||"windows",verze:licence?.verze||"",email_uctu:licence?.email_uctu||"",zarizeni_id:licence?.zarizeni_id||"",poznamka:licence?.poznamka||""});
-  const [klic,setKlic]=useState("");
-  const [loadingSecret,setLoadingSecret]=useState(!isNew);
-  const [saving,setSaving]=useState(false);
-  const [chyba,setChyba]=useState("");
-  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  useEffect(()=>{
-    if(isNew) return;
-    (async()=>{ try{ setKlic(await vaultDecrypt(vaultKey,licence.klic)); }catch{ setChyba("Klíč se nepodařilo dešifrovat (jiné hlavní heslo?)."); } setLoadingSecret(false); })();
-  },[]);
-  const uloz=async()=>{
-    if(!f.nazev.trim()){setChyba("Vyplň název licence.");return;}
-    setSaving(true);setChyba("");
-    try{
-      const klicEnc=await vaultEncrypt(vaultKey,klic);
-      const data={nazev:f.nazev.trim(),typ:f.typ,verze:f.verze||null,email_uctu:f.email_uctu||null,zarizeni_id:f.zarizeni_id||null,poznamka:f.poznamka||null,klic:klicEnc};
-      const {error}= isNew ? await sb.from("it_licence").insert(data) : await sb.from("it_licence").update(data).eq("id",licence.id);
-      if(error) throw new Error(error.message);
-      onSaved();
-    }catch(e){ setChyba(e.message||"Uložení selhalo."); }
-    finally{ setSaving(false); }
-  };
-  return <Modal title={isNew?"Nová licence":"Upravit licenci"} onClose={onClose} width={460} accent={C.orange}>
-    <Field label="Název *"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus placeholder="např. Windows 11 Pro – PC obývák"/></Field>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Typ"><select style={inp} value={f.typ} onChange={set("typ")}>{Object.entries(IT_LIC_TYPY).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}</select></Field>
-      <Field label="Verze / edice"><input style={inp} value={f.verze} onChange={set("verze")} placeholder="Pro, 2021, 365…"/></Field>
-    </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Účet / e-mail licence"><input style={inp} value={f.email_uctu} onChange={set("email_uctu")} placeholder="Kde je registrovaná"/></Field>
-      <Field label="Zařízení (volitelně)"><select style={inp} value={f.zarizeni_id} onChange={set("zarizeni_id")}><option value="">— žádné —</option>{(zarizeni||[]).map(z=><option key={z.id} value={z.id}>{(IT_ZARIZENI_TYPY[z.typ]||IT_ZARIZENI_TYPY.jine).icon} {z.nazev}</option>)}</select></Field>
-    </div>
-    <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:14}}>
-      <div style={{fontSize:11,fontWeight:800,color:C.orange,letterSpacing:.5,textTransform:"uppercase",marginBottom:10}}>🔐 Šifrovaný klíč</div>
-      {loadingSecret?<div style={{fontSize:12,color:C.muted}}>Dešifruji…</div>:
-        <Field label="Licenční klíč"><input style={{...inp,fontFamily:"ui-monospace,Menlo,monospace"}} value={klic} onChange={e=>setKlic(e.target.value)} placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" autoComplete="off"/></Field>}
-    </div>
-    <Field label="Poznámka"><input style={inp} value={f.poznamka} onChange={set("poznamka")} placeholder="Datum nákupu, kde koupeno…"/></Field>
-    {chyba&&<div style={{color:C.red,fontSize:12.5,fontWeight:600,marginBottom:10}}>⚠ {chyba}</div>}
-    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
-      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
-      <button onClick={uloz} disabled={saving||loadingSecret} style={btnC()}>{saving?"Šifruji a ukládám…":"Uložit"}</button>
-    </div>
-  </Modal>;
-}
-
-function ITLicenceSekce({vaultKey}){
-  const {data:licence,loading,reload}=useData(()=>sb.from("it_licence").select("*").order("nazev"));
-  const {data:zarizeni}=useData(()=>sb.from("it_zarizeni").select("id,nazev,typ").order("nazev"));
-  const [modal,setModal]=useState(null);
-  const smaz=async(l)=>{if(!confirm(`Smazat licenci "${l.nazev}"?`))return;await sb.from("it_licence").delete().eq("id",l.id);reload();};
-  if(loading) return <Spinner/>;
-  const list=licence||[];
-  return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-      <div style={{color:C.text,fontWeight:800,fontSize:16}}>🎫 Licence <span style={{color:C.muted,fontWeight:400,fontSize:14}}>({list.length})</span></div>
-      <button onClick={()=>setModal("new")} style={btnC()}>+ Přidat licenci</button>
-    </div>
-    {list.length===0&&<EmptyState emoji="🎫" text="Žádné licence" action="+ Přidat licenci" onAction={()=>setModal("new")}/>}
-    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-      {list.map(l=>{
-        const t=IT_LIC_TYPY[l.typ]||IT_LIC_TYPY.jiny;
-        const z=(zarizeni||[]).find(x=>String(x.id)===String(l.zarizeni_id));
-        return <div key={l.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",borderLeft:`4px solid ${t.color}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
-            <span style={{fontSize:20}}>{t.icon}</span>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:14,color:C.text}}>{l.nazev}</div>
-              <div style={{fontSize:12,color:C.muted}}>{[t.label,l.verze,z&&`🖥 ${z.nazev}`,l.email_uctu].filter(Boolean).join(" · ")}</div>
-            </div>
-            <button onClick={()=>setModal(l)} style={{...btnC(C.muted,true),padding:"3px 9px",fontSize:12}}>✎</button>
-            <button onClick={()=>smaz(l)} style={{...btnC(C.red,true),padding:"3px 9px",fontSize:12}}>✕</button>
-          </div>
-          <ITSecretRow vaultKey={vaultKey} label="Klíč" payload={l.klic} emoji="🎫"/>
-          {l.poznamka&&<div style={{fontSize:11,color:C.dim,fontStyle:"italic",marginTop:6}}>{l.poznamka}</div>}
-        </div>;
-      })}
-    </div>
-    {modal&&<ITLicenceModal vaultKey={vaultKey} licence={modal==="new"?null:modal} zarizeni={zarizeni} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
-  </div>;
-}
-
-// ── Hlavní dlaždice modulu ────────────────────────────────────────────────────
-// ── Globální vyhledávání napříč zařízeními, účty a licencemi ──────────────────
-// Hledá v ČITELNÝCH polích (názvy, login, hardware, poznámky…). Šifrovaná tajemství
-// (hesla, klíče, recovery) se zámerně neprohledávají.
-const _itNorm=(s)=>(s==null?"":String(s)).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-function ITZvyrazni({text,q}){
-  const t=text==null?"":String(text);
-  if(!q) return <>{t}</>;
-  const nt=_itNorm(t), nq=_itNorm(q);
-  const i=nt.indexOf(nq);
-  if(i<0) return <>{t}</>;
-  return <>{t.slice(0,i)}<mark style={{background:"#fff1a8",color:C.text,borderRadius:3,padding:"0 1px"}}>{t.slice(i,i+q.length)}</mark>{t.slice(i+q.length)}</>;
-}
-
-function ITHledani({query,vaultKey}){
-  const {data:zarizeni,loading:lz,reload:rz}=useData(()=>sb.from("it_zarizeni").select("*").order("nazev"));
-  const {data:ucty,loading:lu,reload:ru}=useData(()=>sb.from("it_ucty").select("*").order("nazev"));
-  const {data:licence,loading:ll,reload:rl}=useData(()=>sb.from("it_licence").select("*").order("nazev"));
-  const [detail,setDetail]=useState(null); // {kind, item}
-  const reloadAll=()=>{rz();ru();rl();};
-
-  if(lz||lu||ll) return <Spinner/>;
-  const q=query.trim();
-  const nq=_itNorm(q);
-  const allZar=zarizeni||[];
-
-  // Najde popisek pole, ve kterém se shoda našla (pro nápovědu „kde")
-  const najdiPole=(obj,pole)=>{
-    for(const [k,label] of pole){ if(_itNorm(obj[k]).includes(nq)) return {pole:label,hodnota:obj[k]}; }
-    return null;
-  };
-  const ZAR_POLE=[["nazev","Název"],["uzivatel","Uživatel"],["vyrobce","Výrobce"],["model","Model"],["serie_cislo","S/N"],["cpu","CPU"],["ram","RAM"],["disk","Disk"],["gpu","GPU"],["os","OS"],["mac","MAC"],["ip","IP"],["poznamka","Poznámka"]];
-  const UCET_POLE=[["nazev","Název"],["login","Login"],["url","Web"]];
-  const LIC_POLE=[["nazev","Název"],["verze","Verze"],["email_uctu","Účet"],["poznamka","Poznámka"]];
-
-  const zarMatch=allZar.map(z=>({z,m:najdiPole(z,ZAR_POLE)})).filter(x=>x.m);
-  const ucetMatch=(ucty||[]).map(u=>({u,m:najdiPole(u,UCET_POLE)})).filter(x=>x.m);
-  const licMatch=(licence||[]).map(l=>({l,m:najdiPole(l,LIC_POLE)})).filter(x=>x.m);
-  const celkem=zarMatch.length+ucetMatch.length+licMatch.length;
-
-  const zarById=(id)=>allZar.find(z=>String(z.id)===String(id));
-  const kdeRadek=(m)=>m&&m.pole!=="Název"?<span style={{fontSize:11,color:C.muted}}> · nalezeno v: <b>{m.pole}</b> — <ITZvyrazni text={m.hodnota} q={q}/></span>:null;
-
-  return <div>
-    <div style={{fontSize:13,color:C.muted,marginBottom:14}}>
-      Výsledky pro <b style={{color:C.text}}>„{q}"</b> — <b style={{color:C.accent}}>{celkem}</b> {celkem===1?"výskyt":celkem>=2&&celkem<=4?"výskyty":"výskytů"}
-    </div>
-
-    {celkem===0&&<div style={{padding:"30px 0",textAlign:"center",color:C.dim,fontSize:14}}>Nic nenalezeno. (Hesla a klíče se z bezpečnostních důvodů neprohledávají.)</div>}
-
-    {/* Zařízení */}
-    {zarMatch.length>0&&<div style={{marginBottom:20}}>
-      <div style={{fontSize:12,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:C.muted,marginBottom:8}}>🖥 Zařízení ({zarMatch.length})</div>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {zarMatch.map(({z,m})=>{
-          const t=IT_ZARIZENI_TYPY[z.typ]||IT_ZARIZENI_TYPY.jine;
-          return <div key={z.id} onClick={()=>setDetail({kind:"zar",item:z})} style={{display:"flex",alignItems:"center",gap:10,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 14px",borderLeft:`4px solid ${t.color}`,cursor:"pointer"}}>
-            <span style={{fontSize:19}}>{t.icon}</span>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:14,color:C.text}}><ITZvyrazni text={z.nazev} q={q}/></div>
-              <div style={{fontSize:11.5,color:C.muted}}>{t.label}{z.uzivatel?` · 👤 ${z.uzivatel}`:""}{kdeRadek(m)}</div>
-            </div>
-            <span style={{fontSize:13,color:C.dim}}>›</span>
-          </div>;
-        })}
-      </div>
-    </div>}
-
-    {/* Účty */}
-    {ucetMatch.length>0&&<div style={{marginBottom:20}}>
-      <div style={{fontSize:12,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:C.muted,marginBottom:8}}>🔑 Účty ({ucetMatch.length})</div>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {ucetMatch.map(({u,m})=>{
-          const sl=IT_SLUZBY[u.sluzba]||IT_SLUZBY.jiny;
-          return <div key={u.id} onClick={()=>setDetail({kind:"ucet",item:u})} style={{display:"flex",alignItems:"center",gap:10,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 14px",borderLeft:`4px solid ${sl.color}`,cursor:"pointer"}}>
-            <span style={{fontSize:19}}>{sl.icon}</span>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:14,color:C.text}}><ITZvyrazni text={u.nazev} q={q}/></div>
-              <div style={{fontSize:11.5,color:C.muted}}>{sl.label}{u.login?` · ${u.login}`:""}{kdeRadek(m)}</div>
-            </div>
-            <span style={{fontSize:11,color:C.dim,marginRight:6}}>🔐</span>
-            <span style={{fontSize:13,color:C.dim}}>›</span>
-          </div>;
-        })}
-      </div>
-    </div>}
-
-    {/* Licence */}
-    {licMatch.length>0&&<div style={{marginBottom:20}}>
-      <div style={{fontSize:12,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:C.muted,marginBottom:8}}>🎫 Licence ({licMatch.length})</div>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {licMatch.map(({l,m})=>{
-          const t=IT_LIC_TYPY[l.typ]||IT_LIC_TYPY.jiny;
-          const z=zarById(l.zarizeni_id);
-          return <div key={l.id} onClick={()=>setDetail({kind:"lic",item:l})} style={{display:"flex",alignItems:"center",gap:10,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 14px",borderLeft:`4px solid ${t.color}`,cursor:"pointer"}}>
-            <span style={{fontSize:19}}>{t.icon}</span>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:14,color:C.text}}><ITZvyrazni text={l.nazev} q={q}/></div>
-              <div style={{fontSize:11.5,color:C.muted}}>{[t.label,l.verze,z&&`🖥 ${z.nazev}`].filter(Boolean).join(" · ")}{kdeRadek(m)}</div>
-            </div>
-            <span style={{fontSize:11,color:C.dim,marginRight:6}}>🔐</span>
-            <span style={{fontSize:13,color:C.dim}}>›</span>
-          </div>;
-        })}
-      </div>
-    </div>}
-
-    {/* Otevření detailu / editace z výsledku */}
-    {detail?.kind==="ucet"&&<ITUcetDetail vaultKey={vaultKey} ucet={detail.item} zarizeni={allZar} onEdit={()=>setDetail({kind:"ucetEdit",item:detail.item})} onClose={()=>setDetail(null)}/>}
-    {detail?.kind==="ucetEdit"&&<ITUcetModal vaultKey={vaultKey} ucet={detail.item} zarizeni={allZar} onClose={()=>setDetail(null)} onSaved={()=>{setDetail(null);reloadAll();}}/>}
-    {detail?.kind==="zar"&&<ITZarizeniModal zarizeni={detail.item} onClose={()=>setDetail(null)} onSaved={()=>{setDetail(null);reloadAll();}}/>}
-    {detail?.kind==="lic"&&<ITLicenceModal vaultKey={vaultKey} licence={detail.item} zarizeni={allZar} onClose={()=>setDetail(null)} onSaved={()=>{setDetail(null);reloadAll();}}/>}
-  </div>;
-}
-
-
-function UctyTab(){
-  const [meta,setMeta]=useState(undefined); // undefined=načítám, null=trezor neexistuje, obj=existuje
-  const [vaultKey,setVaultKey]=useState(null);
-  const [zal,setZal]=useState("zarizeni");
-  const [q,setQ]=useState("");
-
-  useEffect(()=>{ vaultLoadMeta().then(setMeta); },[]);
-
-  // Auto-zámek po 10 minutách nečinnosti
-  useEffect(()=>{
-    if(!vaultKey) return;
-    let t;
-    const reset=()=>{ clearTimeout(t); t=setTimeout(()=>setVaultKey(null),10*60*1000); };
-    const evs=["mousemove","keydown","click","touchstart"];
-    evs.forEach(e=>window.addEventListener(e,reset)); reset();
-    return ()=>{ clearTimeout(t); evs.forEach(e=>window.removeEventListener(e,reset)); };
-  },[vaultKey]);
-
-  if(meta===undefined) return <Spinner/>;
-  if(!vaultKey) return <ITVaultGate meta={meta} onReady={(k,novaMeta)=>{ if(novaMeta)setMeta(novaMeta); setVaultKey(k); }}/>;
-
-  const tabs=[{id:"zarizeni",l:"🖥 Zařízení"},{id:"ucty",l:"🔑 Účty"},{id:"licence",l:"🎫 Licence"}];
-  return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
-      <h2 style={{margin:0,fontSize:22,fontWeight:800}}>🔐 Účty &amp; PC</h2>
-      <button onClick={()=>setVaultKey(null)} title="Zamknout trezor" style={{...btnC(C.muted,true),fontSize:12,padding:"7px 14px"}}>🔒 Zamknout</button>
-    </div>
-    <div style={{background:C.greenS,border:`1px solid ${C.green}44`,borderRadius:10,padding:"8px 14px",marginBottom:18,fontSize:12,color:C.green,fontWeight:600}}>
-      🔓 Trezor je odemčený. Tajné údaje jsou v databázi šifrované a zamknou se po 10 min nečinnosti.
-    </div>
-    {/* Globální vyhledávání napříč vším */}
-    <div style={{position:"relative",marginBottom:20}}>
-      <input style={{...inp,padding:"11px 38px 11px 14px",fontSize:14}} value={q} onChange={e=>setQ(e.target.value)} placeholder="🔎 Hledat ve všem — zařízení, účty i licence (např. longchamp)…"/>
-      {q&&<button onClick={()=>setQ("")} title="Vymazat" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16,color:C.muted}}>✕</button>}
-    </div>
-
-    {q.trim()
-      ? <ITHledani query={q} vaultKey={vaultKey}/>
-      : <>
-        <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`}}>
-          {tabs.map(t=><button key={t.id} onClick={()=>setZal(t.id)} style={{padding:"9px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zal===t.id?C.accent:C.muted,borderBottom:zal===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
-        </div>
-        {zal==="zarizeni"&&<ITZarizeniSekce/>}
-        {zal==="ucty"&&<ITUctySekce vaultKey={vaultKey}/>}
-        {zal==="licence"&&<ITLicenceSekce vaultKey={vaultKey}/>}
-      </>}
-  </div>;
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// MODUL: PRÁVNÍCI
-// ══════════════════════════════════════════════════════════════════════════════
-function PravnikModal({pravnik,onClose,onSaved}){
-  const isNew=!pravnik;
-  const [f,setF]=useState({jmeno:pravnik?.jmeno||"",poznamka:pravnik?.poznamka||""});
-  const [saving,setSaving]=useState(false);
-  const uloz=async()=>{
-    if(!f.jmeno.trim())return;
-    setSaving(true);
-    if(isNew)await sb.from("pravnici").insert(f);
-    else await sb.from("pravnici").update(f).eq("id",pravnik.id);
-    setSaving(false);onSaved();
-  };
-  return <Modal title={isNew?"Přidat právníka":"Upravit právníka"} onClose={onClose} width={460} accent={C.purple}>
-    <Field label="Jméno / Kancelář *"><input style={inp} value={f.jmeno} onChange={e=>setF(p=>({...p,jmeno:e.target.value}))} autoFocus placeholder="JUDr. Zeman" onKeyDown={e=>e.key==="Enter"&&uloz()}/></Field>
-    <Field label="Poznámka"><textarea style={{...inp,resize:"vertical",minHeight:60}} value={f.poznamka} onChange={e=>setF(p=>({...p,poznamka:e.target.value}))} placeholder="Specializace, kontakt…"/></Field>
-    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
-      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
-      <button onClick={uloz} disabled={saving||!f.jmeno.trim()} style={btnC(C.purple)}>{saving?"Ukládám…":"Uložit"}</button>
-    </div>
-  </Modal>;
-}
-
-function SazbaModal({sazba,pravnik_id,onClose,onSaved}){
-  const isNew=!sazba;
-  const [f,setF]=useState({nazev:sazba?.nazev||"",castka:sazba?.castka||"",jednotka:sazba?.jednotka||"hod"});
-  const [saving,setSaving]=useState(false);
-  const uloz=async()=>{
-    if(!f.nazev.trim()||!f.castka)return;
-    setSaving(true);
-    const data={nazev:f.nazev.trim(),castka:parseFloat(f.castka),jednotka:f.jednotka};
-    if(isNew)await sb.from("pravnici_sazby").insert({...data,pravnik_id});
-    else await sb.from("pravnici_sazby").update(data).eq("id",sazba.id);
-    setSaving(false);onSaved();
-  };
-  return <Modal title={isNew?"Přidat sazbu":"Upravit sazbu"} onClose={onClose} width={460} accent={C.purple}>
-    <Field label="Název sazby *"><input style={inp} value={f.nazev} onChange={e=>setF(p=>({...p,nazev:e.target.value}))} autoFocus placeholder="Konzultace" onKeyDown={e=>e.key==="Enter"&&uloz()}/></Field>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      <Field label="Částka (Kč) *"><input style={inp} type="number" value={f.castka} onChange={e=>setF(p=>({...p,castka:e.target.value}))} placeholder="2500"/></Field>
-      <Field label="Jednotka *"><select style={inp} value={f.jednotka} onChange={e=>setF(p=>({...p,jednotka:e.target.value}))}><option value="hod">Kč/hodinu</option><option value="ukon">Kč/úkon</option></select></Field>
-    </div>
-    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
-      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
-      <button onClick={uloz} disabled={saving||!f.nazev.trim()||!f.castka} style={btnC(C.purple)}>{saving?"Ukládám…":"Uložit"}</button>
-    </div>
-  </Modal>;
-}
-
-function PripadModal({pripad,onClose,onSaved}){
-  const isNew=!pripad;
-  const [f,setF]=useState({nazev:pripad?.nazev||"",popis:pripad?.popis||"",stav:pripad?.stav||"aktivni"});
-  const [saving,setSaving]=useState(false);
-  const uloz=async()=>{
-    if(!f.nazev.trim())return;
-    setSaving(true);
-    if(isNew)await sb.from("pravnici_pripady").insert(f);
-    else await sb.from("pravnici_pripady").update(f).eq("id",pripad.id);
-    setSaving(false);onSaved();
-  };
-  return <Modal title={isNew?"Přidat případ":"Upravit případ"} onClose={onClose} width={480} accent={C.purple}>
-    <Field label="Název případu *"><input style={inp} value={f.nazev} onChange={e=>setF(p=>({...p,nazev:e.target.value}))} autoFocus placeholder="Spor o děti" onKeyDown={e=>e.key==="Enter"&&uloz()}/></Field>
-    <Field label="Popis"><textarea style={{...inp,resize:"vertical",minHeight:60}} value={f.popis} onChange={e=>setF(p=>({...p,popis:e.target.value}))} placeholder="Detaily…"/></Field>
-    <Field label="Stav"><select style={inp} value={f.stav} onChange={e=>setF(p=>({...p,stav:e.target.value}))}><option value="aktivni">Aktivní</option><option value="uzavreny">Uzavřený</option></select></Field>
-    <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
-      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
-      <button onClick={uloz} disabled={saving||!f.nazev.trim()} style={btnC(C.purple)}>{saving?"Ukládám…":"Uložit"}</button>
-    </div>
-  </Modal>;
-}
-
-function ZaznamModal({zaznam,pripad_id,onClose,onSaved}){
-  const {data:pripady}=useData(()=>sb.from("pravnici_pripady").select("*").order("nazev"));
-  const {data:pravnici}=useData(()=>sb.from("pravnici").select("*").order("jmeno"));
-  const {data:sazby}=useData(()=>sb.from("pravnici_sazby").select("*").order("nazev"));
-  const isNew=!zaznam;
-  const [f,setF]=useState({
-    pripad_id:zaznam?.pripad_id||pripad_id||"",
-    pravnik_id:zaznam?.pravnik_id||"",
-    sazba_id:zaznam?.sazba_id||"",
-    datum:zaznam?.datum||new Date().toISOString().slice(0,10),
-    pocet_hodin_ukonu:zaznam?.pocet_hodin_ukonu||"",
-    vypocitana_castka:zaznam?.vypocitana_castka||""
-  });
-  const [saving,setSaving]=useState(false);
-  const vybrSazba=sazby?.find(s=>s.id==f.sazba_id);
-  const vypocteno=vybrSazba&&f.pocet_hodin_ukonu?parseFloat(f.pocet_hodin_ukonu)*vybrSazba.castka:0;
-
-  const uloz=async()=>{
-    if(!f.pripad_id||!f.pravnik_id||!f.sazba_id||!f.datum||!f.pocet_hodin_ukonu||!f.vypocitana_castka)return;
-    setSaving(true);
-    const data={
-      pripad_id:f.pripad_id,pravnik_id:f.pravnik_id,sazba_id:f.sazba_id,
-      datum:f.datum,pocet_hodin_ukonu:parseFloat(f.pocet_hodin_ukonu),
-      vypocitana_castka:parseFloat(f.vypocitana_castka)
-    };
-    if(isNew)await sb.from("pravnici_zaznam").insert(data);
-    else await sb.from("pravnici_zaznam").update(data).eq("id",zaznam.id);
-    setSaving(false);onSaved();
-  };
-  const nacitam=pripady===null||pravnici===null||sazby===null;
-  return <Modal title={isNew?"Přidat záznam":"Upravit záznam"} onClose={onClose} width={500} accent={C.purple}>
-    {nacitam?<Spinner/>:<div>
-      <Field label="Případ *"><select style={inp} value={f.pripad_id} onChange={e=>setF(p=>({...p,pripad_id:e.target.value}))}><option value="">— vyberte —</option>{(pripady||[]).map(p=><option key={p.id} value={p.id}>{p.nazev}</option>)}</select></Field>
-      <Field label="Právník *"><select style={inp} value={f.pravnik_id} onChange={e=>setF(p=>({...p,pravnik_id:e.target.value}))}><option value="">— vyberte —</option>{(pravnici||[]).map(p=><option key={p.id} value={p.id}>{p.jmeno}</option>)}</select></Field>
-      <Field label="Sazba *"><select style={inp} value={f.sazba_id} onChange={e=>setF(p=>({...p,sazba_id:e.target.value}))}><option value="">— vyberte —</option>{f.pravnik_id?(sazby||[]).filter(s=>s.pravnik_id==f.pravnik_id).map(s=><option key={s.id} value={s.id}>{s.nazev} · {fmt(s.castka)}/{s.jednotka==="hod"?"h":"úkon"}</option>):<option disabled>Nejprve zvolte právníka</option>}</select></Field>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <Field label="Datum *"><input style={inp} type="date" value={f.datum} onChange={e=>setF(p=>({...p,datum:e.target.value}))}/></Field>
-        <Field label="Počet h/úkonů *"><input style={inp} type="number" step="0.5" value={f.pocet_hodin_ukonu} onChange={e=>setF(p=>({...p,pocet_hodin_ukonu:e.target.value}))} placeholder="14"/></Field>
-      </div>
-      <Field label={`Vypočtená částka (Kč) * — doporučeno: ${fmt(vypocteno)}`}><input style={inp} type="number" value={f.vypocitana_castka} onChange={e=>setF(p=>({...p,vypocitana_castka:e.target.value}))} placeholder={String(vypocteno)}/></Field>
-      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
-        <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
-        <button onClick={uloz} disabled={saving||!f.pripad_id||!f.pravnik_id||!f.sazba_id||!f.datum||!f.pocet_hodin_ukonu||!f.vypocitana_castka} style={btnC(C.purple)}>{saving?"Ukládám…":"Uložit"}</button>
-      </div>
-    </div>}
-  </Modal>;
-}
-
-function PlatbaModal({zaznam_id,zaplaceno,castkaKZaplaceni,onClose,onSaved}){
-  const {data:ucty}=useData(()=>sb.from("fin_ucty").select("id,nazev,typ").eq("aktivni",true).order("poradi"));
-  const dnes=new Date().toISOString().slice(0,10);
-  const [f,setF]=useState({datum_platby:dnes,zaplacena_castka:"",ucet_id:""});
-  const [saving,setSaving]=useState(false);
-  const maxCastka=Math.max(0,castkaKZaplaceni-zaplaceno);
-
-  const uloz=async()=>{
-    if(!f.datum_platby||!f.zaplacena_castka||!f.ucet_id)return;
-    const castka=parseFloat(f.zaplacena_castka);
-    if(castka<=0||castka>maxCastka){alert(`Zadejte částku 0–${fmt(maxCastka)}`);return;}
-    setSaving(true);
-    const platbaData={zaznam_id,datum_platby:f.datum_platby,zaplacena_castka:castka,ucet_id:f.ucet_id};
-    const {data:nova}=await sb.from("pravnici_platby").insert(platbaData).select().single();
-    if(nova){
-      await sb.from("fin_cashflow_plan").insert({
-        rok:new Date(f.datum_platby).getFullYear(),
-        mesic:new Date(f.datum_platby).getMonth()+1,
-        nazev:`Právník — platba (${zaznam_id})`,
-        castka:-castka,
-        kategorie_id:null,
-        ucet_id:f.ucet_id,
-        zaznam_id:zaznam_id,
-        opakovani:"jednorazove",
-        dite_id:null,zvire_id:null,oprava_id:null,auto_id:null,je_majetek:false,sklad_kategorie_id:null
-      });
-    }
-    setSaving(false);onSaved();
-  };
-  const nacitam=ucty===null;
-  return <Modal title="Přidat platbu" onClose={onClose} width={460} accent={C.green}>
-    {nacitam?<Spinner/>:<div>
-      <Field label="Zbývá zaplatit"><div style={{fontSize:18,fontWeight:800,color:C.green}}>{fmt(maxCastka)}</div></Field>
-      <Field label="Datum platby *"><input style={inp} type="date" value={f.datum_platby} onChange={e=>setF(p=>({...p,datum_platby:e.target.value}))}/></Field>
-      <Field label={`Zaplacená částka (Kč) * · max ${fmt(maxCastka)}`}><input style={inp} type="number" step="100" value={f.zaplacena_castka} onChange={e=>setF(p=>({...p,zaplacena_castka:e.target.value}))} placeholder="20000"/></Field>
-      <Field label="Účet *"><select style={inp} value={f.ucet_id} onChange={e=>setF(p=>({...p,ucet_id:e.target.value}))}><option value="">— vyberte —</option>{(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev} ({u.typ})</option>)}</select></Field>
-      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
-        <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
-        <button onClick={uloz} disabled={saving||!f.datum_platby||!f.zaplacena_castka||!f.ucet_id||parseFloat(f.zaplacena_castka)<=0||parseFloat(f.zaplacena_castka)>maxCastka} style={btnC(C.green)}>{saving?"Ukládám…":"Uložit"}</button>
-      </div>
-    </div>}
-  </Modal>;
-}
-
-function PravnikTab(){
-  const {data:pripady,loading:loadP,reload:reloadP}=useData(()=>sb.from("pravnici_pripady").select("*").order("stav").order("nazev"));
-  const {data:pravnici,reload:reloadPr}=useData(()=>sb.from("pravnici").select("*").order("jmeno"));
-  const {data:sazby}=useData(()=>sb.from("pravnici_sazby").select("*").order("nazev"));
-  const {data:zaznam}=useData(()=>sb.from("pravnici_zaznam").select("*").order("datum",{ascending:false}));
-  const {data:platby,reload:reloadPl}=useData(()=>sb.from("pravnici_platby").select("*").order("datum_platby",{ascending:false}));
-  const {data:ucty}=useData(()=>sb.from("fin_ucty").select("id,nazev").eq("aktivni",true));
-
-  const [tab,setTab]=useState("pripady");
-  const [modal,setModal]=useState(null);
-  const [finModal,setFinModal]=useState(null);
-  const [platbaModal,setPlatbaModal]=useState(null);
-
-  const smaz=(table,id)=>async()=>{if(!confirm("Smazat?"))return;await sb.from(table).delete().eq("id",id);reloadP();reloadPr();};
-  const zmen=(table,id,data)=>async()=>{await sb.from(table).update(data).eq("id",id);reloadP();reloadPr();};
-
-  const getZaplaceno=(zaznam_id)=>(platby||[]).filter(p=>p.zaznam_id===zaznam_id).reduce((s,p)=>s+parseFloat(p.zaplacena_castka||0),0);
-  const getStavZaplaceni=(zaznam_id,castka)=>{
-    const zaplaceno=getZaplaceno(zaznam_id);
-    if(zaplaceno===0)return "nezaplaceno";
-    if(zaplaceno>=castka)return "zaplaceno";
-    return "castecne";
-  };
-
-  const stavBarva={zaplaceno:C.green,castecne:C.orange,nezaplaceno:C.red};
-  const stavLabel={zaplaceno:"✓ Zaplaceno",castecne:"⊘ Částečně",nezaplaceno:"✕ Nezaplaceno"};
-
-  const tab_style=(t)=>({padding:"8px 20px",fontWeight:700,fontSize:13,cursor:"pointer",border:"none",background:"none",borderBottom:`2px solid ${tab===t?C.purple:"transparent"}`,color:tab===t?C.purple:C.muted,transition:"all .15s"});
-
-  if(loadP)return <Spinner/>;
-  const skupPripady={aktivni:(pripady||[]).filter(p=>p.stav==="aktivni"),uzavreny:(pripady||[]).filter(p=>p.stav==="uzavreny")};
-  const celkemVyuctovano=(zaznam||[]).reduce((s,z)=>s+parseFloat(z.vypocitana_castka||0),0);
-  const celkemZaplaceno=(platby||[]).reduce((s,p)=>s+parseFloat(p.zaplacena_castka||0),0);
-
-  return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-      <div style={{color:C.text,fontWeight:800,fontSize:17}}>⚖️ Právník</div>
-    </div>
-
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:20}}>
-      <StatCard label="Připadů" val={(skupPripady.aktivni||[]).length} color={C.purple}/>
-      <StatCard label="Právníků" val={(pravnici||[]).length} color={C.purple}/>
-      <StatCard label="Vyúčtováno" val={fmt(celkemVyuctovano)} color={C.purple}/>
-    </div>
-
-    <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`}}>
-      {[{id:"pripady",label:"📋 Případy"},{id:"pravnici",label:"👤 Právníci"},{id:"zaznamy",label:"📝 Záznamy"}].map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={tab_style(t.id)}>{t.label}</button>)}
-    </div>
-
-    {tab==="pripady"&&<div>
-      <div style={{display:"flex",gap:10,marginBottom:16}}>
-        <button onClick={()=>setModal("new_pripad")} style={btnC(C.purple)}>+ Přidat případ</button>
-      </div>
-      {Object.entries(skupPripady).map(([stav,items])=>items.length===0?null:(<div key={stav} style={{marginBottom:16}}>
-        <div style={{fontSize:12,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",color:C.muted,marginBottom:8}}>{stav==="aktivni"?"Aktivní":"Uzavřené"} ({items.length})</div>
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {items.map(p=>{
-            const zaznamyPripadu=(zaznam||[]).filter(z=>z.pripad_id===p.id);
-            const pravniciPripadu=[...new Set(zaznamyPripadu.map(z=>z.pravnik_id))];
-            const castka=zaznamyPripadu.reduce((s,z)=>s+parseFloat(z.vypocitana_castka||0),0);
-            const zaplaceno=zaznamyPripadu.reduce((s,z)=>s+getZaplaceno(z.id),0);
-            return <div key={p.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",borderLeft:`4px solid ${C.purple}`}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
-                <span style={{fontWeight:700,fontSize:14,color:C.text,flex:1}}>{p.nazev}</span>
-                <Tag color={stav==="aktivni"?C.blue:C.muted}>{stav==="aktivni"?"Aktivní":"Uzavřené"}</Tag>
-              </div>
-              {p.popis&&<div style={{color:C.dim,fontSize:12,marginBottom:8}}>{p.popis}</div>}
-              {zaznamyPripadu.length>0&&<div style={{background:C.bg,borderRadius:8,padding:"8px 12px",marginBottom:8,fontSize:12}}>
-                <div style={{color:C.muted,marginBottom:4}}>Právníci: {pravniciPripadu.map(pid=>(pravnici||[]).find(p=>p.id===pid)?.jmeno).filter(Boolean).join(", ")}</div>
-                <div style={{color:C.text,fontWeight:700}}>Vyúčtováno: {fmt(castka)} · Zaplaceno: {fmt(zaplaceno)}</div>
-              </div>}
-              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                {stav==="aktivni"&&<button onClick={()=>zmen("pravnici_pripady",p.id,{stav:"uzavreny"})} style={{...btnC(C.orange,true),padding:"4px 10px",fontSize:12}}>✓ Uzavřít</button>}
-                <button onClick={()=>setFinModal(p)} style={{...btnC(C.purple,true),padding:"4px 10px",fontSize:12}}>💰 Záznamy & Platby</button>
-                <button onClick={()=>setModal({...p,type:"pripad"})} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
-                <button onClick={smaz("pravnici_pripady",p.id)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
-              </div>
-            </div>;
-          })}
-        </div>
-      </div>))}
-    </div>}
-
-    {tab==="pravnici"&&<div>
-      <div style={{display:"flex",gap:10,marginBottom:16}}>
-        <button onClick={()=>setModal("new_pravnik")} style={btnC(C.purple)}>+ Přidat právníka</button>
-      </div>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {(pravnici||[]).map(p=>{
-          const pSazby=(sazby||[]).filter(s=>s.pravnik_id===p.id);
-          return <div key={p.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",borderLeft:`4px solid ${C.purple}`}}>
-            <div style={{display:"flex",alignItems:"start",gap:12,marginBottom:8}}>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:2}}>{p.jmeno}</div>
-                {p.poznamka&&<div style={{color:C.dim,fontSize:12}}>{p.poznamka}</div>}
-              </div>
-            </div>
-            {pSazby.length>0&&<div style={{background:C.bg,borderRadius:8,padding:"8px 12px",marginBottom:8,fontSize:11}}>
-              <div style={{color:C.muted,fontWeight:700,marginBottom:4}}>Sazby:</div>
-              <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                {pSazby.map(s=><div key={s.id}>{s.nazev}: <b>{fmt(s.castka)}</b>/{s.jednotka==="hod"?"h":"úkon"}</div>)}
-              </div>
-            </div>}
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              <button onClick={()=>setModal({...p,type:"sazba"})} style={{...btnC(C.accent,true),padding:"4px 10px",fontSize:12}}>+ Sazba</button>
-              <button onClick={()=>setModal({...p,type:"pravnik"})} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
-              <button onClick={smaz("pravnici",p.id)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
-            </div>
-          </div>;
-        })}
-      </div>
-    </div>}
-
-    {tab==="zaznamy"&&<div>
-      <div style={{display:"flex",gap:10,marginBottom:16}}>
-        <button onClick={()=>setModal("new_zaznam")} style={btnC(C.purple)}>+ Přidat záznam</button>
-      </div>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {(zaznam||[]).map(z=>{
-          const pripad=(skupPripady.aktivni||[]).concat(skupPripady.uzavreny).find(p=>p.id===z.pripad_id);
-          const pravnik=(pravnici||[]).find(p=>p.id===z.pravnik_id);
-          const sazba=(sazby||[]).find(s=>s.id===z.sazba_id);
-          const zaplaceno=getZaplaceno(z.id);
-          const stav=getStavZaplaceni(z.id,z.vypocitana_castka);
-          const platbyZ=(platby||[]).filter(p=>p.zaznam_id===z.id);
-          return <div key={z.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",borderLeft:`4px solid ${stavBarva[stav]}`}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
-              <span style={{fontWeight:700,fontSize:14,color:C.text,flex:1}}>{pripad?.nazev}</span>
-              <Tag color={stavBarva[stav]}>{stavLabel[stav]}</Tag>
-            </div>
-            <div style={{color:C.muted,fontSize:12,marginBottom:6}}>
-              {pravnik?.jmeno} · {sazba?.nazev} ({fmt(sazba?.castka||0)}/{sazba?.jednotka==="hod"?"h":"úkon"}) · {z.pocet_hodin_ukonu} {sazba?.jednotka==="hod"?"h":"úkonů"}
-            </div>
-            <div style={{background:C.bg,borderRadius:8,padding:"8px 12px",marginBottom:8,fontSize:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                <span style={{color:C.muted}}>Vyúčtováno:</span>
-                <span style={{fontWeight:700,color:C.text}}>{fmt(z.vypocitana_castka)}</span>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                <span style={{color:C.muted}}>Zaplaceno:</span>
-                <span style={{fontWeight:700,color:zaplaceno>=z.vypocitana_castka?C.green:C.orange}}>{fmt(zaplaceno)}</span>
-              </div>
-              {platbyZ.length>0&&<div style={{borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:6}}>
-                <div style={{color:C.muted,fontWeight:700,marginBottom:3}}>Platby:</div>
-                {platbyZ.map(pl=><div key={pl.id} style={{fontSize:11,color:C.muted,marginBottom:2}}>
-                  {new Date(pl.datum_platby).toLocaleDateString("cs-CZ")} · {fmt(pl.zaplacena_castka)} · <span style={{color:C.dim}}>{(ucty||[]).find(u=>u.id===pl.ucet_id)?.nazev||"účet"}</span>
-                  <button onClick={()=>sb.from("pravnici_platby").delete().eq("id",pl.id).then(()=>reloadPl())} style={{...btnC(C.red,true),padding:"2px 6px",fontSize:10,marginLeft:6}}>🗑</button>
-                </div>)}
-              </div>}
-            </div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {zaplaceno<z.vypocitana_castka&&<button onClick={()=>setPlatbaModal({zaznam_id:z.id,zaplaceno,castkaKZaplaceni:z.vypocitana_castka})} style={{...btnC(C.green),padding:"4px 10px",fontSize:12}}>💳 Přidat platbu</button>}
-              <button onClick={()=>setModal({...z,type:"zaznam"})} style={{...btnC(C.muted,true),padding:"4px 10px",fontSize:12}}>✎ Upravit</button>
-              <button onClick={smaz("pravnici_zaznam",z.id)} style={{...btnC(C.red,true),padding:"4px 10px",fontSize:12}}>✕</button>
-            </div>
-          </div>;
-        })}
-      </div>
-    </div>}
-
-    {modal==="new_pripad"&&<PripadModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadP();}}/>}
-    {modal&&modal.type==="pripad"&&<PripadModal pripad={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadP();}}/>}
-    {modal==="new_pravnik"&&<PravnikModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadPr();}}/>}
-    {modal&&modal.type==="pravnik"&&<PravnikModal pravnik={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadPr();}}/>}
-    {modal&&modal.type==="sazba"&&<SazbaModal sazba={modal.id?modal:null} pravnik_id={modal.id} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadPr();}}/>}
-    {modal==="new_zaznam"&&<ZaznamModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadP();}}/>}
-    {modal&&modal.type==="zaznam"&&<ZaznamModal zaznam={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadP();}}/>}
-    {platbaModal&&<PlatbaModal zaznam_id={platbaModal.zaznam_id} zaplaceno={platbaModal.zaplaceno} castkaKZaplaceni={platbaModal.castkaKZaplaceni} onClose={()=>setPlatbaModal(null)} onSaved={()=>{setPlatbaModal(null);reloadPl();reloadP();}}/>}
-  </div>;
-}
-
 const TILES=[
   {id:"deti",     emoji:"👨‍👩‍👧‍👦", label:"Rodina",    popis:"Profily a info",         barva:"#4f7ef0"},
   {id:"obleceni", emoji:"👕", label:"Oblečení",  popis:"Sklady a velikosti",     barva:"#3b6fd4"},
@@ -7394,11 +5983,9 @@ const TILES=[
   {id:"poznamky", emoji:"📝", label:"Poznámky",  popis:"Nápady a todolist",      barva:"#2ed8c8"},
   {id:"projekty", emoji:"🏗",  label:"Projekty",  popis:"Realizované projekty",   barva:"#e05555"},
   {id:"alimenty", emoji:"⚖️",  label:"Alimenty",  popis:"Šíma — Sylvestr & John", barva:"#c0392b"},
-  {id:"pravnik",  emoji:"👨‍⚖️",  label:"Právník",   popis:"Případy a náklady",      barva:"#6b3fa0"},
   {id:"kalendar", emoji:"📅",  label:"Kalendář",  popis:"Google Calendar",         barva:"#1a7a4a"},
   {id:"zvirata",  emoji:"🐾",  label:"Zvířata",   popis:"Profily a péče",           barva:"#7a5c3a"},
   {id:"dokumenty",emoji:"📁",  label:"Dokumenty", popis:"Centrální kartotéka",      barva:"#5a6acf"},
-  {id:"ucty",     emoji:"🔐",  label:"Účty & PC", popis:"Hesla, licence, hardware",   barva:"#334155"},
 ];
 
 // ── TÝDENNÍ WIDGET NA HOMEPAGE ───────────────────────────────────────────────
@@ -7506,7 +6093,55 @@ function TydenWidget(){
   </div>;
 }
 
-function AppInner() {
+// ── GLOBÁLNÍ PIN GATE ────────────────────────────────────────────────────────
+const APP_PIN = "5257";
+
+function AppPinGate({children}){
+  const [ok,setOk]=useState(()=>sessionStorage.getItem("app_pin")==="ok");
+  const [pin,setPin]=useState("");
+  const [chyba,setChyba]=useState(false);
+  const [pokusů,setPokusu]=useState(0);
+
+  const pokus=()=>{
+    if(pin===APP_PIN){
+      sessionStorage.setItem("app_pin","ok");
+      setOk(true);
+    } else {
+      setPokusu(p=>p+1);
+      setChyba(true);
+      setPin("");
+      setTimeout(()=>setChyba(false),2000);
+    }
+  };
+
+  if(ok)return children;
+
+  return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+    <div style={{background:"rgba(255,255,255,.05)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,.1)",borderRadius:24,padding:"48px 40px",maxWidth:380,width:"100%",textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.5)"}}>
+      <div style={{fontSize:52,marginBottom:16}}>🏡</div>
+      <h1 style={{fontSize:22,fontWeight:800,margin:"0 0 6px",color:"#fff"}}>{APP_NAME}</h1>
+      <p style={{color:"rgba(255,255,255,.5)",fontSize:13,marginBottom:8}}>Rodinný operační systém</p>
+      <p style={{color:"rgba(255,255,255,.35)",fontSize:12,marginBottom:28}}>Pro přístup zadej 15znakové heslo</p>
+      <input
+        type="password"
+        value={pin}
+        onChange={e=>setPin(e.target.value)}
+        onKeyDown={e=>e.key==="Enter"&&pokus()}
+        placeholder="••••••••••••••••"
+        autoFocus
+        style={{width:"100%",textAlign:"center",fontSize:20,letterSpacing:6,padding:"14px",borderRadius:12,border:`2px solid ${chyba?"#e05555":"rgba(255,255,255,.2)"}`,outline:"none",boxSizing:"border-box",marginBottom:8,background:"rgba(255,255,255,.08)",color:"#fff",transition:"border-color .2s"}}
+      />
+      {chyba&&<div style={{color:"#e05555",fontSize:12,marginBottom:8}}>Nesprávné heslo{pokusů>2?" — zkontroluj Caps Lock":""}</div>}
+      <button onClick={pokus} style={{background:"#4f7ef0",color:"#fff",border:"none",borderRadius:12,padding:"13px",width:"100%",fontSize:15,fontWeight:700,cursor:"pointer",marginTop:4,transition:"opacity .2s"}}
+        onMouseEnter={e=>e.currentTarget.style.opacity=".85"}
+        onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+        Přihlásit se
+      </button>
+    </div>
+  </div>;
+}
+
+export default function App() {
   const [modul,setModul]=useState(null);
   const [upravy,setUpravy]=useState(false);
   const [poradi,setPoradi]=useState(null); // null = načítám
@@ -7598,23 +6233,21 @@ function AppInner() {
         {modul==="ukoly"    && <UkolyTab/>}
         {modul==="spotreba" && <SpotrebaTab/>}
         {modul==="voda"     && <VodaTab/>}
-        {modul==="finance"  && <FinanceTab/>}
-        {modul==="cashflow" && <CashflowTab/>}
+        {modul==="finance"  && <FinancePinGate/>}
+        {modul==="cashflow" && <CashflowPinGate/>}
         {modul==="dum"      && <DumTab/>}
         {modul==="auta"     && <AutaTab/>}
         {modul==="poznamky" && <PoznamkyTab/>}
         {modul==="projekty" && <ProjektyTab/>}
         {modul==="alimenty" && <AlimentyTab/>}
-        {modul==="pravnik"  && <PravnikTab/>}
         {modul==="kalendar" && <KalendarTab/>}
         {modul==="zvirata"  && <ZvirataTab/>}
         {modul==="dokumenty"&& <DokumentyTab/>}
-        {modul==="ucty"     && <UctyTab/>}
       </div>
     </div>;
   }
 
-  return <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter','Segoe UI',sans-serif",color:C.text}}>
+  return <AppPinGate><div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter','Segoe UI',sans-serif",color:C.text}}>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"/>
     <style>{globalStyle}</style>
     {/* Header */}
@@ -7648,6 +6281,7 @@ function AppInner() {
         <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
           <div style={{fontSize:13,color:C.dim}}>{new Date().toLocaleDateString("cs-CZ",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
           <PocasiWidget/>
+          <OdpocetWidget/>
           {/* Přepínač úprav */}
           <button onClick={()=>setUpravy(u=>!u)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 16px",borderRadius:10,border:`1px solid ${upravy?C.orange:C.border}`,background:upravy?C.orangeS:C.surface,cursor:"pointer",transition:"all .2s"}}>
             <div style={{width:32,height:18,borderRadius:99,background:upravy?C.orange:C.border,position:"relative",transition:"all .2s"}}>
@@ -7702,57 +6336,5 @@ function AppInner() {
         ))}
       </div>
     </div>
-  </div>;
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PŘIHLAŠOVACÍ BRÁNA (Supabase Auth — e-mail + heslo). Skutečná ochrana dat
-// funguje až ve spojení se zapnutým RLS na všech tabulkách (viz SQL skript v návodu).
-// ══════════════════════════════════════════════════════════════════════════════
-const inpLogin={width:"100%",fontSize:15,padding:"13px 14px",borderRadius:12,border:"1px solid rgba(255,255,255,.2)",outline:"none",boxSizing:"border-box",background:"rgba(255,255,255,.08)",color:"#fff"};
-
-function LoginScreen(){
-  const [email,setEmail]=useState("");
-  const [heslo,setHeslo]=useState("");
-  const [chyba,setChyba]=useState("");
-  const [nacitam,setNacitam]=useState(false);
-  const prihlasit=async()=>{
-    if(!email.trim()||!heslo) return;
-    setNacitam(true); setChyba("");
-    const {error}=await sb.auth.signInWithPassword({email:email.trim(),password:heslo});
-    setNacitam(false);
-    if(error) setChyba(error.message==="Invalid login credentials"?"Nesprávný e-mail nebo heslo.":error.message);
-  };
-  return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter','Segoe UI',sans-serif",padding:20}}>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"/>
-    <div style={{background:"rgba(255,255,255,.05)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,.1)",borderRadius:24,padding:"44px 38px",maxWidth:400,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,.5)"}}>
-      <div style={{textAlign:"center",marginBottom:26}}>
-        <div style={{fontSize:52,marginBottom:12}}>🏡</div>
-        <h1 style={{fontSize:22,fontWeight:800,margin:"0 0 6px",color:"#fff"}}>{APP_NAME}</h1>
-        <p style={{color:"rgba(255,255,255,.5)",fontSize:13,margin:0}}>Přihlas se svým rodinným účtem</p>
-      </div>
-      <label style={{display:"block",color:"rgba(255,255,255,.6)",fontSize:12,fontWeight:700,marginBottom:6}}>E-mail</label>
-      <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="username" placeholder="jmeno@email.cz" style={inpLogin}/>
-      <label style={{display:"block",color:"rgba(255,255,255,.6)",fontSize:12,fontWeight:700,margin:"14px 0 6px"}}>Heslo</label>
-      <input type="password" value={heslo} onChange={e=>setHeslo(e.target.value)} autoComplete="current-password" onKeyDown={e=>e.key==="Enter"&&prihlasit()} placeholder="••••••••" style={inpLogin}/>
-      {chyba&&<div style={{color:"#ff9b9b",fontSize:12.5,marginTop:12,fontWeight:600}}>⚠ {chyba}</div>}
-      <button onClick={prihlasit} disabled={nacitam||!email.trim()||!heslo} style={{background:"#4f7ef0",color:"#fff",border:"none",borderRadius:12,padding:"14px",width:"100%",fontSize:15,fontWeight:700,cursor:"pointer",marginTop:18,opacity:(nacitam||!email.trim()||!heslo)?.6:1,transition:"opacity .2s"}}>{nacitam?"Přihlašuji…":"Přihlásit se"}</button>
-      <p style={{color:"rgba(255,255,255,.3)",fontSize:11,textAlign:"center",marginTop:18,lineHeight:1.5}}>Účty zakládá správce v Supabase. Zapomenuté heslo resetuje správce.</p>
-    </div>
-  </div>;
-}
-
-export default function App(){
-  const [session,setSession]=useState(undefined); // undefined=načítám, null=odhlášen, objekt=přihlášen
-  useEffect(()=>{
-    sb.auth.getSession().then(({data})=>setSession(data.session||null));
-    const {data:sub}=sb.auth.onAuthStateChange((_e,s)=>setSession(s||null));
-    return ()=>sub.subscription.unsubscribe();
-  },[]);
-  if(session===undefined) return <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center"}}><Spinner/></div>;
-  if(!session) return <LoginScreen/>;
-  return <>
-    <AppInner/>
-    <button onClick={()=>sb.auth.signOut()} title={`Přihlášen: ${session.user?.email||""}`} style={{position:"fixed",bottom:14,right:14,zIndex:1000,background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,padding:"7px 12px",fontSize:12,fontWeight:700,color:C.muted,cursor:"pointer",boxShadow:"0 3px 10px rgba(0,0,0,.12)"}}>🚪 Odhlásit</button>
-  </>;
+  </div></AppPinGate>;
 }
