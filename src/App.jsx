@@ -1455,10 +1455,10 @@ function FinanceTab(){
   const {data:kategorie,reload:reloadKat}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
   const {data:transakce,reload:reloadTrans}=useData(()=>sb.from("fin_transakce").select("*").order("datum",{ascending:false}).limit(500));
   const {data:plan,reload:reloadPlan}=useData(()=>sb.from("fin_cashflow_plan").select("*").order("mesic").order("castka"));
-  const {data:stavy1}=useData(()=>sb.from("fin_stavy").select("*").lte("rok",2021).limit(2000));
-  const {data:stavy2}=useData(()=>sb.from("fin_stavy").select("*").gte("rok",2022).limit(2000));
+  const {data:stavy1,reload:reloadStavy1}=useData(()=>sb.from("fin_stavy").select("*").lte("rok",2021).limit(2000));
+  const {data:stavy2,reload:reloadStavy2}=useData(()=>sb.from("fin_stavy").select("*").gte("rok",2022).limit(2000));
   const stavy=[...(stavy1||[]),...(stavy2||[])];
-  const reloadStavy=()=>{};
+  const reloadStavy=()=>{reloadStavy1();reloadStavy2();};
 
   // Globální filtr „svatých" dětských spořicích účtů (typ === 'deti'). Výchozí: VYPNUTO.
   const [zahrnoutDeti,setZahrnoutDeti]=useState(false);
@@ -2318,8 +2318,8 @@ function CashflowTab(){
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
   const {data:plan,reload:reloadPlan}=useData(()=>sb.from("fin_cashflow_plan").select("*").order("rok").order("mesic"));
   const {data:kategorie}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
-  const {data:stavy1}=useData(()=>sb.from("fin_stavy").select("*").lte("rok",2021).limit(2000));
-  const {data:stavy2}=useData(()=>sb.from("fin_stavy").select("*").gte("rok",2022).limit(2000));
+  const {data:stavy1,reload:reloadStavy1}=useData(()=>sb.from("fin_stavy").select("*").lte("rok",2021).limit(2000));
+  const {data:stavy2,reload:reloadStavy2}=useData(()=>sb.from("fin_stavy").select("*").gte("rok",2022).limit(2000));
   const {data:deti}=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:zvirata}=useData(()=>sb.from("zvirata").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:opravy}=useData(()=>sb.from("dum_opravy").select("id,nazev").order("nazev"));
