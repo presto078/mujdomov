@@ -7127,7 +7127,8 @@ function ZaznamModal({zaznam,pripad_id,onClose,onSaved}){
     sazba_id:zaznam?.sazba_id||"",
     datum:zaznam?.datum||new Date().toISOString().slice(0,10),
     pocet_hodin_ukonu:zaznam?.pocet_hodin_ukonu||"",
-    vypocitana_castka:zaznam?.vypocitana_castka||""
+    vypocitana_castka:zaznam?.vypocitana_castka||"",
+    poznamka:zaznam?.poznamka||""
   });
   const [saving,setSaving]=useState(false);
   const vybrSazba=sazby?.find(s=>s.id==f.sazba_id);
@@ -7139,10 +7140,11 @@ function ZaznamModal({zaznam,pripad_id,onClose,onSaved}){
     const data={
       pripad_id:f.pripad_id,pravnik_id:f.pravnik_id,sazba_id:f.sazba_id,
       datum:f.datum,pocet_hodin_ukonu:parseFloat(f.pocet_hodin_ukonu),
-      vypocitana_castka:parseFloat(f.vypocitana_castka)
+      vypocitana_castka:parseFloat(f.vypocitana_castka),
+      poznamka:f.poznamka||null
     };
-    if(isNew)await sb.from("pravnici_zaznam").insert(data);
-    else await sb.from("pravnici_zaznam").update(data).eq("id",zaznam.id);
+    const {error}=isNew?await sb.from("pravnici_zaznam").insert(data):await sb.from("pravnici_zaznam").update(data).eq("id",zaznam.id);
+    if(error){setSaving(false);alert("Chyba při ukládání: "+error.message);return;}
     setSaving(false);onSaved();
   };
   const nacitam=pripady===null||pravnici===null||sazby===null;
@@ -7156,6 +7158,7 @@ function ZaznamModal({zaznam,pripad_id,onClose,onSaved}){
         <Field label="Počet h/úkonů *"><input style={inp} type="number" step="0.5" value={f.pocet_hodin_ukonu} onChange={e=>setF(p=>({...p,pocet_hodin_ukonu:e.target.value}))} placeholder="14"/></Field>
       </div>
       <Field label={`Vypočtená částka (Kč) * — doporučeno: ${fmt(vypocteno)}`}><input style={inp} type="number" value={f.vypocitana_castka} onChange={e=>setF(p=>({...p,vypocitana_castka:e.target.value}))} placeholder={String(vypocteno)}/></Field>
+      <Field label="Poznámka"><textarea style={{...inp,minHeight:80,resize:"vertical",fontFamily:"inherit"}} value={f.poznamka} onChange={e=>setF(p=>({...p,poznamka:e.target.value}))} placeholder="Za které měsíce, na čem pracoval…"/></Field>
       <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:6}}>
         <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
         <button onClick={uloz} disabled={saving||!f.pripad_id||!f.pravnik_id||!f.sazba_id||!f.datum||!f.pocet_hodin_ukonu||!f.vypocitana_castka} style={btnC(C.purple)}>{saving?"Ukládám…":"Uložit"}</button>
@@ -7212,7 +7215,7 @@ function PravnikTab(){
   const {data:pripady,loading:loadP,reload:reloadP}=useData(()=>sb.from("pravnici_pripady").select("*").order("stav").order("nazev"));
   const {data:pravnici,reload:reloadPr}=useData(()=>sb.from("pravnici").select("*").order("jmeno"));
   const {data:sazby}=useData(()=>sb.from("pravnici_sazby").select("*").order("nazev"));
-  const {data:zaznam}=useData(()=>sb.from("pravnici_zaznam").select("*").order("datum",{ascending:false}));
+  const {data:zaznam,reload:reloadZ}=useData(()=>sb.from("pravnici_zaznam").select("*").order("datum",{ascending:false}));
   const {data:platby,reload:reloadPl}=useData(()=>sb.from("pravnici_platby").select("*").order("datum_platby",{ascending:false}));
   const {data:ucty}=useData(()=>sb.from("fin_ucty").select("id,nazev").eq("aktivni",true));
 
@@ -7341,6 +7344,7 @@ function PravnikTab(){
             <div style={{color:C.muted,fontSize:12,marginBottom:6}}>
               {pravnik?.jmeno} · {sazba?.nazev} ({fmt(sazba?.castka||0)}/{sazba?.jednotka==="hod"?"h":"úkon"}) · {z.pocet_hodin_ukonu} {sazba?.jednotka==="hod"?"h":"úkonů"}
             </div>
+            {z.poznamka&&<div style={{color:C.dim,fontSize:11,marginBottom:6,whiteSpace:"pre-wrap"}}>{z.poznamka}</div>}
             <div style={{background:C.bg,borderRadius:8,padding:"8px 12px",marginBottom:8,fontSize:12}}>
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
                 <span style={{color:C.muted}}>Vyúčtováno:</span>
@@ -7373,8 +7377,8 @@ function PravnikTab(){
     {modal==="new_pravnik"&&<PravnikModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadPr();}}/>}
     {modal&&modal.type==="pravnik"&&<PravnikModal pravnik={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadPr();}}/>}
     {modal&&modal.type==="sazba"&&<SazbaModal sazba={modal.id?modal:null} pravnik_id={modal.id} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadPr();}}/>}
-    {modal==="new_zaznam"&&<ZaznamModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadP();}}/>}
-    {modal&&modal.type==="zaznam"&&<ZaznamModal zaznam={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadP();}}/>}
+    {modal==="new_zaznam"&&<ZaznamModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadZ();}}/>}
+    {modal&&modal.type==="zaznam"&&<ZaznamModal zaznam={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reloadZ();}}/>}
     {platbaModal&&<PlatbaModal zaznam_id={platbaModal.zaznam_id} zaplaceno={platbaModal.zaplaceno} castkaKZaplaceni={platbaModal.castkaKZaplaceni} onClose={()=>setPlatbaModal(null)} onSaved={()=>{setPlatbaModal(null);reloadPl();reloadP();}}/>}
   </div>;
 }
