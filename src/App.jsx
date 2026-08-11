@@ -1688,7 +1688,7 @@ function FinanceTab(){
               </select>
             </div>
           </div>
-          <MultiStavForm ucty={filtrTypy.length===0?(ucty||[]):(ucty||[]).filter(u=>filtrTypy.includes(u.typ))} rok={stavForm.rok} mesic={stavForm.mesic} stavy={stavy||[]} onSave={async(updates)=>{
+          <MultiStavForm ucty={uctyView.filter(u=>(filtrTypy.length===0||filtrTypy.includes(u.typ))&&u.typ!="cizi_mena")} rok={stavForm.rok} mesic={stavForm.mesic} stavy={stavy||[]} onSave={async(updates)=>{
             for(const {ucet_id,stav} of updates){
               if(stav===""||stav==null)continue;
               await sb.from("fin_stavy").upsert({ucet_id,rok:stavForm.rok,mesic:stavForm.mesic,stav:+stav},{onConflict:"ucet_id,rok,mesic"});
@@ -1714,7 +1714,7 @@ function FinanceTab(){
       }));
       setVals(nw);
     },[rok,mesic]);
-    const typy2={bezny:"Běžný",sporici:"Spořící",podnikatelsky:"Podnikatelský",investicni:"Investiční",hotovost:"Hotovost",cizi_mena:"Cizí měna"};
+    const typy2={bezny:"Běžný",sporici:"Spořící",podnikatelsky:"Podnikatelský",investicni:"Investiční",hotovost:"Hotovost",cizi_mena:"Cizí měna",deti:"Děti"};
     const skupiny=Object.keys(typy2).map(t=>({typ:t,ucty:(uArr||[]).filter(u=>u.typ===t)})).filter(g=>g.ucty.length>0);
     return <div>
       {skupiny.map(({typ,ucty:uArr2})=><div key={typ} style={{marginBottom:16}}>
