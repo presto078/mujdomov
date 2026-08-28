@@ -1126,16 +1126,6 @@ function ObleceniTab(){
     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
       <button onClick={()=>setNovaMod(true)} style={{...btnC(C.muted,true),fontSize:12,padding:"5px 12px"}}>+ Velikost</button>
     </div>
-    {/* DEBUG: kontejnery per velikost */}
-    {allDruhy.length>0&&(vsechnyKonts||[]).some((k,_,arr)=>arr.filter(x=>x.velikost_id===k.velikost_id).length>1)&&<div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#c87000"}}>
-      ⚠ <strong>Nalezeny duplicitní kontejnery pro stejnou velikost:</strong>
-      {[...new Set((vsechnyKonts||[]).map(k=>k.velikost_id))].map(vid=>{
-        const ks=(vsechnyKonts||[]).filter(k=>k.velikost_id===vid);
-        if(ks.length<=1)return null;
-        return <div key={vid} style={{marginTop:4}}>Velikost <strong>{vid}</strong>: {ks.map(k=>`"${k.nazev}" (id:${k.id})`).join(", ")}</div>;
-      })}
-      <div style={{marginTop:6}}>Smažte duplicitní kontejnery nebo přesuňte jejich položky.</div>
-    </div>}
 
     {/* Statistika */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:20}}>
