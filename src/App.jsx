@@ -5418,6 +5418,390 @@ function PocasiWidget(){
 }
 
 // ── VODA TAB ─────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// IMPORT FAKTURY Z PDF (ISDOC)
+// Česká elektronická faktura ISDOC bývá v PDF přiložená jako soubor invoice.isdoc.
+// Bez další knihovny: projdeme streamy v PDF, rozbalíme je přes DecompressionStream
+// a hledáme XML s kořenem <Invoice>. Funguje i pro samostatný .isdoc / .xml soubor.
+// ══════════════════════════════════════════════════════════════════════════════
+async function rozbalStream(bytes){
+  for(const fmt of ["deflate","deflate-raw"]){
+    try{
+      const buf=await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream(fmt))).arrayBuffer();
+      return new Uint8Array(buf);
+    }catch(e){/* zkusíme druhý formát */}
+  }
+  return null;
+}
+function bytyNaLatin1(b){let s="";const kus=0x8000;for(let i=0;i<b.length;i+=kus)s+=String.fromCharCode.apply(null,b.subarray(i,i+kus));return s;}
+
+async function najdiIsdocXml(file){
+  const bin=new Uint8Array(await file.arrayBuffer());
+  const primo=new TextDecoder("utf-8").decode(bin.subarray(0,Math.min(bin.length,4000)));
+  if(primo.includes("<Invoice"))return new TextDecoder("utf-8").decode(bin); // samostatný .isdoc / .xml
+  const raw=bytyNaLatin1(bin);
+  let poz=0;
+  while(poz<raw.length){
+    const zac=raw.indexOf("stream",poz);
+    if(zac<0)break;
+    if(raw.substr(zac-3,3)==="end"){poz=zac+6;continue;}
+    const konec=raw.indexOf("endstream",zac);
+    if(konec<0)break;
+    let od=zac+6;
+    if(raw[od]==="\r")od++;
+    if(raw[od]==="\n")od++;
+    // Za daty bývá ještě konec řádku; DecompressionStream na přebytečný bajt spadne,
+    // proto zkoušíme i variantu bez koncových bílých znaků.
+    let konecDat=konec;
+    while(konecDat>od&&[0x0a,0x0d,0x20].includes(bin[konecDat-1]))konecDat--;
+    const varianty=[bin.subarray(od,konec)];
+    if(konecDat!==konec)varianty.push(bin.subarray(od,konecDat));
+    for(const v of varianty){
+      for(const kandidat of [await rozbalStream(v),v]){
+        if(!kandidat||kandidat.length<50)continue;
+        const t=new TextDecoder("utf-8").decode(kandidat);
+        if(t.includes("<Invoice"))return t;
+      }
+    }
+    poz=konec+9;
+  }
+  return null;
+}
+
+function parsujIsdoc(xmlText){
+  const doc=new DOMParser().parseFromString(xmlText,"application/xml");
+  const root=doc.documentElement;
+  if(!root||doc.getElementsByTagName("parsererror").length)return null;
+  const primy=t=>{for(const el of Array.from(root.children))if(el.tagName===t)return el.textContent.trim();return "";};
+  const kdekoli=t=>doc.getElementsByTagName(t)[0]?.textContent?.trim()||"";
+  const poznamky=Array.from(doc.getElementsByTagName("Note")).map(n=>n.textContent.trim()).filter(Boolean);
+  const obd=poznamky.join(" ").match(/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\s*[–—-]\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})/);
+  const naIso=(d,m,r)=>`${r}-${String(+m).padStart(2,"0")}-${String(+d).padStart(2,"0")}`;
+  return {
+    cislo_faktury:primy("ID")||kdekoli("VariableSymbol"),
+    datum_vystaveni:primy("IssueDate")||kdekoli("IssueDate"),
+    datum_splatnosti:kdekoli("PaymentDueDate"),
+    castka:kdekoli("PayableAmount")||kdekoli("PaidAmount"),
+    obdobi_od:obd?naIso(obd[1],obd[2],obd[3]):kdekoli("obdobiOd"),
+    obdobi_do:obd?naIso(obd[4],obd[5],obd[6]):kdekoli("obdobiDo"),
+    poznamka:poznamky[0]||"",
+    // Rozšíření Centropolu — vyúčtování elektřiny nese i stavy elektroměru a zálohy
+    vt_od:kdekoli("vtStart"),vt_do:kdekoli("vtEnd"),
+    nt_od:kdekoli("ntStart"),nt_do:kdekoli("ntEnd"),
+    celkem:kdekoli("sumaCelkem")||kdekoli("TaxInclusiveAmount"),
+    zalohy:kdekoli("TaxInclusiveDepositAmount"),
+  };
+}
+
+// Tlačítko „Načíst z PDF" — vyplní formulář faktury z přiloženého ISDOC
+function ImportIsdocButton({onNacteno}){
+  const [stav,setStav]=useState("");
+  const nacti=async e=>{
+    const file=e.target.files?.[0];
+    if(!file)return;
+    setStav("čtu…");
+    try{
+      const xml=await najdiIsdocXml(file);
+      if(!xml){setStav("");alert("V tomhle PDF není elektronická faktura (ISDOC). Vyplň ji prosím ručně.");}
+      else{
+        const d=parsujIsdoc(xml);
+        if(!d){setStav("");alert("Fakturu se nepodařilo přečíst.");}
+        else{onNacteno(d);setStav("✓ načteno");}
+      }
+    }catch(err){setStav("");alert("Chyba při čtení souboru: "+err.message);}
+    e.target.value="";
+  };
+  return <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+    <label style={{...btnC(C.blue),cursor:"pointer",display:"inline-block",fontSize:12,padding:"6px 12px"}}>
+      📄 Načíst z PDF
+      <input type="file" accept=".pdf,.isdoc,.xml" onChange={nacti} style={{display:"none"}}/>
+    </label>
+    {stav&&<span style={{marginLeft:10,fontSize:12,fontWeight:700,color:"#1a4fa8"}}>{stav}</span>}
+    <div style={{fontSize:11,color:"#3066b0",marginTop:6}}>Vlož PDF faktury. Pokud v něm je elektronická faktura (ISDOC), doplní se číslo, datumy, období a částka — stavy vodoměru zkontroluj a dopiš.</div>
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ELEKTŘINA — samoodečty VT/NT, průběžný odhad vyúčtování, faktury (Centropol)
+// Výpočet přesně podle tabulky, kterou Jirka vedl v Excelu:
+//   silová   = (VT/1000*cena_vt + NT/1000*cena_nt) * (1 − sleva)
+//   distribuce = VT/1000*dist_vt + NT/1000*dist_nt
+//   systémové = celkem/1000 * sazba,  daň = celkem/1000 * sazba
+//   pevné    = (stálý plat + jistič + nesíťová) * dny / 30.436875
+//   s DPH    = (součet) * (1 + DPH);  rozdíl období = záloha − cena s DPH
+// ══════════════════════════════════════════════════════════════════════════════
+const EL_DEN_MESICE=30.436875;
+const EL_VYCHOZI={
+  silova_vt:"2616",silova_nt:"2566",sleva:"0.05",
+  distribuce_vt:"754.77",distribuce_nt:"116.5",
+  systemove:"164.24",dan:"28.3",
+  staly_plat:"122",jistic:"555",nesitova:"12.87",
+  dph:"0.21",zaloha:"6260",
+};
+const EL_CENIK_POLE=[
+  {k:"silova_vt",l:"Silová elektřina VT (Kč/MWh bez DPH)"},
+  {k:"silova_nt",l:"Silová elektřina NT (Kč/MWh bez DPH)"},
+  {k:"sleva",l:"Sleva ze silové elektřiny (0,05 = 5 %)"},
+  {k:"distribuce_vt",l:"Distribuce VT (Kč/MWh bez DPH)"},
+  {k:"distribuce_nt",l:"Distribuce NT (Kč/MWh bez DPH)"},
+  {k:"systemove",l:"Systémové služby (Kč/MWh bez DPH)"},
+  {k:"dan",l:"Daň z elektřiny (Kč/MWh bez DPH)"},
+  {k:"staly_plat",l:"Stálý plat dodavateli (Kč/měs. bez DPH)"},
+  {k:"jistic",l:"Jistič (Kč/měs. bez DPH)"},
+  {k:"nesitova",l:"Nesíťová infrastruktura (Kč/měs. bez DPH)"},
+  {k:"dph",l:"DPH (0,21 = 21 %)"},
+  {k:"zaloha",l:"Měsíční záloha (Kč)"},
+];
+const el2=x=>Math.round(x*100)/100;
+
+function elSpoctiObdobi(od,doO,c){
+  const dny=Math.round((new Date(doO.datum)-new Date(od.datum))/86400000);
+  const spVt=+doO.vt-+od.vt, spNt=+doO.nt-+od.nt, spC=spVt+spNt;
+  const silova=el2(((spVt/1000)*c.silova_vt+(spNt/1000)*c.silova_nt)*(1-c.sleva));
+  const distribuce=el2((spVt/1000)*c.distribuce_vt+(spNt/1000)*c.distribuce_nt);
+  const systemove=el2((spC/1000)*c.systemove);
+  const dan=el2((spC/1000)*c.dan);
+  const pevne=el2((c.staly_plat+c.jistic+c.nesitova)*dny/EL_DEN_MESICE);
+  const bezDph=el2(silova+distribuce+systemove+dan+pevne);
+  const sDph=el2(bezDph*(1+c.dph));
+  return {datumOd:od.datum,datumDo:doO.datum,dny,spVt,spNt,spC,silova,distribuce,systemove,dan,pevne,bezDph,sDph,zaloha:c.zaloha,rozdil:el2(c.zaloha-sDph)};
+}
+
+function ElektrinaTab(){
+  const {data:odecty,reload:reloadOdecty}=useData(()=>sb.from("el_odecty").select("*").order("datum",{ascending:true}));
+  const {data:faktury,reload:reloadFaktury}=useData(()=>sb.from("el_faktury").select("*").order("obdobi_do",{ascending:false}));
+  const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("el_nastaveni").select("*"));
+  const [zalozka,setZalozka]=useState("prehled");
+  const [modalOdecet,setModalOdecet]=useState(null);
+  const [formOdecet,setFormOdecet]=useState({datum:"",vt:"",nt:"",poznamka:""});
+  const [modalFak,setModalFak]=useState(null);
+  const [formFak,setFormFak]=useState({cislo_faktury:"",datum_vystaveni:"",datum_splatnosti:"",obdobi_od:"",obdobi_do:"",vt_od:"",vt_do:"",nt_od:"",nt_do:"",castka_celkem:"",zalohy:"",vyrovnani:"",zaplaceno:false,poznamka:""});
+  const [formCenik,setFormCenik]=useState(null);
+
+  const nast=Object.fromEntries((nastaveni||[]).map(r=>[r.klic,r.hodnota]));
+  const c=Object.fromEntries(Object.keys(EL_VYCHOZI).map(k=>[k,parseFloat(nast[k]??EL_VYCHOZI[k])]));
+
+  const rady=(odecty||[]).filter(o=>o.vt!=null&&o.nt!=null);
+  const obdobi=[];
+  for(let i=1;i<rady.length;i++)obdobi.push(elSpoctiObdobi(rady[i-1],rady[i],c));
+  let beh=0; const obdobiKum=obdobi.map(o=>{beh=el2(beh+o.rozdil);return {...o,kumulativ:beh};});
+  const posledni=rady[rady.length-1];
+  const celkemVt=obdobi.reduce((a,o)=>a+o.spVt,0), celkemNt=obdobi.reduce((a,o)=>a+o.spNt,0);
+  const celkemCena=el2(obdobi.reduce((a,o)=>a+o.sDph,0));
+  const kumulativ=obdobiKum.length?obdobiKum[obdobiKum.length-1].kumulativ:0;
+
+  const ulozOdecet=async()=>{
+    const data={datum:formOdecet.datum,vt:formOdecet.vt===""?null:parseFloat(formOdecet.vt),nt:formOdecet.nt===""?null:parseFloat(formOdecet.nt),poznamka:formOdecet.poznamka||null};
+    const {error}=modalOdecet==="nova"?await sb.from("el_odecty").insert(data):await sb.from("el_odecty").update(data).eq("id",modalOdecet.id);
+    if(error){alert("Chyba při ukládání: "+error.message);return;}
+    reloadOdecty();setModalOdecet(null);
+  };
+  const smazOdecet=async id=>{if(!confirm("Smazat odečet?"))return;await sb.from("el_odecty").delete().eq("id",id);reloadOdecty();};
+
+  const ulozFakturu=async()=>{
+    const cis=v=>v===""||v==null?null:parseFloat(v);
+    const data={cislo_faktury:formFak.cislo_faktury||null,datum_vystaveni:formFak.datum_vystaveni||null,datum_splatnosti:formFak.datum_splatnosti||null,
+      obdobi_od:formFak.obdobi_od||null,obdobi_do:formFak.obdobi_do||null,
+      vt_od:cis(formFak.vt_od),vt_do:cis(formFak.vt_do),nt_od:cis(formFak.nt_od),nt_do:cis(formFak.nt_do),
+      castka_celkem:cis(formFak.castka_celkem),zalohy:cis(formFak.zalohy),vyrovnani:cis(formFak.vyrovnani),
+      zaplaceno:formFak.zaplaceno,poznamka:formFak.poznamka||null};
+    const {error}=modalFak==="nova"?await sb.from("el_faktury").insert(data):await sb.from("el_faktury").update(data).eq("id",modalFak.id);
+    if(error){alert("Chyba při ukládání: "+error.message);return;}
+    reloadFaktury();setModalFak(null);
+  };
+  const smazFakturu=async id=>{if(!confirm("Smazat fakturu?"))return;await sb.from("el_faktury").delete().eq("id",id);reloadFaktury();};
+
+  // Z vyúčtování založí odečet ke konci období — ať navazuje průběžný výpočet
+  const odecetZFaktury=async f=>{
+    if(f.vt_do==null||f.nt_do==null){alert("Faktura nemá stavy elektroměru.");return;}
+    if((odecty||[]).some(o=>o.datum===f.obdobi_do)){alert("Odečet k tomuto datu už existuje.");return;}
+    const {error}=await sb.from("el_odecty").insert({datum:f.obdobi_do,vt:f.vt_do,nt:f.nt_do,poznamka:`Z vyúčtování ${f.cislo_faktury||""}`.trim()});
+    if(error){alert("Chyba: "+error.message);return;}
+    reloadOdecty();alert("Odečet založen.");
+  };
+
+  const ulozCenik=async()=>{
+    for(const [k,v] of Object.entries(formCenik))await sb.from("el_nastaveni").upsert({klic:k,hodnota:String(v)});
+    reloadNast();setFormCenik(null);alert("Ceník uložen.");
+  };
+
+  const karta=(l,v,barva,sub)=><div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${barva}`}}>
+    <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{l}</div>
+    <div style={{fontSize:18,fontWeight:800,color:barva}}>{v}</div>
+    {sub&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{sub}</div>}
+  </div>;
+  const kc=x=>`${(+x).toLocaleString("cs",{maximumFractionDigits:0})} Kč`;
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+      <h2 style={{margin:0,fontSize:22,fontWeight:800}}>⚡ Elektřina — Centropol</h2>
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
+      {karta("Poslední odečet",posledni?`${(+posledni.vt).toLocaleString("cs")} / ${(+posledni.nt).toLocaleString("cs")}`:"—",C.blue,posledni?`VT / NT · ${new Date(posledni.datum).toLocaleDateString("cs-CZ")}`:"zatím žádný")}
+      {karta("Spotřeba od začátku",`${(celkemVt+celkemNt).toLocaleString("cs")} kWh`,C.orange,`VT ${celkemVt.toLocaleString("cs")} · NT ${celkemNt.toLocaleString("cs")}`)}
+      {karta("Odhad ceny s DPH",kc(celkemCena),C.accent,"za všechna období")}
+      {karta(kumulativ>=0?"Průběžný přeplatek":"Průběžný nedoplatek",kc(Math.abs(kumulativ)),kumulativ>=0?C.green:C.red,"zálohy minus spotřeba")}
+    </div>
+
+    <div style={{display:"flex",gap:2,marginBottom:24,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
+      {[{id:"prehled",l:"📊 Odečty a odhad"},{id:"faktury",l:"🧾 Vyúčtování"},{id:"cenik",l:"⚙️ Ceník"}].map(t=>
+        <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
+    </div>
+
+    {zalozka==="prehled"&&<>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontWeight:700,fontSize:14}}>📅 Období mezi odečty</div>
+        <button onClick={()=>{setFormOdecet({datum:new Date().toISOString().slice(0,10),vt:"",nt:"",poznamka:""});setModalOdecet("nova");}} style={btnC()}>+ Zapsat odečet</button>
+      </div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:900}}>
+          <thead><tr style={{background:C.bg}}>
+            {["Období","Dní","VT","NT","Celkem","Silová","Distribuce","Systém.","Daň","Pevné","Bez DPH","S DPH","Záloha","Rozdíl","Průběžně"].map(h=>
+              <th key={h} style={{padding:"8px 8px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {obdobiKum.length===0&&<tr><td colSpan={15} style={{padding:20,textAlign:"center",color:C.dim}}>Zapiš aspoň dva odečty</td></tr>}
+            {[...obdobiKum].reverse().map((o,i)=><tr key={o.datumDo} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
+              <td style={{padding:"8px",whiteSpace:"nowrap",fontWeight:600}}>{new Date(o.datumOd).toLocaleDateString("cs-CZ")} → {new Date(o.datumDo).toLocaleDateString("cs-CZ")}</td>
+              <td style={{padding:"8px",color:C.muted}}>{o.dny}</td>
+              <td style={{padding:"8px"}}>{o.spVt.toLocaleString("cs")}</td>
+              <td style={{padding:"8px"}}>{o.spNt.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",fontWeight:700}}>{o.spC.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",color:C.muted}}>{o.silova.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",color:C.muted}}>{o.distribuce.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",color:C.muted}}>{o.systemove.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",color:C.muted}}>{o.dan.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",color:C.muted}}>{o.pevne.toLocaleString("cs")}</td>
+              <td style={{padding:"8px"}}>{o.bezDph.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",fontWeight:700,color:C.accent}}>{o.sDph.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",color:C.muted}}>{o.zaloha.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",fontWeight:700,color:o.rozdil>=0?C.green:C.red}}>{o.rozdil>0?"+":""}{o.rozdil.toLocaleString("cs")}</td>
+              <td style={{padding:"8px",fontWeight:800,color:o.kumulativ>=0?C.green:C.red}}>{o.kumulativ>0?"+":""}{o.kumulativ.toLocaleString("cs")}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{fontWeight:700,fontSize:14,margin:"22px 0 10px"}}>📋 Zapsané odečty</div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <thead><tr style={{background:C.bg}}>
+            {["Datum","Stav VT (kWh)","Stav NT (kWh)","Poznámka",""].map(h=><th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {(odecty||[]).length===0&&<tr><td colSpan={5} style={{padding:20,textAlign:"center",color:C.dim}}>Žádné odečty</td></tr>}
+            {[...(odecty||[])].reverse().map((o,i)=><tr key={o.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
+              <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{new Date(o.datum).toLocaleDateString("cs-CZ")}</td>
+              <td style={{padding:"8px 10px",fontWeight:700}}>{o.vt!=null?(+o.vt).toLocaleString("cs"):"—"}</td>
+              <td style={{padding:"8px 10px",fontWeight:700}}>{o.nt!=null?(+o.nt).toLocaleString("cs"):"—"}</td>
+              <td style={{padding:"8px 10px",fontSize:12,color:C.muted}}>{o.poznamka||""}</td>
+              <td style={{padding:"8px 6px",whiteSpace:"nowrap"}}>
+                <button onClick={()=>{setModalOdecet(o);setFormOdecet({datum:o.datum,vt:o.vt!=null?String(o.vt):"",nt:o.nt!=null?String(o.nt):"",poznamka:o.poznamka||""});}} style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10,marginRight:2}}>✏</button>
+                <button onClick={()=>smazOdecet(o.id)} style={{...btnC(C.red,true),padding:"2px 6px",fontSize:10}}>🗑</button>
+              </td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    </>}
+
+    {zalozka==="faktury"&&<>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontWeight:700,fontSize:14}}>🧾 Vyúčtování od Centropolu</div>
+        <button onClick={()=>{setFormFak({cislo_faktury:"",datum_vystaveni:"",datum_splatnosti:"",obdobi_od:"",obdobi_do:"",vt_od:"",vt_do:"",nt_od:"",nt_do:"",castka_celkem:"",zalohy:"",vyrovnani:"",zaplaceno:false,poznamka:""});setModalFak("nova");}} style={btnC()}>+ Vyúčtování</button>
+      </div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:820}}>
+          <thead><tr style={{background:C.bg}}>
+            {["Číslo","Období","VT","NT","Spotřeba","Vyúčtováno","Zálohy","Přeplatek/nedoplatek","Splatnost",""].map(h=><th key={h} style={{padding:"8px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {(faktury||[]).length===0&&<tr><td colSpan={10} style={{padding:20,textAlign:"center",color:C.dim}}>Žádná vyúčtování</td></tr>}
+            {(faktury||[]).map((f,i)=>{
+              const spVt=f.vt_od!=null&&f.vt_do!=null?+f.vt_do-+f.vt_od:null;
+              const spNt=f.nt_od!=null&&f.nt_do!=null?+f.nt_do-+f.nt_od:null;
+              const vyr=f.vyrovnani!=null?+f.vyrovnani:null;
+              return <tr key={f.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
+                <td style={{padding:"8px",fontWeight:600,whiteSpace:"nowrap"}}>{f.cislo_faktury||"—"}</td>
+                <td style={{padding:"8px",whiteSpace:"nowrap"}}>{f.obdobi_od?`${new Date(f.obdobi_od).toLocaleDateString("cs-CZ")} – ${new Date(f.obdobi_do).toLocaleDateString("cs-CZ")}`:"—"}</td>
+                <td style={{padding:"8px",color:C.muted,whiteSpace:"nowrap"}}>{f.vt_od!=null?`${(+f.vt_od).toLocaleString("cs")} → ${(+f.vt_do).toLocaleString("cs")}`:"—"}</td>
+                <td style={{padding:"8px",color:C.muted,whiteSpace:"nowrap"}}>{f.nt_od!=null?`${(+f.nt_od).toLocaleString("cs")} → ${(+f.nt_do).toLocaleString("cs")}`:"—"}</td>
+                <td style={{padding:"8px",fontWeight:700,whiteSpace:"nowrap"}}>{spVt!=null&&spNt!=null?`${(spVt+spNt).toLocaleString("cs")} kWh`:"—"}</td>
+                <td style={{padding:"8px",whiteSpace:"nowrap"}}>{f.castka_celkem!=null?kc(f.castka_celkem):"—"}</td>
+                <td style={{padding:"8px",color:C.muted,whiteSpace:"nowrap"}}>{f.zalohy!=null?kc(f.zalohy):"—"}</td>
+                <td style={{padding:"8px",fontWeight:800,whiteSpace:"nowrap",color:vyr==null?C.dim:vyr<0?C.green:C.red}}>
+                  {vyr==null?"—":vyr<0?`přeplatek ${kc(-vyr)}`:`nedoplatek ${kc(vyr)}`}
+                </td>
+                <td style={{padding:"8px",whiteSpace:"nowrap"}}>{f.datum_splatnosti?new Date(f.datum_splatnosti).toLocaleDateString("cs-CZ"):"—"}</td>
+                <td style={{padding:"8px 6px",whiteSpace:"nowrap"}}>
+                  <button title="Založit odečet ke konci období" onClick={()=>odecetZFaktury(f)} style={{...btnC(C.green,true),padding:"2px 6px",fontSize:10,marginRight:2}}>↧</button>
+                  <button onClick={()=>{setModalFak(f);setFormFak({cislo_faktury:f.cislo_faktury||"",datum_vystaveni:f.datum_vystaveni||"",datum_splatnosti:f.datum_splatnosti||"",obdobi_od:f.obdobi_od||"",obdobi_do:f.obdobi_do||"",vt_od:f.vt_od!=null?String(f.vt_od):"",vt_do:f.vt_do!=null?String(f.vt_do):"",nt_od:f.nt_od!=null?String(f.nt_od):"",nt_do:f.nt_do!=null?String(f.nt_do):"",castka_celkem:f.castka_celkem!=null?String(f.castka_celkem):"",zalohy:f.zalohy!=null?String(f.zalohy):"",vyrovnani:f.vyrovnani!=null?String(f.vyrovnani):"",zaplaceno:f.zaplaceno,poznamka:f.poznamka||""});}} style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10,marginRight:2}}>✏</button>
+                  <button onClick={()=>smazFakturu(f.id)} style={{...btnC(C.red,true),padding:"2px 6px",fontSize:10}}>🗑</button>
+                </td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{fontSize:11,color:C.muted,marginTop:8}}>Tlačítko ↧ u vyúčtování založí odečet ke konci fakturovaného období, aby na něj navázal průběžný výpočet.</div>
+    </>}
+
+    {zalozka==="cenik"&&<div style={{maxWidth:440}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:20}}>
+        <h3 style={{margin:"0 0 4px",fontSize:15,fontWeight:800}}>Ceník Centropol</h3>
+        <div style={{fontSize:11,color:C.muted,marginBottom:14}}>Pevné měsíční platby se krátí podle počtu dní (děleno 30,436875 = průměrný měsíc).</div>
+        {EL_CENIK_POLE.map(f=><div key={f.k} style={{marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>{f.l}</div>
+          <input style={inp} type="number" step="0.01"
+            value={(formCenik??Object.fromEntries(Object.keys(EL_VYCHOZI).map(k=>[k,nast[k]??EL_VYCHOZI[k]])))[f.k]}
+            onChange={e=>setFormCenik(p=>({...(p??Object.fromEntries(Object.keys(EL_VYCHOZI).map(k=>[k,nast[k]??EL_VYCHOZI[k]]))),[f.k]:e.target.value}))}/>
+        </div>)}
+        <button onClick={ulozCenik} disabled={!formCenik} style={btnC()}>Uložit ceník</button>
+      </div>
+    </div>}
+
+    {modalOdecet&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modalOdecet==="nova"?"Nový odečet":"Upravit odečet"}</h3>
+        {[{l:"Datum",k:"datum",t:"date"},{l:"Stav VT (kWh)",k:"vt",t:"number"},{l:"Stav NT (kWh)",k:"nt",t:"number"},{l:"Poznámka",k:"poznamka",t:"text",ph:"volitelně..."}].map(f=><div key={f.k} style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+          <input style={inp} type={f.t} placeholder={f.ph||""} value={formOdecet[f.k]} onChange={e=>setFormOdecet(p=>({...p,[f.k]:e.target.value}))}/>
+        </div>)}
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          <button onClick={ulozOdecet} style={btnC()}>Uložit</button>
+          <button onClick={()=>setModalOdecet(null)} style={btnC(C.muted,true)}>Zrušit</button>
+        </div>
+      </div>
+    </div>}
+
+    {modalFak&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20,overflowY:"auto"}}>
+      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:460,boxShadow:"0 20px 60px rgba(0,0,0,.25)",maxHeight:"90vh",overflowY:"auto"}}>
+        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modalFak==="nova"?"Nové vyúčtování":"Upravit vyúčtování"}</h3>
+        <ImportIsdocButton onNacteno={d=>setFormFak(p=>({...p,
+          cislo_faktury:d.cislo_faktury||p.cislo_faktury,
+          datum_vystaveni:d.datum_vystaveni||p.datum_vystaveni,
+          datum_splatnosti:d.datum_splatnosti||p.datum_splatnosti,
+          obdobi_od:d.obdobi_od||p.obdobi_od,obdobi_do:d.obdobi_do||p.obdobi_do,
+          vt_od:d.vt_od||p.vt_od,vt_do:d.vt_do||p.vt_do,nt_od:d.nt_od||p.nt_od,nt_do:d.nt_do||p.nt_do,
+          castka_celkem:d.celkem||p.castka_celkem,zalohy:d.zalohy||p.zalohy,
+          vyrovnani:d.castka!==""&&d.castka!=null?String(-parseFloat(d.castka)):p.vyrovnani}))}/>
+        {[{l:"Číslo faktury",k:"cislo_faktury",t:"text"},{l:"Datum vystavení",k:"datum_vystaveni",t:"date"},{l:"Datum splatnosti",k:"datum_splatnosti",t:"date"},{l:"Období od",k:"obdobi_od",t:"date"},{l:"Období do",k:"obdobi_do",t:"date"},{l:"Stav VT od (kWh)",k:"vt_od",t:"number"},{l:"Stav VT do (kWh)",k:"vt_do",t:"number"},{l:"Stav NT od (kWh)",k:"nt_od",t:"number"},{l:"Stav NT do (kWh)",k:"nt_do",t:"number"},{l:"Vyúčtováno celkem s DPH (Kč)",k:"castka_celkem",t:"number"},{l:"Zaplacené zálohy (Kč)",k:"zalohy",t:"number"},{l:"Vyrovnání (+ nedoplatek / − přeplatek)",k:"vyrovnani",t:"number"},{l:"Poznámka",k:"poznamka",t:"text",ph:"volitelně..."}].map(f=><div key={f.k} style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+          <input style={inp} type={f.t} step={f.t==="number"?"0.01":undefined} placeholder={f.ph||""} value={formFak[f.k]} onChange={e=>setFormFak(p=>({...p,[f.k]:e.target.value}))}/>
+        </div>)}
+        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:600,marginBottom:6,cursor:"pointer"}}>
+          <input type="checkbox" checked={formFak.zaplaceno} onChange={e=>setFormFak(p=>({...p,zaplaceno:e.target.checked}))}/> Vyrovnáno
+        </label>
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          <button onClick={ulozFakturu} style={btnC()}>Uložit</button>
+          <button onClick={()=>setModalFak(null)} style={btnC(C.muted,true)}>Zrušit</button>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
 function VodaTab(){
   const [zalozka,setZalozka]=useState("fakturacni");
   const {data:odecty,reload:reloadOdecty}=useData(()=>sb.from("voda_odecty").select("*").order("datum",{ascending:true}));
@@ -5631,6 +6015,7 @@ function VodaTab(){
       {modalFak&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
         <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:440,boxShadow:"0 20px 60px rgba(0,0,0,.25)",maxHeight:"90vh",overflowY:"auto"}}>
           <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modalFak==="nova"?"Nová faktura":"Upravit fakturu"}</h3>
+          <ImportIsdocButton onNacteno={d=>setFormFak(p=>({...p,cislo_faktury:d.cislo_faktury||p.cislo_faktury,datum_vystaveni:d.datum_vystaveni||p.datum_vystaveni,datum_splatnosti:d.datum_splatnosti||p.datum_splatnosti,obdobi_od:d.obdobi_od||p.obdobi_od,obdobi_do:d.obdobi_do||p.obdobi_do,castka:d.castka?String(Math.round(+d.castka)):p.castka,poznamka:d.poznamka||p.poznamka}))}/>
           {[
             {l:"Číslo faktury",k:"cislo_faktury",t:"text"},
             {l:"Datum vystavení",k:"datum_vystaveni",t:"date"},
@@ -5998,6 +6383,7 @@ function VodaTab(){
       {modalFak&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20,overflowY:"auto"}}>
         <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:440,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
           <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modalFak==="nova"?"Nová faktura za stočné":"Upravit fakturu"}</h3>
+          <ImportIsdocButton onNacteno={d=>setFormFak(p=>({...p,cislo_faktury:d.cislo_faktury||p.cislo_faktury,datum_vystaveni:d.datum_vystaveni||p.datum_vystaveni,datum_splatnosti:d.datum_splatnosti||p.datum_splatnosti,obdobi_od:d.obdobi_od||p.obdobi_od,obdobi_do:d.obdobi_do||p.obdobi_do,castka:d.castka?String(Math.round(+d.castka)):p.castka,poznamka:d.poznamka||p.poznamka}))}/>
           {[{l:"Číslo faktury",k:"cislo_faktury",t:"text",ph:"260100131"},{l:"Datum vystavení",k:"datum_vystaveni",t:"date"},{l:"Datum splatnosti",k:"datum_splatnosti",t:"date"},{l:"Období od",k:"obdobi_od",t:"date"},{l:"Období do",k:"obdobi_do",t:"date"},{l:"Stav vodoměru od (m³)",k:"stav_od",t:"number"},{l:"Stav vodoměru do (m³)",k:"stav_do",t:"number"},{l:"Částka (Kč)",k:"castka",t:"number"},{l:"Poznámka",k:"poznamka",t:"text",ph:"volitelně..."}].map(f=><div key={f.k} style={{marginBottom:11}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
             <input style={inp} type={f.t} step={f.t==="number"?"0.001":undefined} placeholder={f.ph||""} value={formFak[f.k]} onChange={e=>setFormFak(p=>({...p,[f.k]:e.target.value}))}/>
@@ -7537,6 +7923,7 @@ const TILES=[
   {id:"ukoly",    emoji:"🔁", label:"Úkoly",     popis:"Pravidelná údržba",      barva:"#1a6fa8"},
   {id:"spotreba", emoji:"💧", label:"Spotřeba",  popis:"Voda, elektřina, plyn",  barva:"#1a7a4a"},
   {id:"voda",     emoji:"🚰", label:"Voda",      popis:"Odečty, faktury, odhad", barva:"#0369a1"},
+  {id:"elektrina",emoji:"⚡", label:"Elektřina", popis:"Samoodečty a vyúčtování",barva:"#b45309"},
   {id:"finance",  emoji:"💰", label:"Finance (Realita)", popis:"Reálné útraty a 22 účtů", barva:"#b8860b"},
   {id:"cashflow", emoji:"📈", label:"Cashflow",  popis:"Plán likvidity a převody",barva:"#0f766e"},
   {id:"dum",      emoji:"🔧", label:"Dům",       popis:"Opravy a plánování",     barva:"#8B3A1A"},
@@ -7748,6 +8135,7 @@ function AppInner() {
         {modul==="ukoly"    && <UkolyTab/>}
         {modul==="spotreba" && <SpotrebaTab/>}
         {modul==="voda"     && <VodaTab/>}
+        {modul==="elektrina"&& <ElektrinaTab/>}
         {modul==="finance"  && <FinanceTab/>}
         {modul==="cashflow" && <CashflowTab/>}
         {modul==="dum"      && <DumTab/>}
