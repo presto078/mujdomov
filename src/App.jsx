@@ -5523,22 +5523,13 @@ function ImportIsdocButton({onNacteno}){
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ELEKTŘINA — samoodečty VT/NT, průběžný odhad vyúčtování, faktury (Centropol)
-// Výpočet přesně podle tabulky, kterou Jirka vedl v Excelu:
-//   silová   = (VT/1000*cena_vt + NT/1000*cena_nt) * (1 − sleva)
-//   distribuce = VT/1000*dist_vt + NT/1000*dist_nt
-//   systémové = celkem/1000 * sazba,  daň = celkem/1000 * sazba
-//   pevné    = (stálý plat + jistič + nesíťová) * dny / 30.436875
-//   s DPH    = (součet) * (1 + DPH);  rozdíl období = záloha − cena s DPH
+// Ceníků může být víc, vybírá se ten platný ke konci období. Dva režimy:
+//   „jednoduchý"  — cena za MWh včetně DPH (T1/T2) + měsíční paušál včetně DPH
+//   „rozpad"      — silová se slevou, distribuce, systémové služby, daň
+//                   a pevné platby krácené dny/30.436875, vše bez DPH + DPH
 // ══════════════════════════════════════════════════════════════════════════════
 const EL_DEN_MESICE=30.436875;
-const EL_VYCHOZI={
-  silova_vt:"2616",silova_nt:"2566",sleva:"0.05",
-  distribuce_vt:"754.77",distribuce_nt:"116.5",
-  systemove:"164.24",dan:"28.3",
-  staly_plat:"122",jistic:"555",nesitova:"12.87",
-  dph:"0.21",zaloha:"6260",
-};
-const EL_CENIK_POLE=[
+const EL_POLE_ROZPAD=[
   {k:"silova_vt",l:"Silová elektřina VT (Kč/MWh bez DPH)"},
   {k:"silova_nt",l:"Silová elektřina NT (Kč/MWh bez DPH)"},
   {k:"sleva",l:"Sleva ze silové elektřiny (0,05 = 5 %)"},
@@ -5550,13 +5541,55 @@ const EL_CENIK_POLE=[
   {k:"jistic",l:"Jistič (Kč/měs. bez DPH)"},
   {k:"nesitova",l:"Nesíťová infrastruktura (Kč/měs. bez DPH)"},
   {k:"dph",l:"DPH (0,21 = 21 %)"},
-  {k:"zaloha",l:"Měsíční záloha (Kč)"},
+];
+const EL_POLE_JEDNODUCHY=[
+  {k:"cena_vt",l:"Cena za MWh VT/T1 včetně DPH"},
+  {k:"cena_nt",l:"Cena za MWh NT/T2 včetně DPH"},
+  {k:"pausal_mesic",l:"Měsíční paušál včetně DPH (Kč)"},
 ];
 const el2=x=>Math.round(x*100)/100;
+const elPrazdnyCenik={platnost_od:"",nazev:"",rezim:"rozpad",zaloha:"",
+  silova_vt:"",silova_nt:"",sleva:"0.05",distribuce_vt:"",distribuce_nt:"",systemove:"",dan:"",
+  staly_plat:"",jistic:"",nesitova:"",dph:"0.21",cena_vt:"",cena_nt:"",pausal_mesic:""};
 
-function elSpoctiObdobi(od,doO,c){
+// Ceník platný k datu (poslední, který začal nejpozději v ten den)
+function elCenikKDatu(ceniky,datum){
+  const p=(ceniky||[]).filter(c=>new Date(c.platnost_od)<=new Date(datum))
+    .sort((a,b)=>new Date(a.platnost_od)-new Date(b.platnost_od));
+  return p[p.length-1]||null;
+}
+
+// Zálohy se platí jednou měsíčně k prvnímu dni. Do období tedy patří tolik záloh,
+// kolik prvních dnů měsíce do něj spadá — ne jedna za každý zápis odečtu.
+// (Dva odečty v jednom měsíci proto zálohu nezdvojí.)
+function elZalohyVObdobi(datumOd,datumDo,ceniky){
+  const konec=new Date(datumDo);
+  const z=new Date(datumOd);
+  let d=new Date(z.getFullYear(),z.getMonth()+1,1);
+  let suma=0,pocet=0;
+  while(d<=konec){
+    const c=elCenikKDatu(ceniky,`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-01`);
+    suma+=+(c?.zaloha)||0; pocet++;
+    d=new Date(d.getFullYear(),d.getMonth()+1,1);
+  }
+  return {suma:el2(suma),pocet};
+}
+
+function elSpoctiObdobi(od,doO,cen,ceniky){
   const dny=Math.round((new Date(doO.datum)-new Date(od.datum))/86400000);
   const spVt=+doO.vt-+od.vt, spNt=+doO.nt-+od.nt, spC=spVt+spNt;
+  const zal=elZalohyVObdobi(od.datum,doO.datum,ceniky);
+  const zaklad={datumOd:od.datum,datumDo:doO.datum,dny,spVt,spNt,spC,cenik:cen?.nazev||"",zaloh:zal.pocet};
+  if(!cen)return {...zaklad,chybiCenik:true,silova:null,distribuce:null,systemove:null,dan:null,pevne:null,bezDph:null,sDph:null,zaloha:zal.suma,rozdil:0};
+  const zaloha=zal.suma;
+  if(cen.rezim==="jednoduchy"){
+    const cVt=el2((spVt/1000)*(+cen.cena_vt||0));
+    const cNt=el2((spNt/1000)*(+cen.cena_nt||0));
+    const pevne=el2(+cen.pausal_mesic||0);
+    const sDph=el2(cVt+cNt+pevne);
+    return {...zaklad,silova:el2(cVt+cNt),distribuce:null,systemove:null,dan:null,pevne,bezDph:null,sDph,zaloha,rozdil:el2(zaloha-sDph)};
+  }
+  const c=Object.fromEntries(EL_POLE_ROZPAD.map(f=>[f.k,+cen[f.k]||0]));
   const silova=el2(((spVt/1000)*c.silova_vt+(spNt/1000)*c.silova_nt)*(1-c.sleva));
   const distribuce=el2((spVt/1000)*c.distribuce_vt+(spNt/1000)*c.distribuce_nt);
   const systemove=el2((spC/1000)*c.systemove);
@@ -5564,31 +5597,30 @@ function elSpoctiObdobi(od,doO,c){
   const pevne=el2((c.staly_plat+c.jistic+c.nesitova)*dny/EL_DEN_MESICE);
   const bezDph=el2(silova+distribuce+systemove+dan+pevne);
   const sDph=el2(bezDph*(1+c.dph));
-  return {datumOd:od.datum,datumDo:doO.datum,dny,spVt,spNt,spC,silova,distribuce,systemove,dan,pevne,bezDph,sDph,zaloha:c.zaloha,rozdil:el2(c.zaloha-sDph)};
+  return {...zaklad,silova,distribuce,systemove,dan,pevne,bezDph,sDph,zaloha,rozdil:el2(zaloha-sDph)};
 }
 
 function ElektrinaTab(){
   const {data:odecty,reload:reloadOdecty}=useData(()=>sb.from("el_odecty").select("*").order("datum",{ascending:true}));
   const {data:faktury,reload:reloadFaktury}=useData(()=>sb.from("el_faktury").select("*").order("obdobi_do",{ascending:false}));
-  const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("el_nastaveni").select("*"));
+  const {data:ceniky,reload:reloadCeniky}=useData(()=>sb.from("el_ceniky").select("*").order("platnost_od",{ascending:true}));
   const [zalozka,setZalozka]=useState("prehled");
   const [modalOdecet,setModalOdecet]=useState(null);
   const [formOdecet,setFormOdecet]=useState({datum:"",vt:"",nt:"",poznamka:""});
   const [modalFak,setModalFak]=useState(null);
   const [formFak,setFormFak]=useState({cislo_faktury:"",datum_vystaveni:"",datum_splatnosti:"",obdobi_od:"",obdobi_do:"",vt_od:"",vt_do:"",nt_od:"",nt_do:"",castka_celkem:"",zalohy:"",vyrovnani:"",zaplaceno:false,poznamka:""});
-  const [formCenik,setFormCenik]=useState(null);
-
-  const nast=Object.fromEntries((nastaveni||[]).map(r=>[r.klic,r.hodnota]));
-  const c=Object.fromEntries(Object.keys(EL_VYCHOZI).map(k=>[k,parseFloat(nast[k]??EL_VYCHOZI[k])]));
+  const [modalCenik,setModalCenik]=useState(null);
+  const [formCenik,setFormCenik]=useState(elPrazdnyCenik);
 
   const rady=(odecty||[]).filter(o=>o.vt!=null&&o.nt!=null);
   const obdobi=[];
-  for(let i=1;i<rady.length;i++)obdobi.push(elSpoctiObdobi(rady[i-1],rady[i],c));
+  for(let i=1;i<rady.length;i++)obdobi.push(elSpoctiObdobi(rady[i-1],rady[i],elCenikKDatu(ceniky,rady[i].datum),ceniky));
   let beh=0; const obdobiKum=obdobi.map(o=>{beh=el2(beh+o.rozdil);return {...o,kumulativ:beh};});
   const posledni=rady[rady.length-1];
   const celkemVt=obdobi.reduce((a,o)=>a+o.spVt,0), celkemNt=obdobi.reduce((a,o)=>a+o.spNt,0);
-  const celkemCena=el2(obdobi.reduce((a,o)=>a+o.sDph,0));
+  const celkemCena=el2(obdobi.reduce((a,o)=>a+(o.sDph||0),0));
   const kumulativ=obdobiKum.length?obdobiKum[obdobiKum.length-1].kumulativ:0;
+  const bezCeniku=obdobi.filter(o=>o.chybiCenik).length;
 
   const ulozOdecet=async()=>{
     const data={datum:formOdecet.datum,vt:formOdecet.vt===""?null:parseFloat(formOdecet.vt),nt:formOdecet.nt===""?null:parseFloat(formOdecet.nt),poznamka:formOdecet.poznamka||null};
@@ -5621,9 +5653,14 @@ function ElektrinaTab(){
   };
 
   const ulozCenik=async()=>{
-    for(const [k,v] of Object.entries(formCenik))await sb.from("el_nastaveni").upsert({klic:k,hodnota:String(v)});
-    reloadNast();setFormCenik(null);alert("Ceník uložen.");
+    const cis=v=>v===""||v==null?null:parseFloat(v);
+    const data={platnost_od:formCenik.platnost_od,nazev:formCenik.nazev||null,rezim:formCenik.rezim,zaloha:cis(formCenik.zaloha)};
+    for(const f of [...EL_POLE_ROZPAD,...EL_POLE_JEDNODUCHY])data[f.k]=cis(formCenik[f.k]);
+    const {error}=modalCenik==="novy"?await sb.from("el_ceniky").insert(data):await sb.from("el_ceniky").update(data).eq("id",modalCenik.id);
+    if(error){alert("Chyba při ukládání: "+error.message);return;}
+    reloadCeniky();setModalCenik(null);
   };
+  const smazCenik=async id=>{if(!confirm("Smazat ceník?"))return;await sb.from("el_ceniky").delete().eq("id",id);reloadCeniky();};
 
   const karta=(l,v,barva,sub)=><div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${barva}`}}>
     <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{l}</div>
@@ -5631,6 +5668,7 @@ function ElektrinaTab(){
     {sub&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{sub}</div>}
   </div>;
   const kc=x=>`${(+x).toLocaleString("cs",{maximumFractionDigits:0})} Kč`;
+  const num=x=>x==null?"—":(+x).toLocaleString("cs");
 
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -5638,14 +5676,18 @@ function ElektrinaTab(){
     </div>
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
-      {karta("Poslední odečet",posledni?`${(+posledni.vt).toLocaleString("cs")} / ${(+posledni.nt).toLocaleString("cs")}`:"—",C.blue,posledni?`VT / NT · ${new Date(posledni.datum).toLocaleDateString("cs-CZ")}`:"zatím žádný")}
-      {karta("Spotřeba od začátku",`${(celkemVt+celkemNt).toLocaleString("cs")} kWh`,C.orange,`VT ${celkemVt.toLocaleString("cs")} · NT ${celkemNt.toLocaleString("cs")}`)}
-      {karta("Odhad ceny s DPH",kc(celkemCena),C.accent,"za všechna období")}
+      {karta("Poslední odečet",posledni?`${num(posledni.vt)} / ${num(posledni.nt)}`:"—",C.blue,posledni?`VT / NT · ${new Date(posledni.datum).toLocaleDateString("cs-CZ")}`:"zatím žádný")}
+      {karta("Spotřeba celkem",`${(celkemVt+celkemNt).toLocaleString("cs")} kWh`,C.orange,`VT ${celkemVt.toLocaleString("cs")} · NT ${celkemNt.toLocaleString("cs")}`)}
+      {karta("Spotřeba v Kč s DPH",kc(celkemCena),C.accent,"za všechna období")}
       {karta(kumulativ>=0?"Průběžný přeplatek":"Průběžný nedoplatek",kc(Math.abs(kumulativ)),kumulativ>=0?C.green:C.red,"zálohy minus spotřeba")}
     </div>
 
+    {bezCeniku>0&&<div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#c87000"}}>
+      ⚠ {bezCeniku}× období bez platného ceníku — doplň ceník s dřívější platností na záložce ⚙️ Ceníky.
+    </div>}
+
     <div style={{display:"flex",gap:2,marginBottom:24,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
-      {[{id:"prehled",l:"📊 Odečty a odhad"},{id:"faktury",l:"🧾 Vyúčtování"},{id:"cenik",l:"⚙️ Ceník"}].map(t=>
+      {[{id:"prehled",l:"📊 Odečty a odhad"},{id:"faktury",l:"🧾 Vyúčtování"},{id:"cenik",l:"⚙️ Ceníky"}].map(t=>
         <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
     </div>
 
@@ -5655,29 +5697,32 @@ function ElektrinaTab(){
         <button onClick={()=>{setFormOdecet({datum:new Date().toISOString().slice(0,10),vt:"",nt:"",poznamka:""});setModalOdecet("nova");}} style={btnC()}>+ Zapsat odečet</button>
       </div>
       <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:900}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:960}}>
           <thead><tr style={{background:C.bg}}>
-            {["Období","Dní","VT","NT","Celkem","Silová","Distribuce","Systém.","Daň","Pevné","Bez DPH","S DPH","Záloha","Rozdíl","Průběžně"].map(h=>
-              <th key={h} style={{padding:"8px 8px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+            {["Období","Dní","VT","NT","Celkem","Silová","Distrib.","Systém.","Daň","Pevné","Bez DPH","S DPH","Záloha","Rozdíl","Průběžně"].map(h=>
+              <th key={h} style={{padding:"8px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
           </tr></thead>
           <tbody>
             {obdobiKum.length===0&&<tr><td colSpan={15} style={{padding:20,textAlign:"center",color:C.dim}}>Zapiš aspoň dva odečty</td></tr>}
             {[...obdobiKum].reverse().map((o,i)=><tr key={o.datumDo} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
-              <td style={{padding:"8px",whiteSpace:"nowrap",fontWeight:600}}>{new Date(o.datumOd).toLocaleDateString("cs-CZ")} → {new Date(o.datumDo).toLocaleDateString("cs-CZ")}</td>
+              <td style={{padding:"8px",whiteSpace:"nowrap",fontWeight:600}}>
+                {new Date(o.datumOd).toLocaleDateString("cs-CZ")} → {new Date(o.datumDo).toLocaleDateString("cs-CZ")}
+                {o.cenik&&<div style={{color:C.dim,fontSize:10,fontWeight:400}}>{o.cenik}</div>}
+              </td>
               <td style={{padding:"8px",color:C.muted}}>{o.dny}</td>
-              <td style={{padding:"8px"}}>{o.spVt.toLocaleString("cs")}</td>
-              <td style={{padding:"8px"}}>{o.spNt.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",fontWeight:700}}>{o.spC.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",color:C.muted}}>{o.silova.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",color:C.muted}}>{o.distribuce.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",color:C.muted}}>{o.systemove.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",color:C.muted}}>{o.dan.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",color:C.muted}}>{o.pevne.toLocaleString("cs")}</td>
-              <td style={{padding:"8px"}}>{o.bezDph.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",fontWeight:700,color:C.accent}}>{o.sDph.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",color:C.muted}}>{o.zaloha.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",fontWeight:700,color:o.rozdil>=0?C.green:C.red}}>{o.rozdil>0?"+":""}{o.rozdil.toLocaleString("cs")}</td>
-              <td style={{padding:"8px",fontWeight:800,color:o.kumulativ>=0?C.green:C.red}}>{o.kumulativ>0?"+":""}{o.kumulativ.toLocaleString("cs")}</td>
+              <td style={{padding:"8px"}}>{num(o.spVt)}</td>
+              <td style={{padding:"8px"}}>{num(o.spNt)}</td>
+              <td style={{padding:"8px",fontWeight:700}}>{num(o.spC)}</td>
+              <td style={{padding:"8px",color:C.muted}}>{num(o.silova)}</td>
+              <td style={{padding:"8px",color:C.muted}}>{num(o.distribuce)}</td>
+              <td style={{padding:"8px",color:C.muted}}>{num(o.systemove)}</td>
+              <td style={{padding:"8px",color:C.muted}}>{num(o.dan)}</td>
+              <td style={{padding:"8px",color:C.muted}}>{num(o.pevne)}</td>
+              <td style={{padding:"8px"}}>{num(o.bezDph)}</td>
+              <td style={{padding:"8px",fontWeight:700,color:C.accent}}>{num(o.sDph)}</td>
+              <td style={{padding:"8px",color:C.muted}}>{num(o.zaloha)}{o.zaloh!==1&&<span style={{fontSize:10}}> ({o.zaloh}×)</span>}</td>
+              <td style={{padding:"8px",fontWeight:700,color:o.rozdil>=0?C.green:C.red}}>{o.rozdil>0?"+":""}{num(o.rozdil)}</td>
+              <td style={{padding:"8px",fontWeight:800,color:o.kumulativ>=0?C.green:C.red}}>{o.kumulativ>0?"+":""}{num(o.kumulativ)}</td>
             </tr>)}
           </tbody>
         </table>
@@ -5693,8 +5738,8 @@ function ElektrinaTab(){
             {(odecty||[]).length===0&&<tr><td colSpan={5} style={{padding:20,textAlign:"center",color:C.dim}}>Žádné odečty</td></tr>}
             {[...(odecty||[])].reverse().map((o,i)=><tr key={o.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
               <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{new Date(o.datum).toLocaleDateString("cs-CZ")}</td>
-              <td style={{padding:"8px 10px",fontWeight:700}}>{o.vt!=null?(+o.vt).toLocaleString("cs"):"—"}</td>
-              <td style={{padding:"8px 10px",fontWeight:700}}>{o.nt!=null?(+o.nt).toLocaleString("cs"):"—"}</td>
+              <td style={{padding:"8px 10px",fontWeight:700}}>{num(o.vt)}</td>
+              <td style={{padding:"8px 10px",fontWeight:700}}>{num(o.nt)}</td>
               <td style={{padding:"8px 10px",fontSize:12,color:C.muted}}>{o.poznamka||""}</td>
               <td style={{padding:"8px 6px",whiteSpace:"nowrap"}}>
                 <button onClick={()=>{setModalOdecet(o);setFormOdecet({datum:o.datum,vt:o.vt!=null?String(o.vt):"",nt:o.nt!=null?String(o.nt):"",poznamka:o.poznamka||""});}} style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10,marginRight:2}}>✏</button>
@@ -5725,8 +5770,8 @@ function ElektrinaTab(){
               return <tr key={f.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
                 <td style={{padding:"8px",fontWeight:600,whiteSpace:"nowrap"}}>{f.cislo_faktury||"—"}</td>
                 <td style={{padding:"8px",whiteSpace:"nowrap"}}>{f.obdobi_od?`${new Date(f.obdobi_od).toLocaleDateString("cs-CZ")} – ${new Date(f.obdobi_do).toLocaleDateString("cs-CZ")}`:"—"}</td>
-                <td style={{padding:"8px",color:C.muted,whiteSpace:"nowrap"}}>{f.vt_od!=null?`${(+f.vt_od).toLocaleString("cs")} → ${(+f.vt_do).toLocaleString("cs")}`:"—"}</td>
-                <td style={{padding:"8px",color:C.muted,whiteSpace:"nowrap"}}>{f.nt_od!=null?`${(+f.nt_od).toLocaleString("cs")} → ${(+f.nt_do).toLocaleString("cs")}`:"—"}</td>
+                <td style={{padding:"8px",color:C.muted,whiteSpace:"nowrap"}}>{f.vt_od!=null?`${num(f.vt_od)} → ${num(f.vt_do)}`:"—"}</td>
+                <td style={{padding:"8px",color:C.muted,whiteSpace:"nowrap"}}>{f.nt_od!=null?`${num(f.nt_od)} → ${num(f.nt_do)}`:"—"}</td>
                 <td style={{padding:"8px",fontWeight:700,whiteSpace:"nowrap"}}>{spVt!=null&&spNt!=null?`${(spVt+spNt).toLocaleString("cs")} kWh`:"—"}</td>
                 <td style={{padding:"8px",whiteSpace:"nowrap"}}>{f.castka_celkem!=null?kc(f.castka_celkem):"—"}</td>
                 <td style={{padding:"8px",color:C.muted,whiteSpace:"nowrap"}}>{f.zalohy!=null?kc(f.zalohy):"—"}</td>
@@ -5747,19 +5792,32 @@ function ElektrinaTab(){
       <div style={{fontSize:11,color:C.muted,marginTop:8}}>Tlačítko ↧ u vyúčtování založí odečet ke konci fakturovaného období, aby na něj navázal průběžný výpočet.</div>
     </>}
 
-    {zalozka==="cenik"&&<div style={{maxWidth:440}}>
-      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:20}}>
-        <h3 style={{margin:"0 0 4px",fontSize:15,fontWeight:800}}>Ceník Centropol</h3>
-        <div style={{fontSize:11,color:C.muted,marginBottom:14}}>Pevné měsíční platby se krátí podle počtu dní (děleno 30,436875 = průměrný měsíc).</div>
-        {EL_CENIK_POLE.map(f=><div key={f.k} style={{marginBottom:12}}>
-          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>{f.l}</div>
-          <input style={inp} type="number" step="0.01"
-            value={(formCenik??Object.fromEntries(Object.keys(EL_VYCHOZI).map(k=>[k,nast[k]??EL_VYCHOZI[k]])))[f.k]}
-            onChange={e=>setFormCenik(p=>({...(p??Object.fromEntries(Object.keys(EL_VYCHOZI).map(k=>[k,nast[k]??EL_VYCHOZI[k]]))),[f.k]:e.target.value}))}/>
-        </div>)}
-        <button onClick={ulozCenik} disabled={!formCenik} style={btnC()}>Uložit ceník</button>
+    {zalozka==="cenik"&&<>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontWeight:700,fontSize:14}}>⚙️ Ceníky podle platnosti</div>
+        <button onClick={()=>{setFormCenik({...elPrazdnyCenik,platnost_od:new Date().toISOString().slice(0,10)});setModalCenik("novy");}} style={btnC()}>+ Ceník</button>
       </div>
-    </div>}
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {(ceniky||[]).length===0&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:20,textAlign:"center",color:C.dim}}>Žádné ceníky</div>}
+        {[...(ceniky||[])].reverse().map(c=><div key={c.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:14}}>{c.nazev||"Ceník"} <span style={{background:C.accentS,color:C.accent,padding:"2px 8px",borderRadius:6,fontSize:11,fontWeight:800,marginLeft:4}}>od {new Date(c.platnost_od).toLocaleDateString("cs-CZ")}</span></div>
+              <div style={{fontSize:11,color:C.muted,marginTop:3}}>
+                {c.rezim==="jednoduchy"
+                  ? `VT ${num(c.cena_vt)} / NT ${num(c.cena_nt)} Kč/MWh s DPH · paušál ${num(c.pausal_mesic)} Kč/měs`
+                  : `silová ${num(c.silova_vt)}/${num(c.silova_nt)} · distribuce ${num(c.distribuce_vt)}/${num(c.distribuce_nt)} · DPH ${Math.round((+c.dph||0)*100)} %`}
+                {" · záloha "}{num(c.zaloha)}{" Kč"}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>{setModalCenik(c);setFormCenik({...elPrazdnyCenik,...Object.fromEntries(Object.entries(c).map(([k,v])=>[k,v==null?"":String(v)]))});}} style={{...btnC(C.accent,true),padding:"4px 9px",fontSize:12}}>✎</button>
+              <button onClick={()=>smazCenik(c.id)} style={{...btnC(C.red,true),padding:"4px 9px",fontSize:12}}>✕</button>
+            </div>
+          </div>
+        </div>)}
+      </div>
+    </>}
 
     {modalOdecet&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
@@ -5771,6 +5829,35 @@ function ElektrinaTab(){
         <div style={{display:"flex",gap:10,marginTop:16}}>
           <button onClick={ulozOdecet} style={btnC()}>Uložit</button>
           <button onClick={()=>setModalOdecet(null)} style={btnC(C.muted,true)}>Zrušit</button>
+        </div>
+      </div>
+    </div>}
+
+    {modalCenik&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20,overflowY:"auto"}}>
+      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:440,boxShadow:"0 20px 60px rgba(0,0,0,.25)",maxHeight:"90vh",overflowY:"auto"}}>
+        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modalCenik==="novy"?"Nový ceník":"Upravit ceník"}</h3>
+        {[{l:"Platnost od",k:"platnost_od",t:"date"},{l:"Název",k:"nazev",t:"text",ph:"Centropol 2026/27"}].map(f=><div key={f.k} style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+          <input style={inp} type={f.t} placeholder={f.ph||""} value={formCenik[f.k]} onChange={e=>setFormCenik(p=>({...p,[f.k]:e.target.value}))}/>
+        </div>)}
+        <div style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Režim výpočtu</div>
+          <select style={inp} value={formCenik.rezim} onChange={e=>setFormCenik(p=>({...p,rezim:e.target.value}))}>
+            <option value="rozpad">Rozpad složek (bez DPH + DPH)</option>
+            <option value="jednoduchy">Jednoduchý (cena za MWh včetně DPH + paušál)</option>
+          </select>
+        </div>
+        {(formCenik.rezim==="jednoduchy"?EL_POLE_JEDNODUCHY:EL_POLE_ROZPAD).map(f=><div key={f.k} style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+          <input style={inp} type="number" step="0.01" value={formCenik[f.k]} onChange={e=>setFormCenik(p=>({...p,[f.k]:e.target.value}))}/>
+        </div>)}
+        <div style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Měsíční záloha (Kč)</div>
+          <input style={inp} type="number" step="0.01" value={formCenik.zaloha} onChange={e=>setFormCenik(p=>({...p,zaloha:e.target.value}))}/>
+        </div>
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          <button onClick={ulozCenik} disabled={!formCenik.platnost_od} style={btnC()}>Uložit</button>
+          <button onClick={()=>setModalCenik(null)} style={btnC(C.muted,true)}>Zrušit</button>
         </div>
       </div>
     </div>}
