@@ -5427,13 +5427,17 @@ function VodaTab(){
   const nast=Object.fromEntries((nastaveni||[]).map(r=>[r.klic,r.hodnota]));
   const cenaM3=parseFloat(nast.cena_m3_s_dph||"80.19");
   const pasualRocni=parseFloat(nast.pausal_rocni_s_dph||"1232");
+  const cenaStocneM3=parseFloat(nast.cena_stocne_m3_s_dph||"64.96");
 
   const hlavniOdecty=(odecty||[]).filter(o=>o.typ==="hlavni").sort((a,b)=>new Date(a.datum)-new Date(b.datum));
   const podruznyOdecty=(odecty||[]).filter(o=>o.typ==="podruzny").sort((a,b)=>new Date(a.datum)-new Date(b.datum));
+  const zahradniOdecty=(odecty||[]).filter(o=>o.typ==="zahradni").sort((a,b)=>new Date(a.datum)-new Date(b.datum));
 
   const tabs=[
     {id:"fakturacni",l:"🏠 Fakturační vodoměr"},
     {id:"podruzny",l:"🚿 Podružný vodoměr"},
+    {id:"zahradni",l:"🌱 Zahradní vodoměr"},
+    {id:"stocne",l:"🚽 Stočné"},
     {id:"nastaveni",l:"⚙️ Nastavení"},
   ];
 
@@ -5669,15 +5673,17 @@ function VodaTab(){
     </div>;
   };
 
-  // ── PODRUŽNÝ ──
-  const PodruznyView=()=>{
+  // ── PODRUŽNÝ / ZAHRADNÍ ──
+  // Jedna komponenta pro oba vedlejší vodoměry. Podružný počítá vodné (cena za m³ + poměrná
+  // část ročního paušálu), zahradní počítá úsporu na stočném (zálivka do kanalizace nejde).
+  const PodruznyView=({typ="podruzny",arr=podruznyOdecty,nazev="podružného",cenaZaM3=cenaM3,pausalRok=pasualRocni,labelCena="Odhad ceny"})=>{
     const [modal,setModal]=useState(null);
     const [form,setForm]=useState({datum:"",stav:"",poznamka:""});
     const [kalkOd,setKalkOd]=useState("");
     const [kalkDo,setKalkDo]=useState("");
 
     const uloz=async()=>{
-      const data={datum:form.datum,typ:"podruzny",stav:parseFloat(form.stav),poznamka:form.poznamka||null};
+      const data={datum:form.datum,typ,stav:parseFloat(form.stav),poznamka:form.poznamka||null};
       if(modal==="nova")await sb.from("voda_odecty").insert(data);
       else await sb.from("voda_odecty").update(data).eq("id",modal.id);
       reloadOdecty();setModal(null);
@@ -5686,7 +5692,6 @@ function VodaTab(){
 
     // Měsíční přehled — od odečtu k 1. toho měsíce do odečtu k 1. dalšího měsíce
     const mesicniPrehled=()=>{
-      const arr=podruznyOdecty;
       if(arr.length<2)return[];
       // Pro každý měsíc najdi odečet nejbližší k 1. dni (±4 dny)
       const nejblizsi=(rok,mes)=>{
@@ -5709,7 +5714,7 @@ function VodaTab(){
           const stavOd=+(od.stav); const stavDo=+(do_.stav);
           const spotreba=stavDo-stavOd;
           const dny=Math.round((new Date(do_.datum)-new Date(od.datum))/(1000*60*60*24));
-          const odhadCena=spotreba*cenaM3+(pasualRocni/365*dny);
+          const odhadCena=spotreba*cenaZaM3+(pausalRok/365*dny);
           result.push({mesic:`${y}-${String(m).padStart(2,"0")}`,datumOd:od.datum,datumDo:do_.datum,stavOd,stavDo,spotreba,odhadCena,dny});
         }
       }
@@ -5717,8 +5722,8 @@ function VodaTab(){
     };
 
     const prehled=mesicniPrehled();
-    const posledni=podruznyOdecty[podruznyOdecty.length-1];
-    const predposledni=podruznyOdecty[podruznyOdecty.length-2];
+    const posledni=arr[arr.length-1];
+    const predposledni=arr[arr.length-2];
     const aktSpotreba=posledni&&predposledni?+(posledni.stav)-+(predposledni.stav):null;
 
     return <div>
@@ -5727,7 +5732,7 @@ function VodaTab(){
         {[
           {l:"Aktuální stav",v:posledni?`${(+posledni.stav).toFixed(3)} m³`:"—",c:C.blue,sub:posledni?new Date(posledni.datum).toLocaleDateString("cs-CZ"):""},
           {l:"Spotřeba od posl. odečtu",v:aktSpotreba!=null?`${aktSpotreba.toFixed(3)} m³`:"—",c:aktSpotreba>0?C.orange:C.green},
-          {l:"Odhad ceny",v:aktSpotreba!=null?`${(aktSpotreba*cenaM3).toLocaleString("cs",{maximumFractionDigits:0})} Kč`:"—",c:C.accent},
+          {l:labelCena,v:aktSpotreba!=null?`${(aktSpotreba*cenaZaM3).toLocaleString("cs",{maximumFractionDigits:0})} Kč`:"—",c:C.accent},
         ].map(k=><div key={k.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${k.c}`}}>
           <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{k.l}</div>
           <div style={{fontSize:18,fontWeight:800,color:k.c}}>{k.v}</div>
@@ -5737,13 +5742,13 @@ function VodaTab(){
 
       {/* Kalkulačka — výpočet z vybraných odečtů */}
       {(()=>{
-        const odecetOd=podruznyOdecty.find(o=>o.id===kalkOd);
-        const odecetDo=podruznyOdecty.find(o=>o.id===kalkDo);
+        const odecetOd=arr.find(o=>o.id===kalkOd);
+        const odecetDo=arr.find(o=>o.id===kalkDo);
         let vysledek=null;
         if(odecetOd&&odecetDo){
           const sp=+(odecetDo.stav)-+(odecetOd.stav);
           const dny=Math.round((new Date(odecetDo.datum)-new Date(odecetOd.datum))/(1000*60*60*24));
-          vysledek={sp,dny,cenaVoda:sp*cenaM3,pausal:pasualRocni/365*dny,celkem:sp*cenaM3+(pasualRocni/365*Math.max(0,dny))};
+          vysledek={sp,dny,cenaVoda:sp*cenaZaM3,pausal:pausalRok/365*dny,celkem:sp*cenaZaM3+(pausalRok/365*Math.max(0,dny))};
         }
         return <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:14,padding:"16px 20px",marginBottom:20}}>
           <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:.6,color:"#1a4fa8",marginBottom:12}}>🧮 Kalkulačka spotřeby — vyber odečty</div>
@@ -5752,14 +5757,14 @@ function VodaTab(){
               <div style={{fontSize:11,fontWeight:700,color:"#1a4fa8",marginBottom:4}}>Od odečtu</div>
               <select style={inp} value={kalkOd} onChange={e=>setKalkOd(e.target.value)}>
                 <option value="">— vyber —</option>
-                {podruznyOdecty.map(o=><option key={o.id} value={o.id}>{new Date(o.datum).toLocaleDateString("cs-CZ")} ({(+o.stav).toFixed(3)} m³)</option>)}
+                {arr.map(o=><option key={o.id} value={o.id}>{new Date(o.datum).toLocaleDateString("cs-CZ")} ({(+o.stav).toFixed(3)} m³)</option>)}
               </select>
             </div>
             <div style={{flex:1,minWidth:160}}>
               <div style={{fontSize:11,fontWeight:700,color:"#1a4fa8",marginBottom:4}}>Do odečtu</div>
               <select style={inp} value={kalkDo} onChange={e=>setKalkDo(e.target.value)}>
                 <option value="">— vyber —</option>
-                {podruznyOdecty.map(o=><option key={o.id} value={o.id}>{new Date(o.datum).toLocaleDateString("cs-CZ")} ({(+o.stav).toFixed(3)} m³)</option>)}
+                {arr.map(o=><option key={o.id} value={o.id}>{new Date(o.datum).toLocaleDateString("cs-CZ")} ({(+o.stav).toFixed(3)} m³)</option>)}
               </select>
             </div>
           </div>
@@ -5767,7 +5772,7 @@ function VodaTab(){
             {[
               {l:"Období",v:`${vysledek.dny} dní`},
               {l:"Spotřeba",v:`${vysledek.sp.toFixed(3)} m³`},
-              {l:"Vodné",v:`${vysledek.cenaVoda.toLocaleString("cs",{maximumFractionDigits:0})} Kč`},
+              {l:labelCena,v:`${vysledek.cenaVoda.toLocaleString("cs",{maximumFractionDigits:0})} Kč`},
               {l:"Paušál (poměr)",v:`${vysledek.pausal.toLocaleString("cs",{maximumFractionDigits:0})} Kč`},
             ].map(k=><div key={k.l} style={{background:"rgba(255,255,255,.7)",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:10,fontWeight:700,color:"#3066b0",textTransform:"uppercase",letterSpacing:.4,marginBottom:2}}>{k.l}</div>
@@ -5829,8 +5834,8 @@ function VodaTab(){
                 {["Datum","Stav (m³)","Spotřeba","Pozn.",""].map(h=><th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {podruznyOdecty.length===0&&<tr><td colSpan={5} style={{padding:16,textAlign:"center",color:C.dim}}>Žádné odečty</td></tr>}
-                {[...podruznyOdecty].reverse().map((o,i,arr)=>{
+                {arr.length===0&&<tr><td colSpan={5} style={{padding:16,textAlign:"center",color:C.dim}}>Žádné odečty</td></tr>}
+                {[...arr].reverse().map((o,i,arr)=>{
                   const prev=arr[i+1];
                   const diff=prev?+(o.stav)-+(prev.stav):null;
                   return <tr key={o.id} style={{borderBottom:`1px solid ${C.border}`}}>
@@ -5852,7 +5857,7 @@ function VodaTab(){
 
       {modal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
         <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
-          <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="nova"?"Nový odečet podružného":"Upravit odečet"}</h3>
+          <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modal==="nova"?`Nový odečet ${nazev}`:"Upravit odečet"}</h3>
           {[{l:"Datum",k:"datum",t:"date"},{l:"Stav vodoměru (m³)",k:"stav",t:"number",ph:"0.000"},{l:"Poznámka",k:"poznamka",t:"text",ph:"volitelně..."}].map(f=><div key={f.k} style={{marginBottom:11}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
             <input style={inp} type={f.t} step={f.t==="number"?"0.001":undefined} placeholder={f.ph||""} value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
@@ -5866,22 +5871,171 @@ function VodaTab(){
     </div>;
   };
 
+  // ── STOČNÉ ──
+  // Technické služby Vodochody-Hoštice s.r.o., fakturováno pololetně.
+  // Základ = spotřeba fakturačního (Baracom) vodoměru MÍNUS spotřeba zahradního
+  // (zálivka do kanalizace neodtéká). Žádný paušál, jen cena × m³.
+  const StocneView=()=>{
+    const [modalFak,setModalFak]=useState(null);
+    const [formFak,setFormFak]=useState({cislo_faktury:"",datum_vystaveni:"",datum_splatnosti:"",obdobi_od:"",obdobi_do:"",stav_od:"",stav_do:"",castka:"",zaplaceno:false,poznamka:""});
+    const [kalkOd,setKalkOd]=useState("");
+    const [kalkDo,setKalkDo]=useState("");
+
+    const fakturyS=(faktury||[]).filter(f=>f.typ==="stocne").sort((a,b)=>new Date(b.obdobi_od)-new Date(a.obdobi_od));
+
+    const ulozFakturu=async()=>{
+      const data={typ:"stocne",cislo_faktury:formFak.cislo_faktury||null,datum_vystaveni:formFak.datum_vystaveni||null,datum_splatnosti:formFak.datum_splatnosti||null,obdobi_od:formFak.obdobi_od||null,obdobi_do:formFak.obdobi_do||null,castka:parseInt(formFak.castka)||0,zaplaceno:formFak.zaplaceno,poznamka:formFak.poznamka||null,stav_od:formFak.stav_od?parseFloat(formFak.stav_od):null,stav_do:formFak.stav_do?parseFloat(formFak.stav_do):null};
+      const {error}=modalFak==="nova"?await sb.from("voda_faktury").insert(data):await sb.from("voda_faktury").update(data).eq("id",modalFak.id);
+      if(error){alert("Chyba při ukládání: "+error.message);return;}
+      reloadFaktury();setModalFak(null);
+    };
+    const smazFakturu=async(id)=>{if(!confirm("Smazat fakturu?"))return;await sb.from("voda_faktury").delete().eq("id",id);reloadFaktury();};
+    const toggleZaplaceno=async(f)=>{await sb.from("voda_faktury").update({zaplaceno:!f.zaplaceno}).eq("id",f.id);reloadFaktury();};
+
+    // Nejbližší odečet daného vodoměru k datu (tolerance ve dnech)
+    const nejblizsi=(pole,datum,tolerance=20)=>{
+      const cil=new Date(datum);
+      const k=pole.filter(o=>Math.abs(new Date(o.datum)-cil)/(1000*60*60*24)<=tolerance);
+      if(!k.length)return null;
+      return k.sort((a,b)=>Math.abs(new Date(a.datum)-cil)-Math.abs(new Date(b.datum)-cil))[0];
+    };
+
+    const odecetOd=hlavniOdecty.find(o=>o.id===kalkOd);
+    const odecetDo=hlavniOdecty.find(o=>o.id===kalkDo);
+    let vysl=null;
+    if(odecetOd&&odecetDo){
+      const spHlavni=+(odecetDo.stav)-+(odecetOd.stav);
+      const zOd=nejblizsi(zahradniOdecty,odecetOd.datum);
+      const zDo=nejblizsi(zahradniOdecty,odecetDo.datum);
+      const spZahrada=zOd&&zDo?Math.max(0,+(zDo.stav)-+(zOd.stav)):0;
+      const zaklad=Math.max(0,spHlavni-spZahrada);
+      vysl={spHlavni,spZahrada,zaklad,zOd,zDo,cena:zaklad*cenaStocneM3,bezOdpoctu:spHlavni*cenaStocneM3,uspora:spZahrada*cenaStocneM3};
+    }
+
+    const nezaplacene=fakturyS.filter(f=>!f.zaplaceno).reduce((a,f)=>a+f.castka,0);
+
+    return <div>
+      {/* Souhrn */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
+        {[
+          {l:"Cena za m³ (s DPH)",v:`${cenaStocneM3.toLocaleString("cs",{maximumFractionDigits:2})} Kč`,c:C.blue,sub:"Technické služby Vodochody-Hoštice"},
+          {l:"Poslední faktura",v:fakturyS[0]?`${fakturyS[0].castka.toLocaleString("cs")} Kč`:"—",c:C.accent,sub:fakturyS[0]?.obdobi_od?`${new Date(fakturyS[0].obdobi_od).toLocaleDateString("cs-CZ")} – ${new Date(fakturyS[0].obdobi_do).toLocaleDateString("cs-CZ")}`:""},
+          {l:"Nezaplaceno",v:`${nezaplacene.toLocaleString("cs")} Kč`,c:nezaplacene>0?C.red:C.green},
+        ].map(k=><div key={k.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",borderTop:`3px solid ${k.c}`}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>{k.l}</div>
+          <div style={{fontSize:18,fontWeight:800,color:k.c}}>{k.v}</div>
+          {k.sub&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{k.sub}</div>}
+        </div>)}
+      </div>
+
+      {/* Kalkulačka stočného */}
+      <div style={{background:"#f0f7ee",border:"1px solid #b9d9ae",borderRadius:14,padding:"16px 20px",marginBottom:20}}>
+        <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:.6,color:"#2c6b1f",marginBottom:4}}>🧮 Kalkulačka stočného</div>
+        <div style={{fontSize:11,color:"#4a7a3d",marginBottom:12}}>Základ = spotřeba fakturačního vodoměru − spotřeba zahradního (zálivka do kanalizace neodtéká).</div>
+        <div style={{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap",marginBottom:vysl?14:0}}>
+          {[{l:"Od odečtu (Baracom)",v:kalkOd,set:setKalkOd},{l:"Do odečtu (Baracom)",v:kalkDo,set:setKalkDo}].map(f=><div key={f.l} style={{flex:1,minWidth:160}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#2c6b1f",marginBottom:4}}>{f.l}</div>
+            <select style={inp} value={f.v} onChange={e=>f.set(e.target.value)}>
+              <option value="">— vyber —</option>
+              {hlavniOdecty.map(o=><option key={o.id} value={o.id}>{new Date(o.datum).toLocaleDateString("cs-CZ")} ({(+o.stav).toFixed(3)} m³)</option>)}
+            </select>
+          </div>)}
+        </div>
+        {vysl&&<>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10}}>
+            {[
+              {l:"Baracom spotřeba",v:`${vysl.spHlavni.toFixed(3)} m³`},
+              {l:"Zahradní odpočet",v:`− ${vysl.spZahrada.toFixed(3)} m³`},
+              {l:"Základ pro stočné",v:`${vysl.zaklad.toFixed(3)} m³`},
+              {l:"Úspora díky zahradě",v:`${vysl.uspora.toLocaleString("cs",{maximumFractionDigits:0})} Kč`},
+            ].map(k=><div key={k.l} style={{background:"rgba(255,255,255,.75)",borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#3d7a2c",textTransform:"uppercase",letterSpacing:.4,marginBottom:2}}>{k.l}</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#1e4a12"}}>{k.v}</div>
+            </div>)}
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#2c6b1f",borderRadius:10,padding:"10px 16px",marginTop:10}}>
+            <span style={{fontSize:13,fontWeight:700,color:"#fff"}}>Stočné celkem</span>
+            <span style={{fontSize:20,fontWeight:800,color:"#fff"}}>{vysl.cena.toLocaleString("cs",{maximumFractionDigits:0})} Kč</span>
+          </div>
+          <div style={{fontSize:11,color:"#4a7a3d",marginTop:8}}>
+            {vysl.zOd&&vysl.zDo
+              ? `Zahradní vodoměr: ${new Date(vysl.zOd.datum).toLocaleDateString("cs-CZ")} (${(+vysl.zOd.stav).toFixed(3)}) → ${new Date(vysl.zDo.datum).toLocaleDateString("cs-CZ")} (${(+vysl.zDo.stav).toFixed(3)})`
+              : "⚠ K těmto datům nejsou odečty zahradního vodoměru (tolerance 20 dní) — počítá se bez odpočtu."}
+          </div>
+        </>}
+      </div>
+
+      {/* Faktury */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontWeight:700,fontSize:14}}>🧾 Faktury za stočné</div>
+        <button onClick={()=>{setFormFak({cislo_faktury:"",datum_vystaveni:"",datum_splatnosti:"",obdobi_od:"",obdobi_do:"",stav_od:"",stav_do:"",castka:"",zaplaceno:false,poznamka:""});setModalFak("nova");}} style={btnC()}>+ Faktura</button>
+      </div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr style={{background:C.bg}}>
+            {["Číslo","Období","Stav od → do","Částka","Splatnost","Stav",""].map(h=><th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {fakturyS.length===0&&<tr><td colSpan={7} style={{padding:20,textAlign:"center",color:C.dim,fontSize:13}}>Žádné faktury</td></tr>}
+            {fakturyS.map((f,i)=><tr key={f.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
+              <td style={{padding:"9px 10px",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>{f.cislo_faktury||"—"}</td>
+              <td style={{padding:"9px 10px",fontSize:12,whiteSpace:"nowrap"}}>{f.obdobi_od?`${new Date(f.obdobi_od).toLocaleDateString("cs-CZ")} – ${new Date(f.obdobi_do).toLocaleDateString("cs-CZ")}`:"—"}</td>
+              <td style={{padding:"9px 10px",fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>{f.stav_od!=null&&f.stav_do!=null?`${f.stav_od} → ${f.stav_do} (${(+f.stav_do-+f.stav_od).toFixed(3)} m³)`:"—"}</td>
+              <td style={{padding:"9px 10px",fontSize:13,fontWeight:700,color:C.accent,whiteSpace:"nowrap"}}>{f.castka.toLocaleString("cs")} Kč</td>
+              <td style={{padding:"9px 10px",fontSize:12,whiteSpace:"nowrap"}}>{f.datum_splatnosti?new Date(f.datum_splatnosti).toLocaleDateString("cs-CZ"):"—"}</td>
+              <td style={{padding:"9px 10px",whiteSpace:"nowrap"}}>
+                <button onClick={()=>toggleZaplaceno(f)} style={{...btnC(f.zaplaceno?C.green:C.orange,true),padding:"3px 9px",fontSize:11}}>{f.zaplaceno?"✓ Zaplaceno":"Nezaplaceno"}</button>
+              </td>
+              <td style={{padding:"9px 6px",whiteSpace:"nowrap"}}>
+                <button onClick={()=>{setModalFak(f);setFormFak({cislo_faktury:f.cislo_faktury||"",datum_vystaveni:f.datum_vystaveni||"",datum_splatnosti:f.datum_splatnosti||"",obdobi_od:f.obdobi_od||"",obdobi_do:f.obdobi_do||"",stav_od:f.stav_od!=null?String(f.stav_od):"",stav_do:f.stav_do!=null?String(f.stav_do):"",castka:String(f.castka),zaplaceno:f.zaplaceno,poznamka:f.poznamka||""});}} style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10,marginRight:2}}>✏</button>
+                <button onClick={()=>smazFakturu(f.id)} style={{...btnC(C.red,true),padding:"2px 6px",fontSize:10}}>🗑</button>
+              </td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+
+      {modalFak&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20,overflowY:"auto"}}>
+        <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:440,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+          <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modalFak==="nova"?"Nová faktura za stočné":"Upravit fakturu"}</h3>
+          {[{l:"Číslo faktury",k:"cislo_faktury",t:"text",ph:"260100131"},{l:"Datum vystavení",k:"datum_vystaveni",t:"date"},{l:"Datum splatnosti",k:"datum_splatnosti",t:"date"},{l:"Období od",k:"obdobi_od",t:"date"},{l:"Období do",k:"obdobi_do",t:"date"},{l:"Stav vodoměru od (m³)",k:"stav_od",t:"number"},{l:"Stav vodoměru do (m³)",k:"stav_do",t:"number"},{l:"Částka (Kč)",k:"castka",t:"number"},{l:"Poznámka",k:"poznamka",t:"text",ph:"volitelně..."}].map(f=><div key={f.k} style={{marginBottom:11}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
+            <input style={inp} type={f.t} step={f.t==="number"?"0.001":undefined} placeholder={f.ph||""} value={formFak[f.k]} onChange={e=>setFormFak(p=>({...p,[f.k]:e.target.value}))}/>
+          </div>)}
+          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:600,marginBottom:6,cursor:"pointer"}}>
+            <input type="checkbox" checked={formFak.zaplaceno} onChange={e=>setFormFak(p=>({...p,zaplaceno:e.target.checked}))}/> Zaplaceno
+          </label>
+          <div style={{display:"flex",gap:10,marginTop:16}}>
+            <button onClick={ulozFakturu} style={btnC()}>Uložit</button>
+            <button onClick={()=>setModalFak(null)} style={btnC(C.muted,true)}>Zrušit</button>
+          </div>
+        </div>
+      </div>}
+    </div>;
+  };
+
   // ── NASTAVENÍ ──
   const NastaveniView=()=>{
-    const [form,setForm]=useState({cena_m3_bez_dph:nast.cena_m3_bez_dph||"71.60",cena_m3_s_dph:nast.cena_m3_s_dph||"80.19",pausal_rocni_bez_dph:nast.pausal_rocni_bez_dph||"1100",pausal_rocni_s_dph:nast.pausal_rocni_s_dph||"1232"});
+    const [form,setForm]=useState({cena_m3_bez_dph:nast.cena_m3_bez_dph||"71.60",cena_m3_s_dph:nast.cena_m3_s_dph||"80.19",pausal_rocni_bez_dph:nast.pausal_rocni_bez_dph||"1100",pausal_rocni_s_dph:nast.pausal_rocni_s_dph||"1232",cena_stocne_m3_bez_dph:nast.cena_stocne_m3_bez_dph||"58",cena_stocne_m3_s_dph:nast.cena_stocne_m3_s_dph||"64.96"});
     const uloz=async()=>{
       for(const[k,v]of Object.entries(form))await sb.from("voda_nastaveni").upsert({klic:k,hodnota:String(v)});
       reloadNast();alert("Uloženo!");
     };
+    const skupiny=[
+      {nadpis:"Ceník BARACOM — vodné",pole:[{l:"Cena za m³ bez DPH (Kč)",k:"cena_m3_bez_dph"},{l:"Cena za m³ s DPH (Kč)",k:"cena_m3_s_dph"},{l:"Roční paušál bez DPH (Kč)",k:"pausal_rocni_bez_dph"},{l:"Roční paušál s DPH (Kč)",k:"pausal_rocni_s_dph"}]},
+      {nadpis:"Technické služby Vodochody-Hoštice — stočné",pole:[{l:"Cena za m³ bez DPH (Kč)",k:"cena_stocne_m3_bez_dph"},{l:"Cena za m³ s DPH (Kč, DPH 12 %)",k:"cena_stocne_m3_s_dph"}],pozn:"Bez paušálu. Fakturováno pololetně, základ = Baracom mínus zahradní vodoměr."},
+    ];
     return <div style={{maxWidth:400}}>
-      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:20}}>
-        <h3 style={{margin:"0 0 16px",fontSize:15,fontWeight:800}}>Ceník BARACOM</h3>
-        {[{l:"Cena za m³ bez DPH (Kč)",k:"cena_m3_bez_dph"},{l:"Cena za m³ s DPH (Kč)",k:"cena_m3_s_dph"},{l:"Roční paušál bez DPH (Kč)",k:"pausal_rocni_bez_dph"},{l:"Roční paušál s DPH (Kč)",k:"pausal_rocni_s_dph"}].map(f=><div key={f.k} style={{marginBottom:12}}>
+      {skupiny.map(s=><div key={s.nadpis} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:20,marginBottom:16}}>
+        <h3 style={{margin:"0 0 4px",fontSize:15,fontWeight:800}}>{s.nadpis}</h3>
+        {s.pozn&&<div style={{fontSize:11,color:C.muted,marginBottom:12}}>{s.pozn}</div>}
+        <div style={{marginTop:12}}/>
+        {s.pole.map(f=><div key={f.k} style={{marginBottom:12}}>
           <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:5}}>{f.l}</div>
           <input style={inp} type="number" step="0.01" value={form[f.k]} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}/>
         </div>)}
-        <button onClick={uloz} style={btnC()}>Uložit ceník</button>
-      </div>
+      </div>)}
+      <button onClick={uloz} style={btnC()}>Uložit ceník</button>
     </div>;
   };
 
@@ -5894,6 +6048,8 @@ function VodaTab(){
     </div>
     {zalozka==="fakturacni"&&<FakturacniView/>}
     {zalozka==="podruzny"&&<PodruznyView/>}
+    {zalozka==="zahradni"&&<PodruznyView typ="zahradni" arr={zahradniOdecty} nazev="zahradního" cenaZaM3={cenaStocneM3} pausalRok={0} labelCena="Úspora na stočném"/>}
+    {zalozka==="stocne"&&<StocneView/>}
     {zalozka==="nastaveni"&&<NastaveniView/>}
   </div>;
 }
