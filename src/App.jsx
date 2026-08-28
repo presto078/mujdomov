@@ -5615,11 +5615,19 @@ function ElektrinaTab(){
   const rady=(odecty||[]).filter(o=>o.vt!=null&&o.nt!=null);
   const obdobi=[];
   for(let i=1;i<rady.length;i++)obdobi.push(elSpoctiObdobi(rady[i-1],rady[i],elCenikKDatu(ceniky,rady[i].datum),ceniky));
-  let beh=0; const obdobiKum=obdobi.map(o=>{beh=el2(beh+o.rozdil);return {...o,kumulativ:beh};});
+  // Vyúčtování období uzavře — přeplatek/nedoplatek se vyrovná a počítadlo jde od nuly.
+  // Období končící nejpozději posledním vyúčtováním jsou tedy „vyrovnaná".
+  const vyrovnanoDo=(faktury||[]).filter(f=>f.obdobi_do).map(f=>f.obdobi_do).sort().pop()||null;
+  let beh=0;
+  const obdobiKum=obdobi.map(o=>{
+    if(vyrovnanoDo&&new Date(o.datumDo)<=new Date(vyrovnanoDo))return {...o,kumulativ:null,vyrovnano:true};
+    beh=el2(beh+o.rozdil);return {...o,kumulativ:beh};
+  });
   const posledni=rady[rady.length-1];
-  const celkemVt=obdobi.reduce((a,o)=>a+o.spVt,0), celkemNt=obdobi.reduce((a,o)=>a+o.spNt,0);
-  const celkemCena=el2(obdobi.reduce((a,o)=>a+(o.sDph||0),0));
-  const kumulativ=obdobiKum.length?obdobiKum[obdobiKum.length-1].kumulativ:0;
+  const nevyrovnana=obdobi.filter(o=>!vyrovnanoDo||new Date(o.datumDo)>new Date(vyrovnanoDo));
+  const celkemVt=nevyrovnana.reduce((a,o)=>a+o.spVt,0), celkemNt=nevyrovnana.reduce((a,o)=>a+o.spNt,0);
+  const celkemCena=el2(nevyrovnana.reduce((a,o)=>a+(o.sDph||0),0));
+  const kumulativ=beh;
   const bezCeniku=obdobi.filter(o=>o.chybiCenik).length;
 
   const ulozOdecet=async()=>{
@@ -5677,9 +5685,9 @@ function ElektrinaTab(){
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
       {karta("Poslední odečet",posledni?`${num(posledni.vt)} / ${num(posledni.nt)}`:"—",C.blue,posledni?`VT / NT · ${new Date(posledni.datum).toLocaleDateString("cs-CZ")}`:"zatím žádný")}
-      {karta("Spotřeba celkem",`${(celkemVt+celkemNt).toLocaleString("cs")} kWh`,C.orange,`VT ${celkemVt.toLocaleString("cs")} · NT ${celkemNt.toLocaleString("cs")}`)}
-      {karta("Spotřeba v Kč s DPH",kc(celkemCena),C.accent,"za všechna období")}
-      {karta(kumulativ>=0?"Průběžný přeplatek":"Průběžný nedoplatek",kc(Math.abs(kumulativ)),kumulativ>=0?C.green:C.red,"zálohy minus spotřeba")}
+      {karta("Spotřeba od vyúčtování",`${(celkemVt+celkemNt).toLocaleString("cs")} kWh`,C.orange,`VT ${celkemVt.toLocaleString("cs")} · NT ${celkemNt.toLocaleString("cs")}`)}
+      {karta("Spotřeba v Kč s DPH",kc(celkemCena),C.accent,vyrovnanoDo?`od ${new Date(vyrovnanoDo).toLocaleDateString("cs-CZ")}`:"za všechna období")}
+      {karta(kumulativ>=0?"Průběžný přeplatek":"Průběžný nedoplatek",kc(Math.abs(kumulativ)),kumulativ>=0?C.green:C.red,vyrovnanoDo?`od vyúčtování k ${new Date(vyrovnanoDo).toLocaleDateString("cs-CZ")}`:"zálohy minus spotřeba")}
     </div>
 
     {bezCeniku>0&&<div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#c87000"}}>
@@ -5722,7 +5730,7 @@ function ElektrinaTab(){
               <td style={{padding:"8px",fontWeight:700,color:C.accent}}>{num(o.sDph)}</td>
               <td style={{padding:"8px",color:C.muted}}>{num(o.zaloha)}{o.zaloh!==1&&<span style={{fontSize:10}}> ({o.zaloh}×)</span>}</td>
               <td style={{padding:"8px",fontWeight:700,color:o.rozdil>=0?C.green:C.red}}>{o.rozdil>0?"+":""}{num(o.rozdil)}</td>
-              <td style={{padding:"8px",fontWeight:800,color:o.kumulativ>=0?C.green:C.red}}>{o.kumulativ>0?"+":""}{num(o.kumulativ)}</td>
+              <td style={{padding:"8px",fontWeight:800,color:o.vyrovnano?C.dim:o.kumulativ>=0?C.green:C.red}}>{o.vyrovnano?<span style={{fontSize:10,fontWeight:600}}>vyrovnáno</span>:<>{o.kumulativ>0?"+":""}{num(o.kumulativ)}</>}</td>
             </tr>)}
           </tbody>
         </table>
