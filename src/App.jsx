@@ -1438,6 +1438,608 @@ function SpotrebaTab(){
 // FINANCE
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════════════════════
+// IMPORT BANKOVNÍCH VÝPISŮ
+// Parsery ověřené na skutečných výpisech: u každého sedí
+// počáteční zůstatek + součet pohybů = konečný zůstatek uvedený ve výpisu.
+// ══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+// PARSERY BANKOVNÍCH VÝPISŮ
+// Vrací vždy stejný tvar:
+//   { banka, cislo_uctu, mena, obdobi_od, obdobi_do, cislo_vypisu,
+//     zustatek_pocatecni, zustatek_konecny,
+//     radky: [{ datum, castka, protiucet, vs, ks, ss, popis, poznamka, ref }] }
+// „ref" je identifikátor transakce u banky — používá se na detekci duplicit.
+// ══════════════════════════════════════════════════════════════════════════════
+
+const cislo = s => Number(String(s ?? "").trim() || 0);
+const bezNul = s => String(s ?? "").replace(/^0+/, "") || "";
+const datumDDMMRR = s => {
+  if (!/^\d{6}$/.test(s)) return null;
+  const d = s.slice(0, 2), m = s.slice(2, 4), r = s.slice(4, 6);
+  return `20${r}-${m}-${d}`;
+};
+
+// ── GPC / ABO (Fio, Air Bank, Raiffeisen, Moneta, KB…) ───────────────────────
+// Věta 074 = hlavička výpisu, věta 075 = jedna transakce. Pevné pozice, cp1250.
+function parseGpc(text) {
+  const radky = [];
+  let hlavicka = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const l = raw.replace(/\r$/, "");
+    if (l.startsWith("074")) {
+      hlavicka = {
+        cislo_uctu: bezNul(l.slice(3, 19)),
+        nazev_uctu: l.slice(19, 39).trim(),
+        zustatek_pocatecni: cislo(l.slice(45, 59)) / 100 * (l[59] === "-" ? -1 : 1),
+        zustatek_konecny: cislo(l.slice(60, 74)) / 100 * (l[74] === "-" ? -1 : 1),
+        cislo_vypisu: bezNul(l.slice(105, 108)),
+        obdobi_do: datumDDMMRR(l.slice(108, 114)),
+        obdobi_od: datumDDMMRR(l.slice(39, 45)),
+      };
+    } else if (l.startsWith("075")) {
+      const kod = l[60];                       // 1 debet, 2 kredit, 4/5 storna
+      const znamenko = (kod === "1" || kod === "5") ? -1 : 1;
+      const castka = cislo(l.slice(48, 60)) / 100 * znamenko;
+      const popis = l.slice(97, 117).trim();
+      radky.push({
+        datum: datumDDMMRR(l.slice(91, 97)),
+        castka,
+        protiucet: bezNul(l.slice(19, 35)),
+        vs: bezNul(l.slice(61, 71)),
+        ks: bezNul(l.slice(71, 81)),
+        ss: bezNul(l.slice(81, 91)),
+        popis,
+        poznamka: "",
+        ref: bezNul(l.slice(35, 48)),          // číslo dokladu = ID u banky
+      });
+    }
+  }
+  if (!hlavicka) return null;
+  return { banka: "gpc", mena: "CZK", ...hlavicka, radky };
+}
+
+// ── Moneta XML ───────────────────────────────────────────────────────────────
+// Nese i počáteční a konečný zůstatek, takže se z něj dá rovnou doplnit stav účtu.
+function parseMonetaXml(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  const acc = doc.getElementsByTagName("account")[0];
+  if (!acc) return null;
+  const t = (el, n) => el?.getElementsByTagName(n)[0]?.textContent?.trim() || "";
+  const stmt = doc.getElementsByTagName("stmt")[0];
+
+  const radky = Array.from(doc.getElementsByTagName("transaction")).map(tr => {
+    const zpravy = tipy => Array.from(tr.getElementsByTagName("trn-messages"))
+      .filter(m => m.getAttribute("type") === tipy)
+      .flatMap(m => Array.from(m.getElementsByTagName("trn-message")).map(x => x.textContent.trim()))
+      .filter(Boolean);
+    const popis = zpravy("description").join(" ");
+    const poznamka = zpravy("advice").join(" ");
+    const proti = tr.getAttribute("other-account-number") || "";
+    return {
+      datum: tr.getAttribute("date-post") || tr.getAttribute("date-eff"),
+      castka: parseFloat(tr.getAttribute("amount") || "0"),
+      // u karetních plateb je v tomhle poli text („PLATBA KARTOU V ČR"), ne číslo účtu
+      protiucet: /^\d/.test(proti) ? proti : "",
+      vs: bezNul(tr.getAttribute("var-sym")),
+      ks: bezNul(tr.getAttribute("con-sym")),
+      ss: bezNul(tr.getAttribute("spec-sym")),
+      popis: popis || (/^\d/.test(proti) ? "" : proti),
+      poznamka,
+      ref: tr.getAttribute("id") || "",
+    };
+  });
+
+  return {
+    banka: "moneta",
+    cislo_uctu: acc.getAttribute("number") || "",
+    mena: acc.getAttribute("currency") || "CZK",
+    cislo_vypisu: stmt?.getAttribute("number") || "",
+    obdobi_od: stmt?.getAttribute("date-previous") || null,
+    obdobi_do: stmt?.getAttribute("date") || null,
+    zustatek_pocatecni: parseFloat(t(acc, "stm-bgn-bal") || "0"),
+    zustatek_konecny: parseFloat(doc.getElementsByTagName("stm-bal-end")[0]?.textContent || "0"),
+    radky,
+  };
+}
+
+// ── PDF ──────────────────────────────────────────────────────────────────────
+// Z PDF se čtou textové kusy i s x-pozicí; sloupce jsou u obou bank pevné.
+const cisloCZ = s => {
+  const t = String(s).replace(/ |\s/g, "").replace(/(CZK|Kč)$/iu, "").replace(/^\+/, "");
+  if (!/^-?[\d.,]+$/.test(t)) return null;
+  // desetinný oddělovač je poslední čárka nebo tečka
+  const i = Math.max(t.lastIndexOf(","), t.lastIndexOf("."));
+  if (i < 0) return Number(t);
+  return Number(t.slice(0, i).replace(/[.,]/g, "") + "." + t.slice(i + 1));
+};
+const jeDatum = s => /^\d{1,2}\.\s?\d{1,2}\.\s?\d{4}$/.test(String(s).trim());
+const naIso = s => { const [d, m, r] = String(s).split(".").map(x => x.trim()); return `${r}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`; };
+const vOkne = (kusy, od, do_) => kusy.filter(k => k.x >= od && k.x < do_).map(k => k.s).join(" ").trim();
+const prvni = (kusy, od, do_) => kusy.find(k => k.x >= od && k.x < do_)?.s?.trim() || "";
+
+// Air Bank — dva řádky na transakci, popisy se lámou do dalších řádků
+function parseAirBankPdf(radky) {
+  const hlav = {};
+  for (const l of radky) {
+    const t = l.kusy.map(k => k.s).join(" ");
+    let m;
+    if ((m = t.match(/Číslo účtu:\s*([\d-]+)\s*\/\s*(\d{4})/))) { hlav.cislo_uctu = m[1]; hlav.kod_banky = m[2]; }
+    if ((m = t.match(/Období výpisu:\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})\s*-\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})/))) { hlav.obdobi_od = naIso(m[1]); hlav.obdobi_do = naIso(m[2]); }
+    if ((m = t.match(/Počáteční zůstatek:\s*([\d\s .,-]+?)\s+(?:Připsáno|$)/))) hlav.zustatek_pocatecni = cisloCZ(m[1]);
+    if ((m = t.match(/Konečný zůstatek:\s*([\d\s .,-]+?)\s+(?:Odepsáno|$)/))) hlav.zustatek_konecny = cisloCZ(m[1]);
+    if ((m = t.match(/Číslo výpisu:\s*(\d+)/))) hlav.cislo_vypisu = m[1];
+    if ((m = t.match(/Měna:\s*([A-Z]{3})/))) hlav.mena = m[1];
+  }
+  const out = []; let akt = null;
+  for (const l of radky) {
+    const datum = prvni(l.kusy, 0, 80);
+    const castka = cisloCZ(vOkne(l.kusy, 440, 520));
+    if (jeDatum(datum) && castka !== null) {                       // první řádek transakce
+      akt = { datum: naIso(datum), castka, protiucet: "", vs: "", ks: "", ss: "",
+              popis: [prvni(l.kusy, 100, 180), prvni(l.kusy, 180, 320)].filter(Boolean).join(" — "),
+              poznamka: vOkne(l.kusy, 320, 440), ref: "" };
+      out.push(akt);
+    } else if (akt && jeDatum(datum)) {                            // druhý řádek transakce
+      akt.ref = prvni(l.kusy, 100, 180);
+      const proti = prvni(l.kusy, 180, 320);
+      if (/^\d[\d-]*\s*\/\s*\d{4}$/.test(proti)) akt.protiucet = proti.replace(/\s/g, "");
+      const d = vOkne(l.kusy, 320, 440); if (d) akt.poznamka += " " + d;
+    } else if (akt) {                                              // pokračování popisu
+      const d = vOkne(l.kusy, 320, 440); if (d) akt.poznamka += " " + d;
+    }
+  }
+  out.forEach(r => { r.poznamka = r.poznamka.replace(/\s+/g, " ").trim(); });
+  return { banka: "airbank", mena: hlav.mena || "CZK", ...hlav, radky: out };
+}
+
+// Raiffeisenbank — tři řádky na transakci
+function parseRbPdf(radky) {
+  const hlav = {};
+  for (const l of radky) {
+    const t = l.kusy.map(k => k.s).join(" ");
+    let m;
+    if ((m = t.match(/Číslo účtu:\s*([\d-]+)\/(\d{4})\s*([A-Z]{3})/))) { hlav.cislo_uctu = m[1]; hlav.kod_banky = m[2]; hlav.mena = m[3]; }
+    if ((m = t.match(/Počáteční zůstatek:\s*(-?[\d\s .,]+)/))) hlav.zustatek_pocatecni = cisloCZ(m[1]);
+    if ((m = t.match(/Konečný zůstatek:\s*(-?[\d\s .,]+)/))) hlav.zustatek_konecny = cisloCZ(m[1]);
+    if ((m = t.match(/Pořadové č\. výpisu:\s*(\d+)/))) hlav.cislo_vypisu = m[1];
+    if ((m = t.match(/za období:\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})\s*-\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})/))) { hlav.obdobi_od = naIso(m[1]); hlav.obdobi_do = naIso(m[2]); }
+  }
+  const out = []; let akt = null, faze = 0;
+  for (const l of radky) {
+    const prvniSloupec = prvni(l.kusy, 0, 90);
+    const castka = cisloCZ(vOkne(l.kusy, 450, 560));
+    if (jeDatum(prvniSloupec) && castka !== null) {
+      akt = { datum: naIso(prvniSloupec), castka, protiucet: "", vs: prvni(l.kusy, 350, 430), ks: "", ss: "",
+              popis: [prvni(l.kusy, 90, 200), vOkne(l.kusy, 200, 350)].filter(Boolean).join(" — "),
+              poznamka: "", ref: "" };
+      out.push(akt); faze = 1;
+    } else if (akt && faze === 1 && jeDatum(prvniSloupec)) {
+      akt.protiucet = prvni(l.kusy, 90, 200).replace(/\s/g, "");
+      akt.ks = prvni(l.kusy, 350, 430);
+      const z = vOkne(l.kusy, 200, 350); if (z) akt.poznamka += " " + z;
+      faze = 2;
+    } else if (akt && /^\d{6,}$/.test(prvniSloupec)) {
+      akt.ref = prvniSloupec;
+      const n = prvni(l.kusy, 90, 200); if (n && !akt.protiucet) akt.protiucet = n;
+      else if (n) akt.poznamka += " " + n;
+      akt.ss = akt.ss || prvni(l.kusy, 350, 430);
+      const z = vOkne(l.kusy, 200, 350); if (z) akt.poznamka += " " + z;
+      faze = 3;
+    } else if (akt) {
+      const z = vOkne(l.kusy, 200, 350); if (z) akt.poznamka += " " + z;
+    }
+  }
+  out.forEach(r => { r.poznamka = r.poznamka.replace(/\s+/g, " ").trim(); });
+  return { banka: "rb", mena: hlav.mena || "CZK", ...hlav, radky: out };
+}
+
+// Raiffeisenbank — výpis z kartového účtu (kreditka).
+// Zůstatek je záporný = kolik je vyčerpáno z limitu.
+function parseRbKartaPdf(radky) {
+  const hlav = { banka: "rb_karta", mena: "CZK" };
+  for (let i = 0; i < radky.length; i++) {
+    const t = radky[i].kusy.map(k => k.s).join(" ");
+    let m;
+    if ((m = t.match(/Číslo účtu pro splátku\s*([\d-]+)\/(\d{4})/))) { hlav.cislo_uctu = m[1]; hlav.kod_banky = m[2]; }
+    if ((m = t.match(/Zúčtovací období:\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})\s*-\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})/))) { hlav.obdobi_od = naIso(m[1].replace(/\s/g, "")); hlav.obdobi_do = naIso(m[2].replace(/\s/g, "")); }
+    if (t.includes("Předchozí stav") && radky[i + 2]) {          // řádek s čísly je o dva níž
+      const c = radky[i + 2].kusy.map(k => cisloCZ(k.s)).filter(x => x !== null);
+      if (c.length >= 4) { hlav.zustatek_pocatecni = c[0]; hlav.zustatek_konecny = c[3]; }
+    }
+  }
+  const out = [];
+  for (const l of radky) {
+    const d1 = prvni(l.kusy, 30, 95);
+    if (!/^\d{1,2}\.\s?\d{1,2}\.\s?\d{4}$/.test(d1.replace(/\s/g, ""))) continue;
+    const castka = cisloCZ(vOkne(l.kusy, 380, 560));
+    if (castka === null) continue;
+    out.push({
+      datum: naIso(d1.replace(/\s/g, "")), castka,
+      protiucet: "", vs: "", ks: "", ss: "",
+      popis: vOkne(l.kusy, 150, 380), poznamka: "",
+      ref: naIso(d1.replace(/\s/g, "")) + "|" + castka + "|" + vOkne(l.kusy, 150, 380).slice(0, 24),
+    });
+  }
+  return { ...hlav, radky: out };
+}
+
+// ── Komerční banka — CSV (MojeBanka → Stažení účetních dat) ─────────────────
+// Středníky, kódování cp1250, hlavička v párech „klíč;hodnota", pak tabulka.
+function parseKbCsv(text) {
+  const radky = text.split(/\r?\n/).map(r => r.split(";"));
+  const hlav = { banka: "kb", mena: "CZK" };
+  let zac = -1;
+  radky.forEach((r, i) => {
+    const k = (r[0] || "").trim().toLowerCase(), v = (r[1] || "").trim();
+    if (k === "cislo uctu") hlav.cislo_uctu = v;
+    if (k.startsWith("mena uctu")) hlav.mena = v || "CZK";
+    if (k === "vypis od") hlav.obdobi_od = naIso(v);
+    if (k === "vypis do") hlav.obdobi_do = naIso(v);
+    if (k === "cislo vypisu") hlav.cislo_vypisu = v;
+    if (k === "pocatecni zustatek") hlav.zustatek_pocatecni = cisloCZ(v);
+    if (k === "konecny zustatek") hlav.zustatek_konecny = cisloCZ(v);
+    if (k === "datum zauctovani") zac = i;
+    if (/^\d{4}$/.test(hlav.kod_banky || "") === false && k === "iban" && /^CZ\d{2}(\d{4})/.test(v))
+      hlav.kod_banky = v.replace(/\s/g, "").slice(4, 8);
+  });
+  if (zac < 0) return null;
+  const hl = radky[zac].map(x => (x || "").trim().toLowerCase());
+  const idx = n => hl.indexOf(n);
+  const out = [];
+  for (let i = zac + 1; i < radky.length; i++) {
+    const r = radky[i];
+    if (!r || r.length < 5 || !(r[0] || "").trim()) continue;
+    const castka = cisloCZ(r[idx("castka")]);
+    if (castka === null) continue;
+    const zprava = (r[idx("zprava pro prijemce")] || "").trim();
+    const popisPro = (r[idx("popis pro me")] || "").trim();
+    out.push({
+      datum: naIso((r[0] || "").trim()),
+      castka,
+      protiucet: (r[idx("protistrana")] || "").trim(),
+      vs: (r[idx("vs")] || "").trim().replace(/^0+/, ""),
+      ks: (r[idx("ks")] || "").trim().replace(/^0+/, ""),
+      ss: (r[idx("ss")] || "").trim().replace(/^0+/, ""),
+      popis: [(r[idx("nazev protiuctu")] || "").trim(), popisPro, (r[idx("typ transakce")] || "").trim()].filter(Boolean).join(" — "),
+      poznamka: zprava,
+      ref: (r[idx("identifikace transakce")] || "").trim(),
+    });
+  }
+  return { ...hlav, radky: out };
+}
+
+// ── Komerční banka — PDF výpis ──────────────────────────────────────────────
+// Transakce začíná řádkem „datum … částka Kč", pod ním je detailní řádek
+// s kódem a typem transakce a případně zpráva pro příjemce.
+function parseKbPdf(radky) {
+  const hlav = { banka: "kb", mena: "CZK" };
+  for (const l of radky) {
+    const t = l.kusy.map(k => k.s).join(" ");
+    let m;
+    if ((m = t.match(/Číslo účtu\s+([\d-]+)\/(\d{4})/))) { hlav.cislo_uctu = m[1]; hlav.kod_banky = m[2]; }
+    if ((m = t.match(/Výpis z účtu\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})\s*[–-]\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})/))) { hlav.obdobi_od = naIso(m[1]); hlav.obdobi_do = naIso(m[2]); }
+    if ((m = t.match(/Hlavní měna účtu\s+([A-Z]{3})/))) hlav.mena = m[1];
+    if (/Zůstatek všech měn/.test(t)) {
+      const c = l.kusy.map(k => cisloCZ(k.s)).filter(x => x !== null);
+      if (c.length >= 2) { hlav.zustatek_pocatecni = c[0]; hlav.zustatek_konecny = c[1]; }
+    }
+  }
+  const out = []; let akt = null;
+  for (const l of radky) {
+    const prvniS = prvni(l.kusy, 0, 110);
+    const castka = cisloCZ(vOkne(l.kusy, 430, 560));
+    const jeHlavicka = l.kusy.some(k => k.s.includes("Datum provedení"));
+    if (jeHlavicka) continue;
+    if (jeDatum(prvniS) && castka !== null) {
+      akt = { datum: naIso(prvniS), castka, protiucet: "", vs: "", ks: "", ss: "", popis: "", poznamka: "", ref: "" };
+      out.push(akt);
+    } else if (akt && jeDatum(prvniS)) {
+      akt.ref = prvni(l.kusy, 110, 230);
+      akt.popis = vOkne(l.kusy, 230, 310);
+      const vs = prvni(l.kusy, 310, 380); if (vs && vs !== "-") akt.vs = vs;
+    } else if (akt) {
+      const cely = l.kusy.map(k => k.s).join(" ");
+      if (/Výpis z účtu|www\.|Strana|Komerční banka|Informace o účtu/i.test(cely)) { akt = null; continue; }
+      const z = vOkne(l.kusy, 110, 310);
+      if (z && !/^-+$/.test(z)) akt.poznamka += " " + z.replace(/^Zpráva pro příjemce:\s*/, "");
+      const d = vOkne(l.kusy, 230, 310);
+      if (d && !akt.popis.includes(d)) akt.popis += " " + d;
+    }
+  }
+  out.forEach(r => { r.popis = r.popis.replace(/\s+/g, " ").trim(); r.poznamka = r.poznamka.replace(/\s+/g, " ").trim(); });
+  return { ...hlav, radky: out };
+}
+
+// ── Načtení souboru výpisu ───────────────────────────────────────────────────
+// pdf.js se stahuje až při prvním PDF, ať se nezvětšuje běžný start aplikace.
+async function pdfRadky(data){
+  const pdfjs=await import("pdfjs-dist/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc=new URL("pdfjs-dist/build/pdf.worker.min.mjs",import.meta.url).toString();
+  const doc=await pdfjs.getDocument({data,useSystemFonts:true}).promise;
+  const out=[];
+  for(let p=1;p<=doc.numPages;p++){
+    const st=await (await doc.getPage(p)).getTextContent();
+    const map=new Map();
+    for(const it of st.items){
+      if(!it.str||!it.str.trim())continue;
+      const y=Math.round(it.transform[5]*2)/2;
+      if(!map.has(y))map.set(y,[]);
+      map.get(y).push({x:it.transform[4],s:it.str});
+    }
+    for(const y of [...map.keys()].sort((a,b)=>b-a))
+      out.push({strana:p,y,kusy:map.get(y).sort((a,b)=>a.x-b.x)});
+  }
+  return out;
+}
+
+// Pozná formát a vrátí jednotný tvar výpisu
+async function nactiVypis(file){
+  const jmeno=file.name.toLowerCase();
+  if(jmeno.endsWith(".pdf")){
+    const radky=await pdfRadky(new Uint8Array(await file.arrayBuffer()));
+    const cely=radky.map(l=>l.kusy.map(k=>k.s).join(" ")).join("\n");
+    if(cely.includes("VÝPIS Z KARTOVÉHO ÚČTU"))return parseRbKartaPdf(radky);
+    if(/Komerční banka|Hlavní měna účtu|Zůstatek všech měn/i.test(cely))return parseKbPdf(radky);
+    if(/Raiffeisen|RZBCCZPP|Pořadové č\. výpisu/i.test(cely))return parseRbPdf(radky);
+    return parseAirBankPdf(radky);
+  }
+  const buf=await file.arrayBuffer();
+  if(jmeno.endsWith(".xml"))return parseMonetaXml(new TextDecoder("utf-8").decode(buf));
+  if(jmeno.endsWith(".csv"))return parseKbCsv(new TextDecoder("windows-1250").decode(buf));
+  // GPC/ABO je v kódování Windows-1250
+  return parseGpc(new TextDecoder("windows-1250").decode(buf));
+}
+
+// ── Kategorizace podle pravidel ──────────────────────────────────────────────
+const bezDiakritiky=s=>String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase();
+function navrhniKategorii(radek,pravidla){
+  const text=bezDiakritiky(`${radek.popis} ${radek.poznamka} ${radek.protiucet}`);
+  const sedi=(pravidla||[]).filter(p=>p.aktivni!==false&&text.includes(bezDiakritiky(p.vzor)))
+    .sort((a,b)=>(a.priorita??100)-(b.priorita??100));
+  return sedi[0]?.kategorie_id||null;
+}
+
+const fmtKc=x=>(+x).toLocaleString("cs",{minimumFractionDigits:2,maximumFractionDigits:2})+" Kč";
+
+// ── Import výpisů ────────────────────────────────────────────────────────────
+function ImportVypisu({ucty,kategorie,onHotovo}){
+  const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*").order("priorita"));
+  const {data:importy,reload:reloadImporty}=useData(()=>sb.from("fin_importy").select("*").order("created_at",{ascending:false}).limit(15));
+  const [davky,setDavky]=useState([]);      // načtené výpisy čekající na uložení
+  const [stav,setStav]=useState("");
+  const [uklada,setUklada]=useState(false);
+
+  const ucetPodleCisla=cislo=>{
+    const c=String(cislo||"").replace(/^0+/,"").split("/")[0];
+    if(!c)return null;
+    return (ucty||[]).find(u=>String(u.cislo_uctu||"").replace(/^0+/,"")===c)||null;
+  };
+
+  const nacti=async e=>{
+    const soubory=[...(e.target.files||[])];
+    if(!soubory.length)return;
+    setStav("Čtu soubory…");
+    const nove=[];
+    for(const f of soubory){
+      try{
+        const v=await nactiVypis(f);
+        if(!v||!v.radky?.length){nove.push({soubor:f.name,chyba:"Nepodařilo se přečíst — neznámý formát výpisu."});continue;}
+        const ucet=ucetPodleCisla(v.cislo_uctu);
+        // duplicity proti tomu, co už v databázi je
+        let existujici=new Set();
+        if(ucet){
+          const {data}=await sb.from("fin_transakce").select("banka_ref").eq("ucet_id",ucet.id).not("banka_ref","is",null);
+          existujici=new Set((data||[]).map(x=>x.banka_ref));
+        }
+        const radky=v.radky.map((r,i)=>({
+          ...r,
+          klic:r.ref||`${r.datum}|${r.castka}|${r.popis}`.slice(0,120),
+          duplicita:existujici.has(r.ref||`${r.datum}|${r.castka}|${r.popis}`.slice(0,120)),
+          kategorie_id:navrhniKategorii(r,pravidla),
+          vybrano:true,
+        }));
+        const suma=radky.reduce((a,r)=>a+r.castka,0);
+        const sedi=v.zustatek_pocatecni!=null&&v.zustatek_konecny!=null
+          ? Math.abs(v.zustatek_pocatecni+suma-v.zustatek_konecny)<0.02 : null;
+        nove.push({soubor:f.name,vypis:v,ucet,ucet_id:ucet?.id||"",radky,suma,sedi});
+      }catch(err){nove.push({soubor:f.name,chyba:String(err.message||err)});}
+    }
+    setDavky(d=>[...d,...nove]);setStav("");e.target.value="";
+  };
+
+  const uprav=(di,ri,zmena)=>setDavky(d=>d.map((b,i)=>i!==di?b:{...b,radky:b.radky.map((r,j)=>j!==ri?r:{...r,...zmena})}));
+
+  const uloz=async davka=>{
+    if(!davka.ucet_id){alert("Nejdřív vyber, do kterého účtu výpis patří.");return;}
+    setUklada(true);
+    const kVlozeni=davka.radky.filter(r=>r.vybrano&&!r.duplicita);
+    const rows=kVlozeni.map(r=>{
+      const cizi=r.protiucet?ucetPodleCisla(r.protiucet):null;   // převod mezi vlastními účty
+      return {
+        ucet_id:davka.ucet_id,datum:r.datum,castka:r.castka,
+        kategorie_id:r.kategorie_id||null,
+        popis:[r.popis,r.poznamka].filter(Boolean).join(" · ").slice(0,300),
+        protistrana:r.protiucet||null,
+        typ:cizi?"prevod":(r.castka>=0?"prijem":"vydaj"),
+        prevod_ucet_id:cizi?cizi.id:null,
+        banka_ref:r.klic,vs:r.vs||null,poznamka:r.poznamka||null,
+      };
+    });
+    let vlozeno=0;
+    for(let i=0;i<rows.length;i+=200){
+      const {error}=await sb.from("fin_transakce").insert(rows.slice(i,i+200));
+      if(error){setUklada(false);alert("Chyba při ukládání transakcí: "+error.message);return;}
+      vlozeno+=rows.slice(i,i+200).length;
+    }
+    // Konečný zůstatek z výpisu rovnou do měsíčních stavů účtu — ale jen tehdy,
+    // když výpis končí posledním dnem měsíce. Výpis z kreditky jde od půlky do
+    // půlky, takže jeho zůstatek není stav k poslednímu dni a zapsat se nesmí.
+    const v=davka.vypis;
+    if(v.zustatek_konecny!=null&&v.obdobi_do){
+      const d=new Date(v.obdobi_do);
+      const posledniDenMesice=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
+      if(d.getDate()===posledniDenMesice)
+        await sb.from("fin_stavy").upsert({ucet_id:davka.ucet_id,rok:d.getFullYear(),mesic:d.getMonth()+1,stav:v.zustatek_konecny},{onConflict:"ucet_id,rok,mesic"});
+    }
+    await sb.from("fin_importy").insert({ucet_id:davka.ucet_id,soubor:davka.soubor,banka:v.banka,
+      obdobi_od:v.obdobi_od||null,obdobi_do:v.obdobi_do||null,
+      pocet_novych:vlozeno,pocet_duplicit:davka.radky.filter(r=>r.duplicita).length,
+      zustatek_konecny:v.zustatek_konecny??null});
+    setDavky(d=>d.filter(x=>x!==davka));
+    setUklada(false);reloadImporty();onHotovo&&onHotovo();
+    alert(`Uloženo ${vlozeno} transakcí.`);
+  };
+
+  // Výpis, který nekončí posledním dnem měsíce (typicky kreditka), se do stavů
+  // účtu nezapisuje sám — tohle je ruční „přesto zapsat" na jedno kliknutí.
+  const zapisStav=async davka=>{
+    const v=davka.vypis;
+    if(!davka.ucet_id||v.zustatek_konecny==null||!v.obdobi_do)return;
+    const d=new Date(v.obdobi_do);
+    const {error}=await sb.from("fin_stavy").upsert({ucet_id:davka.ucet_id,rok:d.getFullYear(),mesic:d.getMonth()+1,stav:v.zustatek_konecny},{onConflict:"ucet_id,rok,mesic"});
+    if(error){alert("Chyba: "+error.message);return;}
+    onHotovo&&onHotovo();
+    alert(`Zůstatek ${fmtKc(v.zustatek_konecny)} zapsán jako stav za ${d.getMonth()+1}/${d.getFullYear()}.`);
+  };
+
+  const ulozPravidlo=async(vzor,kategorie_id)=>{
+    const v=(vzor||"").trim();
+    if(!v||!kategorie_id)return;
+    const {error}=await sb.from("fin_pravidla").insert({vzor:v,kategorie_id,priorita:50});
+    if(error&&!String(error.message).includes("duplicate")){alert("Chyba: "+error.message);return;}
+    reloadPravidla();alert(`Pravidlo „${v}" uloženo — příště se kategorie doplní sama.`);
+  };
+
+  const katNazev=id=>(kategorie||[]).find(k=>k.id===id)?.nazev||"";
+
+  return <div>
+    <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"14px 18px",marginBottom:18}}>
+      <div style={{fontSize:13,fontWeight:800,color:"#1a4fa8",marginBottom:6}}>📥 Načíst výpis z banky</div>
+      <div style={{fontSize:12,color:"#3066b0",marginBottom:10}}>
+        Umí GPC/ABO (Fio, Air Bank), XML (Moneta) i PDF (Air Bank, Raiffeisenbank včetně kreditní karty).
+        Můžeš vybrat víc souborů najednou. Nic se neuloží, dokud to nepotvrdíš.
+      </div>
+      <label style={{...btnC(C.blue),cursor:"pointer",display:"inline-block",fontSize:13,padding:"8px 16px"}}>
+        Vybrat soubory
+        <input type="file" multiple accept=".pdf,.xml,.gpc,.abo,.txt" onChange={nacti} style={{display:"none"}}/>
+      </label>
+      {stav&&<span style={{marginLeft:12,fontSize:12,fontWeight:700,color:"#1a4fa8"}}>{stav}</span>}
+    </div>
+
+    {davky.map((b,di)=><div key={di} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:10}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:14}}>{b.soubor}</div>
+          {b.chyba
+            ? <div style={{color:C.red,fontSize:12,marginTop:4}}>{b.chyba}</div>
+            : <div style={{color:C.muted,fontSize:12,marginTop:4}}>
+                účet {b.vypis.cislo_uctu} · {b.vypis.obdobi_od} → {b.vypis.obdobi_do} · {b.radky.length} transakcí
+              </div>}
+        </div>
+        <button onClick={()=>setDavky(d=>d.filter((_,i)=>i!==di))} style={{...btnC(C.muted,true),fontSize:12,padding:"4px 10px"}}>Zahodit</button>
+      </div>
+
+      {!b.chyba&&<>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:12}}>
+          {[["Počáteční",fmtKc(b.vypis.zustatek_pocatecni??0)],
+            ["Pohyby",fmtKc(b.suma)],
+            ["Konečný dle výpisu",fmtKc(b.vypis.zustatek_konecny??0)],
+            ["Kontrola",b.sedi===null?"—":b.sedi?"✓ sedí":"✗ nesedí"]].map(([l,v])=>
+            <div key={l} style={{background:C.bg,borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.4}}>{l}</div>
+              <div style={{fontSize:14,fontWeight:700,color:l==="Kontrola"?(b.sedi?C.green:C.red):C.text}}>{v}</div>
+            </div>)}
+        </div>
+        {(()=>{
+          const dd=b.vypis.obdobi_do?new Date(b.vypis.obdobi_do):null;
+          if(!dd||dd.getDate()===new Date(dd.getFullYear(),dd.getMonth()+1,0).getDate())return null;
+          return <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#1a4fa8",marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <span>Výpis končí {dd.toLocaleDateString("cs-CZ")}, ne koncem měsíce — zůstatek se proto do měsíčních stavů účtu nezapíše sám.</span>
+            <button onClick={()=>zapisStav(b)} disabled={!b.ucet_id} style={{...btnC(C.blue,true),fontSize:11,padding:"3px 10px"}}>Přesto zapsat jako stav za {dd.getMonth()+1}/{dd.getFullYear()}</button>
+          </div>;
+        })()}
+        {b.sedi===false&&<div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#c87000",marginBottom:12}}>
+          Součet pohybů nesedí na konečný zůstatek — něco se z výpisu nepřečetlo. Radši neukládej a pošli mi ten soubor.
+        </div>}
+
+        <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12,flexWrap:"wrap"}}>
+          <span style={{fontSize:12,fontWeight:700,color:C.muted}}>Účet:</span>
+          <select style={{...inp,maxWidth:280}} value={b.ucet_id} onChange={e=>setDavky(d=>d.map((x,i)=>i===di?{...x,ucet_id:e.target.value}:x))}>
+            <option value="">— vyber účet —</option>
+            {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}{u.cislo_uctu?` (${u.cislo_uctu})`:""}</option>)}
+          </select>
+          {b.ucet&&<span style={{fontSize:12,color:C.green,fontWeight:700}}>✓ spárováno podle čísla účtu</span>}
+          {!b.ucet&&<span style={{fontSize:12,color:C.orange,fontWeight:700}}>číslo účtu {b.vypis.cislo_uctu} není u žádného účtu — vyber ručně</span>}
+        </div>
+
+        <div style={{maxHeight:420,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:8}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+            <thead><tr style={{background:C.bg,position:"sticky",top:0}}>
+              {["","Datum","Popis","Částka","Kategorie",""].map(h=><th key={h} style={{padding:"7px 8px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {b.radky.map((r,ri)=><tr key={ri} style={{borderBottom:`1px solid ${C.border}`,opacity:r.duplicita?.45:1,background:ri%2?"#fafbff":C.surface}}>
+                <td style={{padding:"6px 8px"}}>
+                  <input type="checkbox" checked={r.vybrano&&!r.duplicita} disabled={r.duplicita} onChange={e=>uprav(di,ri,{vybrano:e.target.checked})}/>
+                </td>
+                <td style={{padding:"6px 8px",whiteSpace:"nowrap"}}>{new Date(r.datum).toLocaleDateString("cs-CZ")}</td>
+                <td style={{padding:"6px 8px",maxWidth:280}}>
+                  <div style={{fontWeight:600}}>{r.popis||"—"}</div>
+                  {r.poznamka&&<div style={{color:C.dim,fontSize:11}}>{r.poznamka.slice(0,70)}</div>}
+                  {r.duplicita&&<div style={{color:C.orange,fontSize:11,fontWeight:700}}>už je v databázi</div>}
+                </td>
+                <td style={{padding:"6px 8px",whiteSpace:"nowrap",fontWeight:700,color:r.castka<0?C.red:C.green}}>{fmtKc(r.castka)}</td>
+                <td style={{padding:"6px 8px"}}>
+                  <select style={{...inp,padding:"3px 6px",fontSize:11,minWidth:150}} value={r.kategorie_id||""} onChange={e=>uprav(di,ri,{kategorie_id:e.target.value||null})}>
+                    <option value="">— bez kategorie —</option>
+                    {(kategorie||[]).map(k=><option key={k.id} value={k.id}>{k.nazev}</option>)}
+                  </select>
+                </td>
+                <td style={{padding:"6px 4px"}}>
+                  {r.kategorie_id&&r.popis&&<button title={`Zapamatovat: „${r.popis.slice(0,24)}" → ${katNazev(r.kategorie_id)}`}
+                    onClick={()=>ulozPravidlo(r.popis.slice(0,24),r.kategorie_id)}
+                    style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10}}>＋pravidlo</button>}
+                </td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12,flexWrap:"wrap",gap:8}}>
+          <div style={{fontSize:12,color:C.muted}}>
+            k uložení <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita).length}</strong> ·
+            duplicit <strong>{b.radky.filter(r=>r.duplicita).length}</strong> ·
+            bez kategorie <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!r.kategorie_id).length}</strong>
+          </div>
+          <button onClick={()=>uloz(b)} disabled={uklada||!b.ucet_id} style={btnC()}>{uklada?"Ukládám…":"Uložit do databáze"}</button>
+        </div>
+      </>}
+    </div>)}
+
+    {(importy||[]).length>0&&<>
+      <div style={{fontWeight:700,fontSize:14,margin:"20px 0 8px"}}>🕘 Poslední importy</div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead><tr style={{background:C.bg}}>
+            {["Kdy","Soubor","Období","Nových","Duplicit","Konečný zůstatek"].map(h=><th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {(importy||[]).map(i=><tr key={i.id} style={{borderBottom:`1px solid ${C.border}`}}>
+              <td style={{padding:"6px 10px",whiteSpace:"nowrap"}}>{new Date(i.created_at).toLocaleString("cs-CZ")}</td>
+              <td style={{padding:"6px 10px"}}>{i.soubor}</td>
+              <td style={{padding:"6px 10px",whiteSpace:"nowrap"}}>{i.obdobi_od?`${new Date(i.obdobi_od).toLocaleDateString("cs-CZ")} – ${new Date(i.obdobi_do).toLocaleDateString("cs-CZ")}`:"—"}</td>
+              <td style={{padding:"6px 10px",fontWeight:700,color:C.green}}>{i.pocet_novych}</td>
+              <td style={{padding:"6px 10px",color:C.muted}}>{i.pocet_duplicit}</td>
+              <td style={{padding:"6px 10px"}}>{i.zustatek_konecny!=null?fmtKc(i.zustatek_konecny):"—"}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    </>}
+  </div>;
+}
+
 function FinanceTab(){
   const [zalozka,setZalozka]=useState("dashboard");
   const {data:ucty,reload:reloadUcty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
@@ -1473,6 +2075,7 @@ function FinanceTab(){
     {id:"dashboard",l:"📊 Dashboard"},
     {id:"ucty",l:"🏦 Účty"},
     {id:"transakce",l:"💸 Transakce"},
+    {id:"import",l:"📥 Import z banky"},
     {id:"kategorie",l:"🏷 Kategorie"},
     {id:"typy",l:"🗂 Typy účtů"},
   ];
@@ -2204,6 +2807,7 @@ function FinanceTab(){
     {zalozka==="dashboard"&&<DashboardView/>}
     {zalozka==="ucty"&&<UctyView/>}
     {zalozka==="transakce"&&<TransakceView/>}
+    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={()=>{reloadTrans();reloadStavy();}}/>}
     {zalozka==="kategorie"&&<KategorieView/>}
     {zalozka==="typy"&&<TypyUctuView/>}
   </div>;

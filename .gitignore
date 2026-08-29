@@ -27,3 +27,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Výpisy dat z databáze — nikdy necommitovat (repo je veřejné)
+*_dump.json
+finance_dump.json
