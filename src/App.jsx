@@ -1924,6 +1924,55 @@ async function nactiVse(dotaz,velikost=1000){
 }
 
 // ── Import výpisů ────────────────────────────────────────────────────────────
+// ── Nápověda: co u které banky stáhnout ──────────────────────────────────────
+// Formátů je pět a každá banka je nabízí jinak. Tady je vždycky ten, který
+// nese nejvíc údajů — ověřeno na skutečných výpisech, ne podle dokumentace.
+const FORMATY=[
+  {banka:"Air Bank — podnikatelský",format:"XML (camt.053)",kde:"Výpisy → Formát: XML",
+   pozn:"Jediný nese variabilní symbol u všech plateb a kód banky protistrany.",top:true},
+  {banka:"Air Bank — osobní účty",format:"PDF",kde:"Výpisy → Formát: PDF",
+   pozn:"XML ani GPC u osobních účtů nejsou. PDF neobsahuje variabilní symboly."},
+  {banka:"Fio",format:"GPC/ABO",kde:"Přehledy → Výpisy → ABO",
+   pozn:"U příchozích plateb uvádí i jméno odesílatele.",top:true},
+  {banka:"Moneta",format:"XML",kde:"Výpisy → Formát: XML",
+   pozn:"GPC z Monety nepoužívej — uvádí v něm jiné číslo účtu a nespáruje se.",top:true},
+  {banka:"Komerční banka",format:"CSV",kde:"MojeBanka → Transakční historie → CSV",
+   pozn:"Umí celé pololetí v jednom souboru. Rozdělí se podle data samo.",top:true},
+  {banka:"Raiffeisenbank",format:"PDF",kde:"Výpisy → PDF",
+   pozn:"Běžný i spořicí účet."},
+  {banka:"RB kreditní karta",format:"PDF",kde:"Výpisy z kartového účtu",
+   pozn:"Období jde od 14. do 14., ne po měsících."},
+];
+
+function NapovedaFormatu(){
+  const [otevreno,setOtevreno]=useState(true);
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",flex:"1 1 420px",minWidth:300}}>
+    <div onClick={()=>setOtevreno(o=>!o)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+      <div style={{fontSize:13,fontWeight:800}}>💡 Co u které banky stáhnout</div>
+      <span style={{fontSize:11,color:C.muted}}>{otevreno?"skrýt":"ukázat"}</span>
+    </div>
+    {otevreno&&<>
+      <div style={{fontSize:11,color:C.muted,margin:"6px 0 10px"}}>
+        Když má banka víc formátů, ber ten zvýrazněný — nese nejvíc údajů.
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:290,overflowY:"auto"}}>
+        {FORMATY.map(f=><div key={f.banka} style={{borderLeft:`3px solid ${f.top?C.green:C.border}`,paddingLeft:9}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"baseline",flexWrap:"wrap"}}>
+            <span style={{fontSize:12,fontWeight:700}}>{f.banka}</span>
+            <span style={{fontSize:11,fontWeight:800,color:f.top?C.green:C.muted,whiteSpace:"nowrap"}}>{f.format}</span>
+          </div>
+          <div style={{fontSize:10,color:C.dim}}>{f.kde}</div>
+          <div style={{fontSize:10,color:C.muted,marginTop:1}}>{f.pozn}</div>
+        </div>)}
+      </div>
+      <div style={{fontSize:10,color:C.dim,marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:7}}>
+        Nahrát ten samý měsíc podruhé v lepším formátu nevadí — nic se nezdvojí,
+        jen se u už uložených plateb nabídne doplnění chybějících údajů.
+      </div>
+    </>}
+  </div>;
+}
+
 function ImportVypisu({ucty,kategorie,onHotovo}){
   const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*").order("priorita"));
   const {data:importy,reload:reloadImporty}=useData(()=>sb.from("fin_importy").select("*").order("created_at",{ascending:false}).limit(15));
@@ -2178,17 +2227,22 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
   const katNazev=id=>(kategorie||[]).find(k=>k.id===id)?.nazev||"";
 
   return <div>
-    <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"14px 18px",marginBottom:18}}>
-      <div style={{fontSize:13,fontWeight:800,color:"#1a4fa8",marginBottom:6}}>📥 Načíst výpis z banky</div>
-      <div style={{fontSize:12,color:"#3066b0",marginBottom:10}}>
-        Umí GPC/ABO (Fio, Air Bank), XML (Moneta) i PDF (Air Bank, Raiffeisenbank včetně kreditní karty).
-        Můžeš vybrat víc souborů najednou. Nic se neuloží, dokud to nepotvrdíš.
+    <div style={{display:"flex",gap:14,marginBottom:18,flexWrap:"wrap",alignItems:"stretch"}}>
+      <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"14px 18px",flex:"1 1 380px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#1a4fa8",marginBottom:6}}>📥 Načíst výpis z banky</div>
+        <div style={{fontSize:12,color:"#3066b0",marginBottom:12}}>
+          Můžeš vybrat víc souborů najednou, klidně z různých bank.
+          Formát i účet si najde sám. Nic se neuloží, dokud to nepotvrdíš.
+        </div>
+        <div>
+          <label style={{...btnC(C.blue),cursor:"pointer",display:"inline-block",fontSize:13,padding:"8px 16px"}}>
+            Vybrat soubory
+            <input type="file" multiple accept=".pdf,.xml,.gpc,.abo,.txt,.csv" onChange={nacti} style={{display:"none"}}/>
+          </label>
+          {stav&&<span style={{marginLeft:12,fontSize:12,fontWeight:700,color:"#1a4fa8"}}>{stav}</span>}
+        </div>
       </div>
-      <label style={{...btnC(C.blue),cursor:"pointer",display:"inline-block",fontSize:13,padding:"8px 16px"}}>
-        Vybrat soubory
-        <input type="file" multiple accept=".pdf,.xml,.gpc,.abo,.txt" onChange={nacti} style={{display:"none"}}/>
-      </label>
-      {stav&&<span style={{marginLeft:12,fontSize:12,fontWeight:700,color:"#1a4fa8"}}>{stav}</span>}
+      <NapovedaFormatu/>
     </div>
 
     {davky.length>1&&<div style={{background:C.surface,border:`2px solid ${C.accent}`,borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap",position:"sticky",top:54,zIndex:20}}>
