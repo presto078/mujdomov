@@ -2307,38 +2307,32 @@ function ZarazeniTransakci({kategorie,onZmena,reloadKategorie}){
 
 
 // ── Pokrytí importu ──────────────────────────────────────────────────────────
-// Řádky účty, sloupce měsíce. Svítící buňka = z toho měsíce je výpis nahraný.
-// Čte se z logu importů, takže se ukazuje i to, co se uložilo bez transakcí.
+// Řádky účty, sloupce měsíce. Počítá se podle data jednotlivých transakcí,
+// ne podle období souboru — jeden CSV za sedm měsíců se tak správně rozloží
+// do sedmi sloupců místo do jednoho.
 function PokrytiImportu({ucty}){
-  const {data:importy,loading}=useData(()=>sb.from("fin_importy").select("*").order("obdobi_do"));
+  const {data:trans,loading}=useData(()=>sb.from("fin_transakce")
+    .select("ucet_id,datum").eq("zdroj","import").order("datum").limit(20000));
   if(loading)return <Spinner/>;
 
-  // Účty bez čísla se nesmí tiše ztratit — ukážou se s upozorněním,
-  // protože bez čísla se jim výpis nespáruje sám.
   const bankovni=(ucty||[]).filter(u=>u.cislo_uctu||["finance","deti"].includes(u.skupina||"finance"))
     .sort((a,b)=>(a.poradi||0)-(b.poradi||0));
-  const mesicKlic=d=>{const x=new Date(d);return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}`;};
 
-  // co je kde nahrané
   const mapa=new Map();
-  for(const i of (importy||[])){
-    if(!i.ucet_id||!i.obdobi_do)continue;
-    const k=`${i.ucet_id}|${mesicKlic(i.obdobi_do)}`;
-    const z=mapa.get(k)||{pocet:0,soubory:[],obdobi:[]};
-    z.pocet+=i.pocet_novych||0; z.soubory.push(i.soubor);
-    z.obdobi.push(`${i.obdobi_od?new Date(i.obdobi_od).toLocaleDateString("cs-CZ"):"?"} – ${new Date(i.obdobi_do).toLocaleDateString("cs-CZ")}`);
-    mapa.set(k,z);
+  for(const t of (trans||[])){
+    if(!t.ucet_id||!t.datum)continue;
+    const k=`${t.ucet_id}|${String(t.datum).slice(0,7)}`;
+    mapa.set(k,(mapa.get(k)||0)+1);
   }
 
-  // rozsah měsíců: od nejstaršího importu (nejméně 12 měsíců zpět) po dnešek
   const dnes=new Date();
-  const nejstarsi=(importy||[]).map(i=>i.obdobi_do).filter(Boolean).sort()[0];
-  const zac=nejstarsi?new Date(nejstarsi):new Date(dnes.getFullYear(),dnes.getMonth()-11,1);
+  const prvni=(trans||[])[0]?.datum;
+  const zacatek=prvni?new Date(prvni):new Date(dnes.getFullYear(),dnes.getMonth()-11,1);
   const mesice=[];
-  for(let d=new Date(zac.getFullYear(),zac.getMonth(),1);d<=dnes;d.setMonth(d.getMonth()+1))
+  for(let d=new Date(zacatek.getFullYear(),zacatek.getMonth(),1);d<=dnes;d.setMonth(d.getMonth()+1))
     mesice.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
 
-  const celkem=(importy||[]).reduce((a,i)=>a+(i.pocet_novych||0),0);
+  const celkem=(trans||[]).length;
   const nazevMesice=m=>{const [r,ms]=m.split("-");return new Date(+r,+ms-1,1).toLocaleDateString("cs-CZ",{month:"short"}).replace(".","");};
 
   return <div>
@@ -2352,9 +2346,9 @@ function PokrytiImportu({ucty}){
       </div>
     </div>
 
-    {(importy||[]).length===0&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:24,textAlign:"center",color:C.dim}}>Zatím nic naimportováno</div>}
+    {celkem===0&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:24,textAlign:"center",color:C.dim}}>Zatím nic naimportováno</div>}
 
-    {(importy||[]).length>0&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"auto"}}>
+    {celkem>0&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"auto"}}>
       <table style={{borderCollapse:"collapse",fontSize:12,width:"100%"}}>
         <thead><tr style={{background:C.bg}}>
           <th style={{padding:"8px 12px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",position:"sticky",left:0,background:C.bg,minWidth:190}}>Účet</th>
@@ -2365,8 +2359,8 @@ function PokrytiImportu({ucty}){
         </tr></thead>
         <tbody>
           {bankovni.map((u,i)=>{
-            const radek=mesice.map(m=>mapa.get(`${u.id}|${m}`));
-            const suma=radek.reduce((a,z)=>a+(z?.pocet||0),0);
+            const radek=mesice.map(m=>mapa.get(`${u.id}|${m}`)||0);
+            const suma=radek.reduce((a,z)=>a+z,0);
             const chybi=radek.filter(z=>!z).length;
             return <tr key={u.id} style={{background:i%2?"#fafbff":C.surface,borderBottom:`1px solid ${C.border}`}}>
               <td style={{padding:"7px 12px",position:"sticky",left:0,background:i%2?"#fafbff":C.surface,whiteSpace:"nowrap"}}>
@@ -2378,8 +2372,7 @@ function PokrytiImportu({ucty}){
               </td>
               {radek.map((z,j)=><td key={j} style={{padding:"4px 3px",textAlign:"center"}}>
                 {z
-                  ? <div title={`${z.pocet} transakcí\n${z.obdobi.join("\n")}\n${z.soubory.join("\n")}`}
-                      style={{background:C.green,color:"#fff",borderRadius:5,padding:"4px 2px",fontWeight:700,fontSize:10,cursor:"help"}}>{z.pocet}</div>
+                  ? <div style={{background:C.green,color:"#fff",borderRadius:5,padding:"4px 2px",fontWeight:700,fontSize:10}}>{z}</div>
                   : <div style={{background:C.border,borderRadius:5,padding:"4px 2px",color:C.dim,fontSize:10}}>–</div>}
               </td>)}
               <td style={{padding:"7px 10px",textAlign:"center",fontWeight:800,color:suma?C.accent:C.dim}}>{suma||"—"}</td>
@@ -2389,8 +2382,9 @@ function PokrytiImportu({ucty}){
       </table>
     </div>}
     <div style={{fontSize:11,color:C.muted,marginTop:8}}>
-      Číslo v buňce je počet transakcí z toho výpisu; po najetí myší uvidíš období a název souboru.
-      Měsíc se určuje podle konce fakturovaného období, takže výpis kreditní karty (14. – 14.) padne do měsíce, ve kterém končí.
+      Číslo v buňce je počet transakcí zaúčtovaných v tom měsíci. Nezáleží na tom, jestli nahraješ
+      dvanáct měsíčních souborů nebo jeden roční — rozdělí se to podle data transakce.
+      Prázdný měsíc znamená, že z něj nemáš nahraný výpis (nebo se v něm nic nedělo).
     </div>
   </div>;
 }
