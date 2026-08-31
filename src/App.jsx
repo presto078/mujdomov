@@ -2965,6 +2965,13 @@ function RozpadModal({titulek,polozky,pocetMesicu,ucty,kategorie,projekty,deti,a
               <div style={{fontSize:11,color:C.dim,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                 {s.polozky.length}× · {s.cislo?`účet ${s.cislo} · `:""}{(s.polozky[0].popis||"").slice(0,70)}
               </div>
+              {(()=>{
+                const vsy=[...new Set(s.polozky.map(x=>x.vs).filter(Boolean))];
+                if(!vsy.length)return null;
+                return <div style={{fontSize:11,color:C.accent,marginTop:2}}>
+                  VS: {vsy.slice(0,8).join(", ")}{vsy.length>8?` a ${vsy.length-8} dalších`:""}
+                </div>;
+              })()}
             </div>
             <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
               <div style={{fontWeight:800,fontSize:14}}>{kc0(s.suma)}</div>
@@ -2979,7 +2986,8 @@ function RozpadModal({titulek,polozky,pocetMesicu,ucty,kategorie,projekty,deti,a
                 <div style={{flex:1,minWidth:0}}>
                   <div>{new Date(t.datum).toLocaleDateString("cs-CZ")} · <span style={{color:C.muted}}>{uctyMap[t.ucet_id]||"?"}</span></div>
                   <div style={{fontSize:11,color:C.dim}}>
-                    {(t.popis||"").slice(0,110)}{t.protistrana?` ➜ ${t.protistrana}`:""}
+                    {t.vs?<span style={{color:C.accent,fontWeight:700}}>VS {t.vs} · </span>:null}
+                    {(t.popis||"").slice(0,110)}
                   </div>
                   <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:2}}>
                     {kat&&<span style={stitek}>{kat.emoji||"🏷"} {kat.nazev}</span>}
@@ -3000,7 +3008,7 @@ function RozpadModal({titulek,polozky,pocetMesicu,ucty,kategorie,projekty,deti,a
 
 function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
   const {data:trans,loading}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
-    .select("id,datum,castka,typ,popis,poznamka,protistrana,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id")
+    .select("id,datum,castka,typ,popis,poznamka,protistrana,vs,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id")
     .eq("zdroj","import").order("datum").range(od,do_)));
   const [rozpad,setRozpad]=useState(null);   // {titulek, polozky}
   const {data:stavy,loading:ls}=useData(()=>nactiVse((od,do_)=>sb.from("fin_stavy").select("*").gte("rok",2025).order("rok").range(od,do_)));
