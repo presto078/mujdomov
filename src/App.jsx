@@ -1815,11 +1815,29 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
   const [stav,setStav]=useState("");
   const [uklada,setUklada]=useState(false);
 
-  const ucetPodleCisla=cislo=>{
-    const c=String(cislo||"").replace(/^0+/,"").split("/")[0];
-    if(!c)return null;
-    return (ucty||[]).find(u=>String(u.cislo_uctu||"").replace(/^0+/,"")===c)||null;
+  // Čísla účtů chodí v různých tvarech: „4522946002/5500", „115-2728360227"
+  // i „000000-0592521001/2010". Porovnává se tedy základ bez předčíslí a bez
+  // vodicích nul; když mají obě strany předčíslí, musí sedět taky.
+  const rozlozCislo=c=>{
+    const bezBanky=String(c||"").split("/")[0].trim();
+    if(!bezBanky)return null;
+    const i=bezBanky.lastIndexOf("-");
+    const predcisli=(i<0?"":bezBanky.slice(0,i)).replace(/^0+/,"");
+    const zaklad=(i<0?bezBanky:bezBanky.slice(i+1)).replace(/^0+/,"");
+    return zaklad?{predcisli,zaklad}:null;
   };
+  const ucetPodleCisla=cislo=>{
+    const a=rozlozCislo(cislo);
+    if(!a)return null;
+    return (ucty||[]).find(u=>{
+      const b=rozlozCislo(u.cislo_uctu);
+      if(!b||b.zaklad!==a.zaklad)return false;
+      return !a.predcisli||!b.predcisli||a.predcisli===b.predcisli;
+    })||null;
+  };
+  // Splátka kreditní karty přijde na kartový výpis jako „VAŠE PLATBA — DĚKUJEME"
+  // bez protiúčtu. Nejsou to peníze zvenčí, ale přesun z vlastního účtu.
+  const jeSplatkaKarty=r=>/va[šs]e platba/i.test(`${r.popis||""} ${r.poznamka||""}`);
 
   const nacti=async e=>{
     const soubory=[...(e.target.files||[])];
@@ -1910,12 +1928,13 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
     }
     const rows=kVlozeni.map(r=>{
       const cizi=r.protiucet?ucetPodleCisla(r.protiucet):null;   // převod mezi vlastními účty
+      const interni=!!cizi||jeSplatkaKarty(r);
       return {
         ucet_id:davka.ucet_id,datum:r.datum,castka:r.castka,
         kategorie_id:r.kategorie_id||null,
         popis:[r.popis,r.poznamka].filter(Boolean).join(" · ").slice(0,300),
         protistrana:r.protiucet||null,
-        typ:cizi?"prevod":(r.castka>=0?"prijem":"vydaj"),
+        typ:interni?"prevod":(r.castka>=0?"prijem":"vydaj"),
         prevod_ucet_id:cizi?cizi.id:null,
         banka_ref:r.klic,vs:r.vs||null,poznamka:r.poznamka||null,zdroj:"import",
       };
