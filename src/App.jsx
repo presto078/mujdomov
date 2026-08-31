@@ -1839,20 +1839,37 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
         }
         const najdiKolizi=r=>rucni.find(x=>Math.abs(+x.castka-r.castka)<0.01
           &&Math.abs(new Date(x.datum)-new Date(r.datum))/86400000<=3);
+        // Některé banky dávají dvěma různým transakcím stejné ID (Moneta:
+        // kreditní úrok a daň z úroku mají obě 260731GTA900001), proto se
+        // klíč doplní o částku a případně o pořadí, aby byl vždy jedinečný.
+        const pocty=new Map();
+        const udelejKlic=r=>{
+          const zaklad=(r.ref?`${r.ref}|${r.castka}`:`${r.datum}|${r.castka}|${r.popis}`).slice(0,140);
+          const n=(pocty.get(zaklad)||0)+1; pocty.set(zaklad,n);
+          return n===1?zaklad:`${zaklad}#${n}`;
+        };
         const radky=v.radky.map((r,i)=>({
           ...r,
-          klic:r.ref||`${r.datum}|${r.castka}|${r.popis}`.slice(0,120),
-          duplicita:existujici.has(r.ref||`${r.datum}|${r.castka}|${r.popis}`.slice(0,120)),
+          klic:udelejKlic(r),
+          duplicita:false,   // doplní se hned po sestavení klíčů
           kategorie_id:navrhniKategorii(r,pravidla),
           kolize:najdiKolizi(r)||null,
           smazatKolizi:true,
           vybrano:true,
         }));
+        radky.forEach(r=>{r.duplicita=existujici.has(r.klic);r.vybrano=!r.duplicita;});
         const suma=radky.reduce((a,r)=>a+r.castka,0);
         const sedi=v.zustatek_pocatecni!=null&&v.zustatek_konecny!=null
           ? Math.abs(v.zustatek_pocatecni+suma-v.zustatek_konecny)<0.02 : null;
         nove.push({soubor:f.name,vypis:v,ucet,ucet_id:ucet?.id||"",radky,suma,sedi});
-      }catch(err){nove.push({soubor:f.name,chyba:String(err.message||err)});}
+      }catch(err){
+        const m=String(err.message||err);
+        // Po nasazení nové verze má otevřená stránka staré názvy souborů
+        const stara=/dynamically imported module|Failed to fetch dynamically/i.test(m);
+        nove.push({soubor:f.name,chyba:stara
+          ? "Máš v prohlížeči starou verzi aplikace. Načti stránku znovu (Ctrl+F5) a zkus to zas — nic se nepokazilo."
+          : m});
+      }
     }
     setDavky(d=>[...d,...nove]);setStav("");e.target.value="";
   };
@@ -1883,7 +1900,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
     let vlozeno=0;
     for(let i=0;i<rows.length;i+=200){
       const {error}=await sb.from("fin_transakce").insert(rows.slice(i,i+200));
-      if(error){setUklada(false);alert("Chyba při ukládání transakcí: "+error.message);return;}
+      if(error){setUklada(false);if(!tise)alert("Chyba při ukládání transakcí: "+error.message);throw new Error(`${davka.soubor}: ${error.message}`);}
       vlozeno+=rows.slice(i,i+200).length;
     }
     // Konečný zůstatek z výpisu rovnou do měsíčních stavů účtu — ale jen tehdy,
@@ -1912,13 +1929,16 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
     if(!pripravene.length){alert("Není co uložit — dávky bez rozpoznaného účtu musíš doplnit ručně.");return;}
     if(!confirm(`Uložit ${pripravene.length} výpisů do databáze?`))return;
     setUklada(true);
-    let celkem=0;
+    let celkem=0; const chyby=[];
     for(const b of pripravene){
       setStav(`Ukládám ${b.soubor}…`);
-      celkem+=(await uloz(b,true))||0;
+      try{ celkem+=(await uloz(b,true))||0; }
+      catch(e){ chyby.push(String(e.message||e)); }
     }
     setStav("");setUklada(false);
-    alert(`Hotovo — uloženo ${celkem} transakcí z ${pripravene.length} výpisů.`);
+    alert(chyby.length
+      ? `Uloženo ${celkem} transakcí. ${chyby.length} výpisů se nepodařilo uložit:\n\n${chyby.slice(0,5).join("\n")}`
+      : `Hotovo — uloženo ${celkem} transakcí z ${pripravene.length} výpisů.`);
   };
 
   // Výpis, který nekončí posledním dnem měsíce (typicky kreditka), se do stavů
@@ -2272,7 +2292,7 @@ function FinanceNoveTab(){
   const {data:ucty,loading:lu,reload:reloadUcty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
   const {data:kategorie,loading:lk,reload:reloadKategorie}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
   const [zalozka,setZalozka]=useState("import");
-  const {data:pocet}=useData(()=>sb.from("fin_transakce").select("id",{count:"exact",head:true}).eq("zdroj","import").then(({count,error})=>({data:count??0,error})));
+  const {data:pocet,reload:reloadPocet}=useData(()=>sb.from("fin_transakce").select("id",{count:"exact",head:true}).eq("zdroj","import").then(({count,error})=>({data:count??0,error})));
   if(lu||lk)return <Spinner/>;
   const bankovni=(ucty||[]).filter(u=>(u.skupina||"finance")==="finance");
   return <div>
@@ -2289,8 +2309,8 @@ function FinanceNoveTab(){
       {[{id:"import",l:"📥 Import z banky"},{id:"zarazeni",l:"🏷 Zařazení"}].map(t=>
         <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
     </div>
-    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={reloadUcty}/>}
-    {zalozka==="zarazeni"&&<ZarazeniTransakci kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={reloadUcty}/>}
+    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
+    {zalozka==="zarazeni"&&<ZarazeniTransakci kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadUcty();reloadPocet();}}/>}
   </div>;
 }
 
