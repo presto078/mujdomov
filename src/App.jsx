@@ -1832,10 +1832,19 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
         if(!v||!v.radky?.length){nove.push({soubor:f.name,chyba:"Nepodařilo se přečíst — neznámý formát výpisu."});continue;}
         const ucet=ucetPodleCisla(v.cislo_uctu);
         // duplicity proti tomu, co už v databázi je
-        let existujici=new Set(), rucni=[];
+        let existujici=new Set(), rucni=[]; const jizUlozene=new Map();
         if(ucet){
           const {data}=await sb.from("fin_transakce").select("banka_ref").eq("ucet_id",ucet.id).not("banka_ref","is",null);
           existujici=new Set((data||[]).map(x=>x.banka_ref));
+          // Pojistka pro případ, že se klíč mezi verzemi změnil: co už je z importu
+          // uložené na stejný den a částku, se považuje za tutéž transakci.
+          const {data:h}=await sb.from("fin_transakce").select("datum,castka")
+            .eq("ucet_id",ucet.id).eq("zdroj","import")
+            .gte("datum",v.obdobi_od||"1900-01-01").lte("datum",v.obdobi_do||"2100-01-01");
+          for(const x of (h||[])){
+            const k=`${x.datum}|${(+x.castka).toFixed(2)}`;
+            jizUlozene.set(k,(jizUlozene.get(k)||0)+1);
+          }
           // Ruční a modulové záznamy ve stejném období — můžou to být tytéž peníze
           const {data:r}=await sb.from("fin_transakce").select("id,datum,castka,popis,zdroj")
             .eq("ucet_id",ucet.id).is("banka_ref",null)
@@ -1844,12 +1853,14 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
         }
         const najdiKolizi=r=>rucni.find(x=>Math.abs(+x.castka-r.castka)<0.01
           &&Math.abs(new Date(x.datum)-new Date(r.datum))/86400000<=3);
-        // Některé banky dávají dvěma různým transakcím stejné ID (Moneta:
-        // kreditní úrok a daň z úroku mají obě 260731GTA900001), proto se
-        // klíč doplní o částku a případně o pořadí, aby byl vždy jedinečný.
+        // Klíč proti duplicitám musí obstát u všech bank:
+        //  · Moneta dává dvěma různým transakcím stejné ID (úrok a daň z úroku)
+        //  · Komerčka nedává ID transakce, ale kód jejího typu, který se opakuje
+        //    každý měsíc (90000201001 = připsaný úrok)
+        // Proto klíč obsahuje datum i částku a při shodě ještě pořadí výskytu.
         const pocty=new Map();
         const udelejKlic=r=>{
-          const zaklad=(r.ref?`${r.ref}|${r.castka}`:`${r.datum}|${r.castka}|${r.popis}`).slice(0,140);
+          const zaklad=`${r.ref||""}|${r.datum}|${r.castka}`.slice(0,140);
           const n=(pocty.get(zaklad)||0)+1; pocty.set(zaklad,n);
           return n===1?zaklad:`${zaklad}#${n}`;
         };
@@ -1862,7 +1873,14 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
           smazatKolizi:true,
           vybrano:true,
         }));
-        radky.forEach(r=>{r.duplicita=existujici.has(r.klic);r.vybrano=!r.duplicita;});
+        radky.forEach(r=>{
+          const k=`${r.datum}|${(+r.castka).toFixed(2)}`;
+          const zbyva=jizUlozene.get(k)||0;
+          if(existujici.has(r.klic))r.duplicita=true;
+          else if(zbyva>0){r.duplicita=true;jizUlozene.set(k,zbyva-1);}
+          else r.duplicita=false;
+          r.vybrano=!r.duplicita;
+        });
         const suma=radky.reduce((a,r)=>a+r.castka,0);
         const sedi=v.zustatek_pocatecni!=null&&v.zustatek_konecny!=null
           ? Math.abs(v.zustatek_pocatecni+suma-v.zustatek_konecny)<0.02 : null;
