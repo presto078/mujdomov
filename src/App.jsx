@@ -1778,6 +1778,88 @@ async function pdfRadky(data){
 }
 
 // Pozná formát a vrátí jednotný tvar výpisu
+// ── camt.053 (ISO 20022) — Air Bank, ČSOB, KB a další ────────────────────────
+// Mezinárodní standard, takže je bohatší než GPC: nese variabilní i konstantní
+// symbol, kód banky protistrany a číslo účtu i s předčíslím. Jméno protistrany
+// v něm být může (element Nm), ale banka ho vyplnit nemusí — Air Bank ho nechává
+// prázdné a jediné, co o odesílateli víš, je text platby v RmtInf/Ustrd.
+function parseCamt053(text){
+  const dom=new DOMParser().parseFromString(text,"application/xml");
+  if(dom.getElementsByTagName("parsererror").length)return null;
+  const prvni=(el,jmeno)=>{const n=el&&el.getElementsByTagName(jmeno);return n&&n.length?n[0]:null;};
+  const txt=(el,jmeno)=>{const n=prvni(el,jmeno);return n?(n.textContent||"").trim():"";};
+
+  const stmt=prvni(dom,"Stmt");
+  if(!stmt)return null;
+
+  const iban=txt(prvni(stmt,"Acct"),"IBAN");
+  // Z českého IBANu je předčíslí na pozicích 8–13 a základ na 14–23
+  let cislo_uctu="";
+  if(/^CZ\d{22}$/.test(iban)){
+    const pred=iban.slice(8,14).replace(/^0+/,""), zak=iban.slice(14).replace(/^0+/,"");
+    cislo_uctu=pred?`${pred}-${zak}`:zak;
+  }else{
+    cislo_uctu=txt(prvni(stmt,"Acct"),"Id").replace(/\s/g,"");
+  }
+
+  // Zůstatky: PRCD = počáteční, CLBD = konečný. DBIT znamená mínus.
+  let zustatek_pocatecni=null, zustatek_konecny=null;
+  for(const b of [...stmt.getElementsByTagName("Bal")]){
+    const kod=txt(prvni(b,"CdOrPrtry"),"Cd");
+    const castka=parseFloat(txt(b,"Amt")||"0")*(txt(b,"CdtDbtInd")==="DBIT"?-1:1);
+    if(kod==="PRCD"||kod==="OPBD")zustatek_pocatecni=castka;
+    if(kod==="CLBD")zustatek_konecny=castka;
+  }
+
+  const obdobi=prvni(stmt,"FrToDt");
+  const den=x=>x?x.slice(0,10):null;
+
+  const radky=[];
+  for(const n of [...stmt.getElementsByTagName("Ntry")]){
+    const znamenko=txt(n,"CdtDbtInd")==="DBIT"?-1:1;
+    const castka=parseFloat(txt(n,"Amt")||"0")*znamenko;
+    const datum=den(txt(prvni(n,"BookgDt"),"Dt"))||den(txt(prvni(n,"ValDt"),"Dt"));
+    const dtl=prvni(n,"TxDtls");
+
+    // Protistrana: u příchozí platby je to dlužník, u odchozí věřitel
+    const stranaEl =dtl&&prvni(dtl,znamenko>0?"Dbtr":"Cdtr");
+    const ucetEl   =dtl&&prvni(dtl,znamenko>0?"DbtrAcct":"CdtrAcct");
+    const bankaEl  =dtl&&prvni(dtl,znamenko>0?"DbtrAgt":"CdtrAgt");
+    const jmeno    =stranaEl?txt(stranaEl,"Nm"):"";
+    let ucet=ucetEl?(txt(ucetEl,"Othr")||txt(ucetEl,"IBAN")):"";
+    ucet=String(ucet).replace(/\s/g,"");
+    const kodBanky=bankaEl?txt(bankaEl,"Othr"):"";
+    const protiucet=ucet?(kodBanky?`${ucet}/${kodBanky}`:ucet):"";
+
+    // Symboly: buď ve strukturované části, nebo v EndToEndId tvaru /VS…/KS…
+    let vs="",ks="",ss="";
+    const e2e=dtl?txt(prvni(dtl,"Refs"),"EndToEndId"):"";
+    for(const r of (dtl?[...dtl.getElementsByTagName("CdtrRefInf")]:[])){
+      const v=(txt(r,"Ref")||"");
+      if(/^VS:/i.test(v))vs=v.slice(3);
+      else if(/^KS:/i.test(v))ks=v.slice(3);
+      else if(/^SS:/i.test(v))ss=v.slice(3);
+    }
+    if(!vs){const m=/\/VS(\d+)/i.exec(e2e); if(m)vs=m[1];}
+    if(!ks){const m=/\/KS(\d+)/i.exec(e2e); if(m)ks=m[1];}
+    if(!ss){const m=/\/SS(\d+)/i.exec(e2e); if(m)ss=m[1];}
+
+    const zprava=dtl?txt(prvni(dtl,"RmtInf"),"Ustrd"):"";
+    const dodatek=dtl?txt(dtl,"AddtlTxInf"):"";
+    // Jméno z banky má přednost; když ho banka nevyplní, zbývá text platby
+    const popis=[jmeno,zprava&&zprava!==jmeno?zprava:""].filter(Boolean).join(" — ")
+      ||dodatek||txt(n,"AddtlNtryInf")||"";
+
+    radky.push({datum,castka,protiucet,vs,ks,ss,popis,
+      poznamka:dodatek&&dodatek!==popis?dodatek:"",
+      ref:txt(n,"NtryRef")||(dtl?txt(prvni(dtl,"Refs"),"AcctSvcrRef"):"")});
+  }
+
+  return {banka:"camt.053",cislo_uctu,mena:txt(prvni(stmt,"Acct"),"Ccy")||"CZK",
+    obdobi_od:den(txt(obdobi,"FrDtTm")),obdobi_do:den(txt(obdobi,"ToDtTm")),
+    cislo_vypisu:txt(stmt,"LglSeqNb"),zustatek_pocatecni,zustatek_konecny,radky};
+}
+
 async function nactiVypis(file){
   const jmeno=file.name.toLowerCase();
   if(jmeno.endsWith(".pdf")){
@@ -1790,7 +1872,15 @@ async function nactiVypis(file){
     return parseAirBankPdf(radky);
   }
   const buf=await file.arrayBuffer();
-  if(jmeno.endsWith(".xml"))return parseMonetaXml(new TextDecoder("utf-8").decode(buf));
+  if(jmeno.endsWith(".xml")){
+    const xml=new TextDecoder("utf-8").decode(buf);
+    // camt.053 se pozná podle jmenného prostoru, Moneta má vlastní formát
+    if(/camt\.053|<BkToCstmrStmt/i.test(xml)){
+      const v=parseCamt053(xml);
+      if(v&&v.radky.length)return v;
+    }
+    return parseMonetaXml(xml);
+  }
   if(jmeno.endsWith(".csv"))return parseKbCsv(new TextDecoder("windows-1250").decode(buf));
   // GPC/ABO je v kódování Windows-1250
   return parseGpc(new TextDecoder("windows-1250").decode(buf));
@@ -1880,18 +1970,20 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
         if(!v||!v.radky?.length){nove.push({soubor:f.name,chyba:"Nepodařilo se přečíst — neznámý formát výpisu."});continue;}
         const ucet=ucetPodleCisla(v.cislo_uctu);
         // duplicity proti tomu, co už v databázi je
-        let existujici=new Set(), rucni=[]; const jizUlozene=new Map();
+        let existujici=new Set(), rucni=[]; const jizUlozene=new Map(), ulozeneRadky=new Map();
         if(ucet){
           const {data}=await sb.from("fin_transakce").select("banka_ref").eq("ucet_id",ucet.id).not("banka_ref","is",null);
           existujici=new Set((data||[]).map(x=>x.banka_ref));
           // Pojistka pro případ, že se klíč mezi verzemi změnil: co už je z importu
           // uložené na stejný den a částku, se považuje za tutéž transakci.
-          const {data:h}=await sb.from("fin_transakce").select("datum,castka")
+          const {data:h}=await sb.from("fin_transakce").select("id,datum,castka,popis,protistrana")
             .eq("ucet_id",ucet.id).eq("zdroj","import")
             .gte("datum",v.obdobi_od||"1900-01-01").lte("datum",v.obdobi_do||"2100-01-01");
           for(const x of (h||[])){
             const k=`${x.datum}|${(+x.castka).toFixed(2)}`;
             jizUlozene.set(k,(jizUlozene.get(k)||0)+1);
+            if(!ulozeneRadky.has(k))ulozeneRadky.set(k,[]);
+            ulozeneRadky.get(k).push(x);
           }
           // Ruční a modulové záznamy ve stejném období — můžou to být tytéž peníze
           const {data:r}=await sb.from("fin_transakce").select("id,datum,castka,popis,zdroj")
@@ -1921,6 +2013,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
           smazatKolizi:true,
           vybrano:true,
         }));
+        const pouzite=new Map();
         radky.forEach(r=>{
           const k=`${r.datum}|${(+r.castka).toFixed(2)}`;
           const zbyva=jizUlozene.get(k)||0;
@@ -1928,6 +2021,24 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
           else if(zbyva>0){r.duplicita=true;jizUlozene.set(k,zbyva-1);}
           else r.duplicita=false;
           r.vybrano=!r.duplicita;
+          // Duplicita ještě neznamená, že uložený řádek je úplný. Výpis v GPC
+          // nenese jméno protistrany, PDF ano — proto se u shodných řádků
+          // pozná, co v databázi chybí, a dá se to doplnit bez nového importu.
+          if(r.duplicita){
+            const kandidati=ulozeneRadky.get(k)||[];
+            const i=(pouzite.get(k)||0);
+            const stary=kandidati[i];
+            if(stary){
+              pouzite.set(k,i+1);
+              const novyPopis=[r.popis,r.poznamka].filter(Boolean).join(" · ").slice(0,300);
+              const lepsiPopis=novyPopis&&novyPopis.length>String(stary.popis||"").length;
+              const lepsiProti=r.protiucet&&!stary.protistrana;
+              if(lepsiPopis||lepsiProti)r.doplnit={id:stary.id,
+                popis:lepsiPopis?novyPopis:undefined,
+                protistrana:lepsiProti?r.protiucet:undefined,
+                stary:stary.popis||""};
+            }
+          }
         });
         const suma=radky.reduce((a,r)=>a+r.castka,0);
         const sedi=v.zustatek_pocatecni!=null&&v.zustatek_konecny!=null
@@ -1946,6 +2057,27 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
   };
 
   const uprav=(di,ri,zmena)=>setDavky(d=>d.map((b,i)=>i!==di?b:{...b,radky:b.radky.map((r,j)=>j!==ri?r:{...r,...zmena})}));
+
+  // Doplnění chybějících údajů u plateb, které v databázi už jsou. Používá se,
+  // když se tentýž měsíc stáhne v lepším formátu (PDF místo GPC).
+  const doplnUdaje=async davka=>{
+    const kDoplneni=davka.radky.filter(r=>r.doplnit);
+    if(!kDoplneni.length)return;
+    setUklada(true);
+    let hotovo=0;
+    for(const r of kDoplneni){
+      const patch={};
+      if(r.doplnit.popis)patch.popis=r.doplnit.popis;
+      if(r.doplnit.protistrana)patch.protistrana=r.doplnit.protistrana;
+      if(!Object.keys(patch).length)continue;
+      const {error}=await sb.from("fin_transakce").update(patch).eq("id",r.doplnit.id);
+      if(error){setUklada(false);alert("Chyba: "+error.message);return;}
+      hotovo++;
+    }
+    setUklada(false);
+    alert(`Doplněno u ${hotovo} plateb.`);
+    onHotovo&&onHotovo();
+  };
 
   const uloz=async(davka,tise)=>{
     if(!davka.ucet_id){if(!tise)alert("Nejdřív vyber, do kterého účtu výpis patří.");return 0;}
@@ -2162,8 +2294,19 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
             bez kategorie <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!r.kategorie_id).length}</strong>
             {b.radky.some(r=>r.kolize&&!r.duplicita)&&<> · nahradí ručních <strong style={{color:"#c87000"}}>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&r.kolize&&r.smazatKolizi).length}</strong></>}
           </div>
-          <button onClick={()=>uloz(b)} disabled={uklada||!b.ucet_id} style={btnC()}>{uklada?"Ukládám…":"Uložit do databáze"}</button>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {b.radky.some(r=>r.doplnit)&&
+              <button onClick={()=>doplnUdaje(b)} disabled={uklada} style={btnC("#7a5af5",true)}>
+                Doplnit údaje u {b.radky.filter(r=>r.doplnit).length} už uložených
+              </button>}
+            <button onClick={()=>uloz(b)} disabled={uklada||!b.ucet_id} style={btnC()}>{uklada?"Ukládám…":"Uložit do databáze"}</button>
+          </div>
         </div>
+        {b.radky.some(r=>r.doplnit)&&<div style={{fontSize:11,color:"#5b3fd0",background:"#f2effe",border:"1px solid #cfc4f8",borderRadius:8,padding:"8px 12px",marginTop:8}}>
+          Tenhle výpis nese u {b.radky.filter(r=>r.doplnit).length} už uložených plateb víc údajů než to, co je v databázi
+          — typicky jméno protistrany, které formát GPC vůbec neobsahuje a PDF ano.
+          Tlačítkem se doplní, nic se nepřidá ani nesmaže.
+        </div>}
       </>}
     </div>)}
 
@@ -2731,30 +2874,78 @@ function HotovostniPlatbaModal({zaznam,onClose,onSaved}){
 // Bere jen skutečné pohyby z výpisů, jen z běžných účtů, jen dokončené měsíce.
 // Převody mezi vlastními účty se ignorují, aby se příjem nenafoukl.
 // ══════════════════════════════════════════════════════════════════════════════
+// Číslo protiúčtu z výpisu bez kódu banky a bez vodicích nul, aby se
+// „0000000285720588" a „285720588/3030" spároval na jeden a ten samý účet.
+function normCislo(c){
+  const bez=String(c||"").split("/")[0].trim();
+  if(!bez)return "";
+  const i=bez.lastIndexOf("-");
+  const pred=(i<0?"":bez.slice(0,i)).replace(/^0+/,"");
+  const zak=(i<0?bez:bez.slice(i+1)).replace(/^0+/,"");
+  if(!zak)return "";
+  return pred?`${pred}-${zak}`:zak;
+}
+
 // Rozpad jednoho čísla na řádky, ze kterých vzniklo. Nejdřív souhrn podle
 // protistrany — tam je hned vidět, jestli se do příjmů nepletou přesuny mezi
 // vlastními účty — a pod tím jednotlivé transakce po měsících.
-function RozpadModal({titulek,polozky,ucty,kategorie,projekty,deti,auta,onClose}){
+function RozpadModal({titulek,polozky,pocetMesicu,ucty,kategorie,projekty,deti,auta,onClose}){
   const [rozbaleno,setRozbaleno]=useState(null);
+  const {data:jmena,reload:reloadJmena}=useData(()=>sb.from("fin_protistrany").select("*"));
+  const jmenoMap=Object.fromEntries((jmena||[]).map(x=>[x.cislo,x.nazev]));
+  const pojmenuj=async cislo=>{
+    const n=window.prompt(`Kdo je ${cislo}?`,jmenoMap[cislo]||"");
+    if(n===null)return;
+    const v=n.trim();
+    if(!v){await sb.from("fin_protistrany").delete().eq("cislo",cislo);reloadJmena();return;}
+    const {error}=await sb.from("fin_protistrany").upsert({cislo,nazev:v},{onConflict:"cislo"});
+    if(error)alert("Chyba: "+error.message);
+    reloadJmena();
+  };
   const uctyMap=Object.fromEntries((ucty||[]).map(u=>[u.id,u.nazev]));
   const katMap=Object.fromEntries((kategorie||[]).map(k=>[k.id,k]));
   const projMap=Object.fromEntries((projekty||[]).map(p=>[String(p.id),p]));
   const celkem=polozky.reduce((a,t)=>a+Math.abs(+t.castka),0);
 
+  // U příchozích plateb je jediné, co odesílatele identifikuje, číslo protiúčtu
+  // — popis nese jen text platby, což je většinou vlastní jméno příjemce.
+  // Seskupuje se proto přednostně podle protiúčtu a název se bere z číselníku.
   const skupiny=(()=>{
     const m=new Map();
     for(const t of polozky){
-      const k=klicObchodnika(t);
-      if(!m.has(k))m.set(k,{klic:k,polozky:[],suma:0});
+      const cislo=normCislo(t.protistrana);
+      const k=cislo?`#${cislo}`:klicObchodnika(t);
+      if(!m.has(k))m.set(k,{klic:k,cislo,polozky:[],suma:0});
       const s=m.get(k); s.polozky.push(t); s.suma+=Math.abs(+t.castka);
     }
     return [...m.values()].sort((a,b)=>b.suma-a.suma);
   })();
+  const nazevSkupiny=s=>s.cislo?(jmenoMap[s.cislo]||s.cislo):s.klic;
+
+  // Rozpad po měsících, ať je vidět, které měsíce se do průměru počítají
+  const poMesicich=(()=>{
+    const m=new Map();
+    for(const t of polozky){
+      const k=String(t.datum).slice(0,7);
+      m.set(k,(m.get(k)||0)+Math.abs(+t.castka));
+    }
+    return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+  })();
 
   return <Modal title={titulek} onClose={onClose} width={860}>
-    <div style={{fontSize:13,marginBottom:14}}>
-      <strong>{polozky.length}</strong> pohybů, celkem <strong>{kc0(celkem)}</strong>.
-      Klikni na řádek a rozbalí se ti jednotlivé platby.
+    <div style={{fontSize:13,marginBottom:12}}>
+      <strong>{polozky.length}</strong> pohybů, celkem <strong>{kc0(celkem)}</strong> za {poMesicich.length} měsíců
+      {pocetMesicu?<> → průměr <strong>{kc0(celkem/pocetMesicu)}</strong> měsíčně</>:null}.
+    </div>
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+      {poMesicich.map(([m,v])=><div key={m} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",fontSize:11}}>
+        <div style={{color:C.muted}}>{m}</div>
+        <div style={{fontWeight:700}}>{kc0(v)}</div>
+      </div>)}
+    </div>
+    <div style={{fontSize:12,color:C.muted,marginBottom:10}}>
+      Seskupeno podle protiúčtu — u příchozí platby banka jméno odesílatele neposílá, jen číslo účtu.
+      Klikni na řádek pro jednotlivé platby, nebo si protistranu pojmenuj.
     </div>
     <div style={{maxHeight:"62vh",overflowY:"auto"}}>
       {skupiny.map(s=>{
@@ -2763,9 +2954,16 @@ function RozpadModal({titulek,polozky,ucty,kategorie,projekty,deti,auta,onClose}
           <div onClick={()=>setRozbaleno(otevreno?null:s.klic)}
             style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"8px 4px",cursor:"pointer"}}>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600}}>{otevreno?"▾":"▸"} {s.klic}</div>
+              <div style={{fontSize:13,fontWeight:600}}>
+                {otevreno?"▾":"▸"} {nazevSkupiny(s)}
+                {s.cislo&&<span onClick={e=>{e.stopPropagation();pojmenuj(s.cislo);}}
+                  title="Pojmenovat tuhle protistranu"
+                  style={{marginLeft:8,fontSize:11,fontWeight:400,color:C.accent,cursor:"pointer",textDecoration:"underline"}}>
+                  {jmenoMap[s.cislo]?"přejmenovat":"kdo to je?"}
+                </span>}
+              </div>
               <div style={{fontSize:11,color:C.dim,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                {s.polozky.length}× · {(s.polozky[0].popis||"").slice(0,80)}
+                {s.polozky.length}× · {s.cislo?`účet ${s.cislo} · `:""}{(s.polozky[0].popis||"").slice(0,70)}
               </div>
             </div>
             <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
@@ -2825,8 +3023,10 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
 
   // Jen dokončené měsíce — rozdělaný měsíc by průměr stáhl dolů.
   const ted=new Date(), tentoMesic=`${ted.getFullYear()}-${String(ted.getMonth()+1).padStart(2,"0")}`;
+  // Poslední den v měsíci už je měsíc hotový — nemá cenu ho zahazovat.
+  const posledniDen=new Date(ted.getFullYear(),ted.getMonth()+1,0).getDate()===ted.getDate();
   const mesice=[...new Set(pohyby.map(t=>String(t.datum).slice(0,7)))].sort();
-  const hotoveMesice=mesice.filter(m=>m<tentoMesic);
+  const hotoveMesice=mesice.filter(m=>posledniDen?m<=tentoMesic:m<tentoMesic);
   const n=hotoveMesice.length||1;
   const vHotovych=pohyby.filter(t=>hotoveMesice.includes(String(t.datum).slice(0,7)));
 
@@ -2990,7 +3190,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
       {sloupec("👥 Koho se to týká · měsíčně",dleSubjektu,C.accent)}
     </div>
 
-    {rozpad&&<RozpadModal {...rozpad} ucty={ucty} kategorie={kategorie} projekty={projekty}
+    {rozpad&&<RozpadModal {...rozpad} pocetMesicu={n} ucty={ucty} kategorie={kategorie} projekty={projekty}
       deti={deti} auta={auta} onClose={()=>setRozpad(null)}/>}
   </div>;
 }
