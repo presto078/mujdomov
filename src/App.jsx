@@ -2061,6 +2061,32 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
   </div>;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// FINANCE — nová dlaždice
+// Zatím obsahuje jen import z banky. Přehledy přibudou, až budou data,
+// aby se stavěly nad skutečnými čísly a ne naslepo. Stará dlaždice
+// „Finance — zůstatky OLD" zůstává vedle, dokud nebude tahle plnohodnotná.
+// ══════════════════════════════════════════════════════════════════════════════
+function FinanceNoveTab(){
+  const {data:ucty,loading:lu,reload:reloadUcty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
+  const {data:kategorie,loading:lk}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
+  const {data:pocet}=useData(()=>sb.from("fin_transakce").select("id",{count:"exact",head:true}).eq("zdroj","import").then(({count,error})=>({data:count??0,error})));
+  if(lu||lk)return <Spinner/>;
+  const bankovni=(ucty||[]).filter(u=>(u.skupina||"finance")==="finance");
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:10}}>
+      <h2 style={{margin:0,fontSize:22,fontWeight:800}}>💰 Finance</h2>
+      <div style={{fontSize:12,color:C.muted}}>{bankovni.length} bankovních účtů · {pocet??0} naimportovaných transakcí</div>
+    </div>
+    <div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"12px 16px",marginBottom:18,fontSize:12,color:"#c87000"}}>
+      Tahle dlaždice se teprve staví. Zatím je v ní jen import z banky — přehledy přibudou,
+      až budou naimportovaná data, aby odpovídaly na skutečné otázky a ne na vymyšlené.
+      Stará evidence zůstatků je vedle pod <strong>🗄 Finance — zůstatky OLD</strong>.
+    </div>
+    <ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={reloadUcty}/>
+  </div>;
+}
+
 function FinanceTab(){
   const [zalozka,setZalozka]=useState("dashboard");
   const {data:ucty,reload:reloadUcty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
@@ -2096,7 +2122,6 @@ function FinanceTab(){
     {id:"dashboard",l:"📊 Dashboard"},
     {id:"ucty",l:"🏦 Účty"},
     {id:"transakce",l:"💸 Transakce"},
-    {id:"import",l:"📥 Import z banky"},
     {id:"kategorie",l:"🏷 Kategorie"},
     {id:"typy",l:"🗂 Typy účtů"},
   ];
@@ -2828,7 +2853,6 @@ function FinanceTab(){
     {zalozka==="dashboard"&&<DashboardView/>}
     {zalozka==="ucty"&&<UctyView/>}
     {zalozka==="transakce"&&<TransakceView/>}
-    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={()=>{reloadTrans();reloadStavy();}}/>}
     {zalozka==="kategorie"&&<KategorieView/>}
     {zalozka==="typy"&&<TypyUctuView/>}
   </div>;
@@ -8644,7 +8668,8 @@ const TILES=[
   {id:"spotreba", emoji:"💧", label:"Spotřeba",  popis:"Voda, elektřina, plyn",  barva:"#1a7a4a"},
   {id:"voda",     emoji:"🚰", label:"Voda",      popis:"Odečty, faktury, odhad", barva:"#0369a1"},
   {id:"elektrina",emoji:"⚡", label:"Elektřina", popis:"Samoodečty a vyúčtování",barva:"#b45309"},
-  {id:"finance",  emoji:"💰", label:"Finance (Realita)", popis:"Reálné útraty a 22 účtů", barva:"#b8860b"},
+  {id:"finance",  emoji:"🗄", label:"Finance — zůstatky OLD", popis:"Stará evidence, jen zůstatky", barva:"#8a7a5a"},
+  {id:"finance2", emoji:"💰", label:"Finance",        popis:"Import z banky a nový přehled", barva:"#b8860b"},
   {id:"cashflow", emoji:"📈", label:"Cashflow",  popis:"Plán likvidity a převody",barva:"#0f766e"},
   {id:"dum",      emoji:"🔧", label:"Dům",       popis:"Opravy a plánování",     barva:"#8B3A1A"},
   {id:"auta",     emoji:"🚗", label:"Auta",      popis:"Servis, náklady, km",     barva:"#1a1a2e"},
@@ -8857,6 +8882,7 @@ function AppInner() {
         {modul==="voda"     && <VodaTab/>}
         {modul==="elektrina"&& <ElektrinaTab/>}
         {modul==="finance"  && <FinanceTab/>}
+        {modul==="finance2" && <FinanceNoveTab/>}
         {modul==="cashflow" && <CashflowTab/>}
         {modul==="dum"      && <DumTab/>}
         {modul==="auta"     && <AutaTab/>}
