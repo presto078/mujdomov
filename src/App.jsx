@@ -1859,8 +1859,8 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
 
   const uprav=(di,ri,zmena)=>setDavky(d=>d.map((b,i)=>i!==di?b:{...b,radky:b.radky.map((r,j)=>j!==ri?r:{...r,...zmena})}));
 
-  const uloz=async davka=>{
-    if(!davka.ucet_id){alert("Nejdřív vyber, do kterého účtu výpis patří.");return;}
+  const uloz=async(davka,tise)=>{
+    if(!davka.ucet_id){if(!tise)alert("Nejdřív vyber, do kterého účtu výpis patří.");return 0;}
     setUklada(true);
     const kVlozeni=davka.radky.filter(r=>r.vybrano&&!r.duplicita);
     const kSmazani=davka.radky.filter(r=>r.vybrano&&!r.duplicita&&r.kolize&&r.smazatKolizi).map(r=>r.kolize.id);
@@ -1902,7 +1902,23 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
       zustatek_konecny:v.zustatek_konecny??null});
     setDavky(d=>d.filter(x=>x!==davka));
     setUklada(false);reloadImporty();onHotovo&&onHotovo();
-    alert(`Uloženo ${vlozeno} transakcí.`);
+    if(!tise)alert(`Uloženo ${vlozeno} transakcí.`);
+    return vlozeno;
+  };
+
+  // Uložit všechny načtené výpisy najednou — u desítek souborů je klikání po kartách nesmysl
+  const ulozVse=async()=>{
+    const pripravene=davky.filter(b=>!b.chyba&&b.ucet_id);
+    if(!pripravene.length){alert("Není co uložit — dávky bez rozpoznaného účtu musíš doplnit ručně.");return;}
+    if(!confirm(`Uložit ${pripravene.length} výpisů do databáze?`))return;
+    setUklada(true);
+    let celkem=0;
+    for(const b of pripravene){
+      setStav(`Ukládám ${b.soubor}…`);
+      celkem+=(await uloz(b,true))||0;
+    }
+    setStav("");setUklada(false);
+    alert(`Hotovo — uloženo ${celkem} transakcí z ${pripravene.length} výpisů.`);
   };
 
   // Výpis, který nekončí posledním dnem měsíce (typicky kreditka), se do stavů
@@ -1940,6 +1956,19 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
       </label>
       {stav&&<span style={{marginLeft:12,fontSize:12,fontWeight:700,color:"#1a4fa8"}}>{stav}</span>}
     </div>
+
+    {davky.length>1&&<div style={{background:C.surface,border:`2px solid ${C.accent}`,borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap",position:"sticky",top:54,zIndex:20}}>
+      <div style={{fontSize:13}}>
+        <strong>{davky.length}</strong> načtených výpisů ·
+        {" "}<strong>{davky.reduce((a,b)=>a+(b.radky?.filter(r=>r.vybrano&&!r.duplicita).length||0),0)}</strong> transakcí k uložení
+        {davky.some(b=>!b.chyba&&!b.ucet_id)&&<span style={{color:C.orange,fontWeight:700}}> · {davky.filter(b=>!b.chyba&&!b.ucet_id).length} bez účtu</span>}
+        {davky.some(b=>b.sedi===false)&&<span style={{color:C.red,fontWeight:700}}> · {davky.filter(b=>b.sedi===false).length} nesedí zůstatek</span>}
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>setDavky([])} disabled={uklada} style={{...btnC(C.muted,true),fontSize:12,padding:"6px 12px"}}>Zahodit vše</button>
+        <button onClick={ulozVse} disabled={uklada} style={{...btnC(),fontSize:13,padding:"8px 18px"}}>{uklada?"Ukládám…":"Uložit všechny"}</button>
+      </div>
+    </div>}
 
     {davky.map((b,di)=><div key={di} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:16}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:10}}>
