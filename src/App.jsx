@@ -2001,6 +2001,11 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
                 <td style={{padding:"6px 8px",maxWidth:280}}>
                   <div style={{fontWeight:600}}>{r.popis||"—"}</div>
                   {r.poznamka&&<div style={{color:C.dim,fontSize:11}}>{r.poznamka.slice(0,70)}</div>}
+                  {(r.protiucet||r.vs)&&<div style={{color:C.muted,fontSize:11,marginTop:1}}>
+                    {r.protiucet&&<span>➜ {r.protiucet}</span>}
+                    {r.protiucet&&r.vs&&<span> · </span>}
+                    {r.vs&&<span>VS {r.vs}</span>}
+                  </div>}
                   {r.duplicita&&<div style={{color:C.orange,fontSize:11,fontWeight:700}}>už je v databázi</div>}
                   {r.kolize&&!r.duplicita&&<div style={{color:"#c87000",fontSize:11,marginTop:2}}>
                     <label style={{cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
@@ -2061,6 +2066,173 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
   </div>;
 }
 
+// ── Zařazení naimportovaných transakcí do kategorií ──────────────────────────
+// Neukazuje tisíc transakcí, ale seskupené obchodníky. Jedno kliknutí zařadí
+// celou skupinu a rovnou uloží pravidlo, takže příští import už je zařazený sám.
+const ZARAZENI_STOP = ["platba kartou","odchozi uhrada","prichozi uhrada","okamzita uhrada",
+  "trvaly prikaz","jednorazova uhrada","platba","uhrada","jiri kucera","kucera jiri",
+  "odeslane inkaso","karetni transakce","vyber hotovosti","prevod"];
+
+// Z popisu a poznámky udělá klíč obchodníka: bez diakritiky, bez čísel, pár slov
+function klicObchodnika(t){
+  const zdroj = `${t.poznamka||""} ${t.popis||""}`;
+  const cisty = bezDiakritiky(zdroj)
+    .replace(/[^a-z0-9 ]/g," ")
+    .replace(/\b\d+\b/g," ")
+    .replace(/\s+/g," ").trim();
+  const slova = cisty.split(" ").filter(w=>w.length>2&&!ZARAZENI_STOP.some(s=>s.startsWith(w)&&w.length<4));
+  const bezSumu = slova.filter(w=>!ZARAZENI_STOP.includes(w));
+  const zaklad = (bezSumu.length?bezSumu:slova).slice(0,3).join(" ");
+  return zaklad || cisty.slice(0,20) || "(bez popisu)";
+}
+
+function ZarazeniTransakci({kategorie,onZmena,reloadKategorie}){
+  const {data:transakce,loading,reload}=useData(()=>sb.from("fin_transakce")
+    .select("id,datum,castka,popis,poznamka,protistrana,kategorie_id,typ,ucet_id")
+    .eq("zdroj","import").order("datum",{ascending:false}).limit(5000));
+  const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*"));
+  const [jenNezarazene,setJenNezarazene]=useState(true);
+  const [volba,setVolba]=useState({});        // klíč skupiny → kategorie_id
+  const [ulozPravidlo,setUlozPravidlo]=useState({});
+  const [hledat,setHledat]=useState("");
+  const [pracuje,setPracuje]=useState("");
+  const [novaKat,setNovaKat]=useState(null);  // {nazev,typ,emoji,proSkupinu}
+
+  const skupiny=(()=>{
+    const m=new Map();
+    for(const t of (transakce||[])){
+      if(t.typ==="prevod")continue;                       // převody mezi vlastními účty neřešíme
+      if(jenNezarazene&&t.kategorie_id)continue;
+      const k=klicObchodnika(t);
+      if(!m.has(k))m.set(k,{klic:k,polozky:[],suma:0});
+      const s=m.get(k); s.polozky.push(t); s.suma+=+t.castka;
+    }
+    let out=[...m.values()];
+    if(hledat.trim()){
+      const h=bezDiakritiky(hledat);
+      out=out.filter(s=>bezDiakritiky(s.klic).includes(h)||s.polozky.some(p=>bezDiakritiky(`${p.popis} ${p.poznamka}`).includes(h)));
+    }
+    return out.sort((a,b)=>Math.abs(b.suma)-Math.abs(a.suma));
+  })();
+
+  const celkemNezarazenych=(transakce||[]).filter(t=>!t.kategorie_id&&t.typ!=="prevod").length;
+
+  const zarad=async skupina=>{
+    const kat=volba[skupina.klic];
+    if(!kat){alert("Nejdřív vyber kategorii.");return;}
+    setPracuje(skupina.klic);
+    const ids=skupina.polozky.map(p=>p.id);
+    for(let i=0;i<ids.length;i+=200){
+      const {error}=await sb.from("fin_transakce").update({kategorie_id:kat}).in("id",ids.slice(i,i+200));
+      if(error){setPracuje("");alert("Chyba: "+error.message);return;}
+    }
+    if(ulozPravidlo[skupina.klic]!==false&&skupina.klic.length>2){
+      const {error}=await sb.from("fin_pravidla").insert({vzor:skupina.klic,kategorie_id:kat,priorita:40});
+      if(error&&!/duplicate|unique/i.test(error.message))console.warn(error.message);
+      reloadPravidla();
+    }
+    setPracuje("");reload();onZmena&&onZmena();
+  };
+
+  const zalozKategorii=async()=>{
+    const n=(novaKat?.nazev||"").trim();
+    if(!n)return;
+    const {data,error}=await sb.from("fin_kategorie")
+      .insert({nazev:n,typ:novaKat.typ||"vydaj",emoji:novaKat.emoji||"🏷",barva:"#4f7ef0",poradi:900})
+      .select("id").single();
+    if(error){alert("Chyba: "+error.message);return;}
+    await reloadKategorie();
+    if(novaKat.proSkupinu)setVolba(v=>({...v,[novaKat.proSkupinu]:data.id}));
+    setNovaKat(null);
+  };
+
+  if(loading)return <Spinner/>;
+
+  return <div>
+    <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
+      <div style={{fontSize:13,fontWeight:700}}>
+        {celkemNezarazenych>0
+          ? <>Nezařazeno <span style={{color:C.orange}}>{celkemNezarazenych}</span> transakcí ve <span style={{color:C.accent}}>{skupiny.length}</span> skupinách</>
+          : <span style={{color:C.green}}>✓ Všechno zařazeno</span>}
+      </div>
+      <input style={{...inp,maxWidth:220,fontSize:12,padding:"5px 10px"}} placeholder="Hledat obchodníka…" value={hledat} onChange={e=>setHledat(e.target.value)}/>
+      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer"}}>
+        <input type="checkbox" checked={jenNezarazene} onChange={e=>setJenNezarazene(e.target.checked)}/> jen nezařazené
+      </label>
+      <button onClick={()=>setNovaKat({nazev:"",typ:"vydaj",emoji:"🏷"})} style={{...btnC(C.green,true),fontSize:12,padding:"5px 12px"}}>+ Nová kategorie</button>
+    </div>
+
+    <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:10,padding:"9px 14px",fontSize:12,color:"#3066b0",marginBottom:14}}>
+      Jedno zařazení platí pro celou skupinu. Pokud necháš zatržené „zapamatovat", příští import
+      stejného obchodníka zařadí sám. Převody mezi tvými účty se tu neukazují — ty kategorii nepotřebují.
+    </div>
+
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {skupiny.length===0&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:24,textAlign:"center",color:C.dim}}>Nic k zařazení</div>}
+      {skupiny.slice(0,150).map(s=>{
+        const prijmy=s.suma>0;
+        return <div key={s.klic} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <div style={{minWidth:220,flex:1}}>
+              <div style={{fontWeight:700,fontSize:14}}>{s.klic}</div>
+              <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+                {s.polozky.length}× · celkem <strong style={{color:prijmy?C.green:C.red}}>{fmtKc(s.suma)}</strong> ·
+                {" "}{new Date(s.polozky[s.polozky.length-1].datum).toLocaleDateString("cs-CZ")} – {new Date(s.polozky[0].datum).toLocaleDateString("cs-CZ")}
+              </div>
+              <div style={{fontSize:11,color:C.dim,marginTop:3}}>
+                {s.polozky.slice(0,2).map(p=>`${p.popis||""} ${p.poznamka||""} ${p.protistrana?"➜ "+p.protistrana:""}`.trim().slice(0,72)).join(" · ")}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <select style={{...inp,fontSize:12,padding:"5px 8px",minWidth:170}} value={volba[s.klic]||""} onChange={e=>{
+                if(e.target.value==="__nova"){setNovaKat({nazev:s.klic,typ:prijmy?"prijem":"vydaj",emoji:"🏷",proSkupinu:s.klic});return;}
+                setVolba(v=>({...v,[s.klic]:e.target.value}));
+              }}>
+                <option value="">— vyber kategorii —</option>
+                {(kategorie||[]).filter(k=>prijmy?k.typ==="prijem":true).map(k=><option key={k.id} value={k.id}>{k.emoji||""} {k.nazev}</option>)}
+                <option value="__nova">➕ nová kategorie…</option>
+              </select>
+              <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.muted,cursor:"pointer"}}>
+                <input type="checkbox" checked={ulozPravidlo[s.klic]!==false} onChange={e=>setUlozPravidlo(p=>({...p,[s.klic]:e.target.checked}))}/> zapamatovat
+              </label>
+              <button onClick={()=>zarad(s)} disabled={!volba[s.klic]||pracuje===s.klic} style={{...btnC(),fontSize:12,padding:"6px 14px"}}>
+                {pracuje===s.klic?"…":`Zařadit ${s.polozky.length}×`}
+              </button>
+            </div>
+          </div>
+        </div>;
+      })}
+      {skupiny.length>150&&<div style={{textAlign:"center",color:C.muted,fontSize:12,padding:8}}>…a dalších {skupiny.length-150} skupin. Zařaď ty velké a zbytek se pročistí.</div>}
+    </div>
+
+    {novaKat&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+        <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>Nová kategorie</h3>
+        <div style={{marginBottom:11}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Název</div>
+          <input style={inp} value={novaKat.nazev} autoFocus onChange={e=>setNovaKat(k=>({...k,nazev:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&zalozKategorii()}/>
+        </div>
+        <div style={{display:"flex",gap:10,marginBottom:11}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Typ</div>
+            <select style={inp} value={novaKat.typ} onChange={e=>setNovaKat(k=>({...k,typ:e.target.value}))}>
+              <option value="vydaj">Výdaj</option><option value="prijem">Příjem</option>
+            </select>
+          </div>
+          <div style={{width:90}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Emoji</div>
+            <input style={inp} value={novaKat.emoji} onChange={e=>setNovaKat(k=>({...k,emoji:e.target.value}))}/>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          <button onClick={zalozKategorii} disabled={!novaKat.nazev.trim()} style={btnC()}>Založit</button>
+          <button onClick={()=>setNovaKat(null)} style={btnC(C.muted,true)}>Zrušit</button>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // FINANCE — nová dlaždice
 // Zatím obsahuje jen import z banky. Přehledy přibudou, až budou data,
@@ -2069,7 +2241,8 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
 // ══════════════════════════════════════════════════════════════════════════════
 function FinanceNoveTab(){
   const {data:ucty,loading:lu,reload:reloadUcty}=useData(()=>sb.from("fin_ucty").select("*").eq("aktivni",true).order("poradi"));
-  const {data:kategorie,loading:lk}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
+  const {data:kategorie,loading:lk,reload:reloadKategorie}=useData(()=>sb.from("fin_kategorie").select("*").order("poradi"));
+  const [zalozka,setZalozka]=useState("import");
   const {data:pocet}=useData(()=>sb.from("fin_transakce").select("id",{count:"exact",head:true}).eq("zdroj","import").then(({count,error})=>({data:count??0,error})));
   if(lu||lk)return <Spinner/>;
   const bankovni=(ucty||[]).filter(u=>(u.skupina||"finance")==="finance");
@@ -2083,7 +2256,12 @@ function FinanceNoveTab(){
       až budou naimportovaná data, aby odpovídaly na skutečné otázky a ne na vymyšlené.
       Stará evidence zůstatků je vedle pod <strong>🗄 Finance — zůstatky OLD</strong>.
     </div>
-    <ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={reloadUcty}/>
+    <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
+      {[{id:"import",l:"📥 Import z banky"},{id:"zarazeni",l:"🏷 Zařazení"}].map(t=>
+        <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
+    </div>
+    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={reloadUcty}/>}
+    {zalozka==="zarazeni"&&<ZarazeniTransakci kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={reloadUcty}/>}
   </div>;
 }
 
