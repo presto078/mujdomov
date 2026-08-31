@@ -1835,9 +1835,13 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
       return !a.predcisli||!b.predcisli||a.predcisli===b.predcisli;
     })||null;
   };
-  // Splátka kreditní karty přijde na kartový výpis jako „VAŠE PLATBA — DĚKUJEME"
-  // bez protiúčtu. Nejsou to peníze zvenčí, ale přesun z vlastního účtu.
-  const jeSplatkaKarty=r=>/va[šs]e platba/i.test(`${r.popis||""} ${r.poznamka||""}`);
+  // Přesuny, které nejsou pohybem peněz dovnitř ani ven, ale nemají protiúčet:
+  //  · splátka kreditní karty („VAŠE PLATBA — DĚKUJEME" na kartovém výpisu)
+  //  · vklad vlastní hotovosti do bankomatu
+  const jeVlastniPresun=r=>{
+    const t=`${r.popis||""} ${r.poznamka||""}`;
+    return /va[šs]e platba/i.test(t)||/vklad hotovosti/i.test(t);
+  };
 
   const nacti=async e=>{
     const soubory=[...(e.target.files||[])];
@@ -1928,7 +1932,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
     }
     const rows=kVlozeni.map(r=>{
       const cizi=r.protiucet?ucetPodleCisla(r.protiucet):null;   // převod mezi vlastními účty
-      const interni=!!cizi||jeSplatkaKarty(r);
+      const interni=!!cizi||jeVlastniPresun(r);
       return {
         ucet_id:davka.ucet_id,datum:r.datum,castka:r.castka,
         kategorie_id:r.kategorie_id||null,

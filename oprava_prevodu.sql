@@ -30,3 +30,14 @@ update fin_transakce t
 -- Kontrola, co z toho vzešlo
 select typ, count(*) as pocet, sum(castka)::numeric(12,2) as suma
   from fin_transakce where zdroj = 'import' group by typ order by typ;
+
+-- 3) Vklady vlastní hotovosti do bankomatu. Nejsou to příjmy zvenčí,
+--    ale peníze, které Jirka měl doma — tedy přesun mezi vlastními penězi.
+update fin_transakce
+   set typ = 'prevod'
+ where zdroj = 'import'
+   and typ <> 'prevod'
+   and (popis ilike '%vklad hotovosti%' or poznamka ilike '%vklad hotovosti%');
+
+select typ, count(*) as pocet, sum(castka)::numeric(12,2) as suma
+  from fin_transakce where zdroj = 'import' group by typ order by typ;
