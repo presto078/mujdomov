@@ -1643,9 +1643,13 @@ function parseRbKartaPdf(radky) {
     let m;
     if ((m = t.match(/Číslo účtu pro splátku\s*([\d-]+)\/(\d{4})/))) { hlav.cislo_uctu = m[1]; hlav.kod_banky = m[2]; }
     if ((m = t.match(/Zúčtovací období:\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})\s*-\s*(\d{1,2}\.\s?\d{1,2}\.\s?\d{4})/))) { hlav.obdobi_od = naIso(m[1].replace(/\s/g, "")); hlav.obdobi_do = naIso(m[2].replace(/\s/g, "")); }
-    if (t.includes("Předchozí stav") && radky[i + 2]) {          // řádek s čísly je o dva níž
-      const c = radky[i + 2].kusy.map(k => cisloCZ(k.s)).filter(x => x !== null);
-      if (c.length >= 4) { hlav.zustatek_pocatecni = c[0]; hlav.zustatek_konecny = c[3]; }
+    // Řádek s čísly je pod hlavičkou, ale u starší a novější šablony různě
+    // daleko — hledá se první následující řádek se čtyřmi čísly.
+    if (t.includes("Předchozí stav") && hlav.zustatek_konecny == null) {
+      for (let j = i + 1; j <= i + 5 && j < radky.length; j++) {
+        const c = radky[j].kusy.map(k => cisloCZ(k.s)).filter(x => x !== null);
+        if (c.length >= 4) { hlav.zustatek_pocatecni = c[0]; hlav.zustatek_konecny = c[3]; break; }
+      }
     }
   }
   const out = [];
@@ -1779,7 +1783,8 @@ async function nactiVypis(file){
   if(jmeno.endsWith(".pdf")){
     const radky=await pdfRadky(new Uint8Array(await file.arrayBuffer()));
     const cely=radky.map(l=>l.kusy.map(k=>k.s).join(" ")).join("\n");
-    if(cely.includes("VÝPIS Z KARTOVÉHO ÚČTU"))return parseRbKartaPdf(radky);
+    // starší šablona má nadpis malými písmeny, novější velkými
+    if(/výpis z kartového účtu/i.test(cely))return parseRbKartaPdf(radky);
     if(/Komerční banka|Hlavní měna účtu|Zůstatek všech měn/i.test(cely))return parseKbPdf(radky);
     if(/Raiffeisen|RZBCCZPP|Pořadové č\. výpisu/i.test(cely))return parseRbPdf(radky);
     return parseAirBankPdf(radky);
