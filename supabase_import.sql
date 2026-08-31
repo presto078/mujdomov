@@ -7,18 +7,22 @@
 alter table fin_ucty add column if not exists cislo_uctu text;
 alter table fin_ucty add column if not exists kod_banky  text;
 
-update fin_ucty set cislo_uctu='1763611015', kod_banky='3030' where nazev='Airbank Hlavní'            and cislo_uctu is null;
-update fin_ucty set cislo_uctu='3442757012', kod_banky='3030' where nazev='Airbank Podnikatelský'     and cislo_uctu is null;
-update fin_ucty set cislo_uctu='592521001',  kod_banky='2010' where nazev='Fio DATA PRESCO'           and cislo_uctu is null;
-update fin_ucty set cislo_uctu='4522946002', kod_banky='5500' where nazev='Raiffeisen Běžný'          and cislo_uctu is null;
-update fin_ucty set cislo_uctu='4522946010', kod_banky='5500' where nazev='Raiffeisen Spořící'        and cislo_uctu is null;
-update fin_ucty set cislo_uctu='1101083110', kod_banky='5500' where nazev='Raiffeisen Kreditní karta' and cislo_uctu is null;
-update fin_ucty set cislo_uctu='269037551',  kod_banky='0600' where nazev='Moneta Běžný'              and cislo_uctu is null;
-update fin_ucty set cislo_uctu='269330598',  kod_banky='0600' where nazev='Moneta Spořící'            and cislo_uctu is null;
-update fin_ucty set cislo_uctu='1763611058',     kod_banky='3030' where nazev='Airbank Jídlo'            and cislo_uctu is null;
-update fin_ucty set cislo_uctu='1763611023',     kod_banky='3030' where nazev='Airbank Spořící děti'     and cislo_uctu is null;
-update fin_ucty set cislo_uctu='115-2728360227', kod_banky='0100' where nazev='Komerční banka Hlavní'    and cislo_uctu is null;
-update fin_ucty set cislo_uctu='123-3228050227', kod_banky='0100' where nazev='Komerční banka Spořící'   and cislo_uctu is null;
+-- Názvy účtů můžou mít na konci mezeru (stalo se u „Komerční banka Spořící “),
+-- kvůli které přesná shoda níž selže. Nejdřív se tedy ořežou.
+update fin_ucty set nazev = trim(nazev) where nazev <> trim(nazev);
+
+update fin_ucty set cislo_uctu='1763611015', kod_banky='3030' where trim(nazev)='Airbank Hlavní'            and cislo_uctu is null;
+update fin_ucty set cislo_uctu='3442757012', kod_banky='3030' where trim(nazev)='Airbank Podnikatelský'     and cislo_uctu is null;
+update fin_ucty set cislo_uctu='592521001',  kod_banky='2010' where trim(nazev)='Fio DATA PRESCO'           and cislo_uctu is null;
+update fin_ucty set cislo_uctu='4522946002', kod_banky='5500' where trim(nazev)='Raiffeisen Běžný'          and cislo_uctu is null;
+update fin_ucty set cislo_uctu='4522946010', kod_banky='5500' where trim(nazev)='Raiffeisen Spořící'        and cislo_uctu is null;
+update fin_ucty set cislo_uctu='1101083110', kod_banky='5500' where trim(nazev)='Raiffeisen Kreditní karta' and cislo_uctu is null;
+update fin_ucty set cislo_uctu='269037551',  kod_banky='0600' where trim(nazev)='Moneta Běžný'              and cislo_uctu is null;
+update fin_ucty set cislo_uctu='269330598',  kod_banky='0600' where trim(nazev)='Moneta Spořící'            and cislo_uctu is null;
+update fin_ucty set cislo_uctu='1763611058',     kod_banky='3030' where trim(nazev)='Airbank Jídlo'            and cislo_uctu is null;
+update fin_ucty set cislo_uctu='1763611023',     kod_banky='3030' where trim(nazev)='Airbank Spořící děti'     and cislo_uctu is null;
+update fin_ucty set cislo_uctu='115-2728360227', kod_banky='0100' where trim(nazev)='Komerční banka Hlavní'    and cislo_uctu is null;
+update fin_ucty set cislo_uctu='123-3228050227', kod_banky='0100' where trim(nazev)='Komerční banka Spořící'   and cislo_uctu is null;
 
 -- ── Transakce: reference z banky kvůli duplicitám ────────────────────────
 alter table fin_transakce add column if not exists banka_ref text;
@@ -133,12 +137,12 @@ create policy fin_pravidla_auth on fin_pravidla for all to authenticated using (
 -- ══════════════════════════════════════════════════════════════════════════
 alter table fin_ucty add column if not exists skupina text default 'finance';
 
-update fin_ucty set skupina='investice' where nazev in
+update fin_ucty set skupina='investice' where trim(nazev) in
   ('Portu Investiční','Penzijní připojištění','Modrá Pyramida','RB Stavební Spořitelna');
-update fin_ucty set skupina='hotovost'  where nazev in
+update fin_ucty set skupina='hotovost'  where trim(nazev) in
   ('Peněženka','Úspory Doma','Úspory Aquapark','Úspory Revoluční');
-update fin_ucty set skupina='deti'      where nazev = 'Airbank Spořící děti';
-update fin_ucty set skupina='konicek'   where nazev = 'Fortuna';
+update fin_ucty set skupina='deti'      where trim(nazev) = 'Airbank Spořící děti';
+update fin_ucty set skupina='konicek'   where trim(nazev) = 'Fortuna';
 update fin_ucty set skupina='finance'   where skupina is null;
 
 create index if not exists fin_ucty_skupina_idx on fin_ucty (skupina);

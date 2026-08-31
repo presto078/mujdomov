@@ -2295,7 +2295,10 @@ function PokrytiImportu({ucty}){
   const {data:importy,loading}=useData(()=>sb.from("fin_importy").select("*").order("obdobi_do"));
   if(loading)return <Spinner/>;
 
-  const bankovni=(ucty||[]).filter(u=>u.cislo_uctu).sort((a,b)=>(a.poradi||0)-(b.poradi||0));
+  // Účty bez čísla se nesmí tiše ztratit — ukážou se s upozorněním,
+  // protože bez čísla se jim výpis nespáruje sám.
+  const bankovni=(ucty||[]).filter(u=>u.cislo_uctu||["finance","deti"].includes(u.skupina||"finance"))
+    .sort((a,b)=>(a.poradi||0)-(b.poradi||0));
   const mesicKlic=d=>{const x=new Date(d);return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}`;};
 
   // co je kde nahrané
@@ -2350,7 +2353,10 @@ function PokrytiImportu({ucty}){
             return <tr key={u.id} style={{background:i%2?"#fafbff":C.surface,borderBottom:`1px solid ${C.border}`}}>
               <td style={{padding:"7px 12px",position:"sticky",left:0,background:i%2?"#fafbff":C.surface,whiteSpace:"nowrap"}}>
                 <div style={{fontWeight:600}}>{u.nazev}</div>
-                <div style={{fontSize:10,color:C.dim}}>{u.cislo_uctu}{chybi?` · chybí ${chybi}×`:" · kompletní"}</div>
+                <div style={{fontSize:10,color:u.cislo_uctu?C.dim:C.orange}}>
+                  {u.cislo_uctu||"⚠ bez čísla účtu — výpis se nespáruje sám"}
+                  {u.cislo_uctu&&(chybi?` · chybí ${chybi}×`:" · kompletní")}
+                </div>
               </td>
               {radek.map((z,j)=><td key={j} style={{padding:"4px 3px",textAlign:"center"}}>
                 {z
