@@ -2731,10 +2731,80 @@ function HotovostniPlatbaModal({zaznam,onClose,onSaved}){
 // Bere jen skutečné pohyby z výpisů, jen z běžných účtů, jen dokončené měsíce.
 // Převody mezi vlastními účty se ignorují, aby se příjem nenafoukl.
 // ══════════════════════════════════════════════════════════════════════════════
+// Rozpad jednoho čísla na řádky, ze kterých vzniklo. Nejdřív souhrn podle
+// protistrany — tam je hned vidět, jestli se do příjmů nepletou přesuny mezi
+// vlastními účty — a pod tím jednotlivé transakce po měsících.
+function RozpadModal({titulek,polozky,ucty,kategorie,projekty,deti,auta,onClose}){
+  const [rozbaleno,setRozbaleno]=useState(null);
+  const uctyMap=Object.fromEntries((ucty||[]).map(u=>[u.id,u.nazev]));
+  const katMap=Object.fromEntries((kategorie||[]).map(k=>[k.id,k]));
+  const projMap=Object.fromEntries((projekty||[]).map(p=>[String(p.id),p]));
+  const celkem=polozky.reduce((a,t)=>a+Math.abs(+t.castka),0);
+
+  const skupiny=(()=>{
+    const m=new Map();
+    for(const t of polozky){
+      const k=klicObchodnika(t);
+      if(!m.has(k))m.set(k,{klic:k,polozky:[],suma:0});
+      const s=m.get(k); s.polozky.push(t); s.suma+=Math.abs(+t.castka);
+    }
+    return [...m.values()].sort((a,b)=>b.suma-a.suma);
+  })();
+
+  return <Modal title={titulek} onClose={onClose} width={860}>
+    <div style={{fontSize:13,marginBottom:14}}>
+      <strong>{polozky.length}</strong> pohybů, celkem <strong>{kc0(celkem)}</strong>.
+      Klikni na řádek a rozbalí se ti jednotlivé platby.
+    </div>
+    <div style={{maxHeight:"62vh",overflowY:"auto"}}>
+      {skupiny.map(s=>{
+        const otevreno=rozbaleno===s.klic;
+        return <div key={s.klic} style={{borderBottom:`1px solid ${C.border}`}}>
+          <div onClick={()=>setRozbaleno(otevreno?null:s.klic)}
+            style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"8px 4px",cursor:"pointer"}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600}}>{otevreno?"▾":"▸"} {s.klic}</div>
+              <div style={{fontSize:11,color:C.dim,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {s.polozky.length}× · {(s.polozky[0].popis||"").slice(0,80)}
+              </div>
+            </div>
+            <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
+              <div style={{fontWeight:800,fontSize:14}}>{kc0(s.suma)}</div>
+              <div style={{fontSize:10,color:C.dim}}>{(s.suma/celkem*100).toFixed(1)} %</div>
+            </div>
+          </div>
+          {otevreno&&<div style={{padding:"0 4px 10px 20px"}}>
+            {s.polozky.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>{
+              const kat=katMap[t.kategorie_id], pr=projMap[String(t.projekt_id)];
+              const su=subjektNazev(t.subjekt_typ,t.subjekt_id,deti,auta);
+              return <div key={i} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"4px 0",borderTop:`1px solid ${C.bg}`}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div>{new Date(t.datum).toLocaleDateString("cs-CZ")} · <span style={{color:C.muted}}>{uctyMap[t.ucet_id]||"?"}</span></div>
+                  <div style={{fontSize:11,color:C.dim}}>
+                    {(t.popis||"").slice(0,110)}{t.protistrana?` ➜ ${t.protistrana}`:""}
+                  </div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:2}}>
+                    {kat&&<span style={stitek}>{kat.emoji||"🏷"} {kat.nazev}</span>}
+                    {pr&&<span style={{...stitek,background:"#eef4fc",color:"#3066b0"}}>{pr.emoji||"📁"} {pr.nazev}</span>}
+                    {su&&<span style={{...stitek,background:"#f0f7ee",color:"#3f7d33"}}>{su}</span>}
+                    {t.typ==="prevod"&&<span style={{...stitek,background:"#fff3e0",color:"#9a5b00"}}>převod</span>}
+                  </div>
+                </div>
+                <div style={{fontWeight:700,whiteSpace:"nowrap",color:+t.castka>0?C.green:C.red}}>{kc0(t.castka)}</div>
+              </div>;
+            })}
+          </div>}
+        </div>;
+      })}
+    </div>
+  </Modal>;
+}
+
 function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
   const {data:trans,loading}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
-    .select("datum,castka,typ,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id")
+    .select("id,datum,castka,typ,popis,poznamka,protistrana,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id")
     .eq("zdroj","import").order("datum").range(od,do_)));
+  const [rozpad,setRozpad]=useState(null);   // {titulek, polozky}
   const {data:stavy,loading:ls}=useData(()=>nactiVse((od,do_)=>sb.from("fin_stavy").select("*").gte("rok",2025).order("rok").range(od,do_)));
   const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("app_nastaveni").select("*").eq("klic","fin_hotovostni_prijem"));
   const [hotEdit,setHotEdit]=useState(null);
@@ -2802,9 +2872,10 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     for(const t of vHotovych){
       if(+t.castka>=0||t.projekt_id)continue;
       const k=klic(t);
-      m.set(k,(m.get(k)||0)+(-+t.castka));
+      if(!m.has(k))m.set(k,{suma:0,polozky:[]});
+      const z=m.get(k); z.suma+=(-+t.castka); z.polozky.push(t);
     }
-    return [...m.entries()].map(([k,v])=>({k,nazev:nazev(k),mesicne:v/n})).sort((a,b)=>b.mesicne-a.mesicne);
+    return [...m.entries()].map(([k,z])=>({k,nazev:nazev(k),mesicne:z.suma/n,polozky:z.polozky})).sort((a,b)=>b.mesicne-a.mesicne);
   };
   const katMap=Object.fromEntries((kategorie||[]).map(k=>[k.id,k]));
   const dleKategorii=podle(t=>t.kategorie_id||"",k=>k&&katMap[k]?`${katMap[k].emoji||"🏷"} ${katMap[k].nazev}`:"❓ Nezařazeno");
@@ -2817,15 +2888,20 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     const m=new Map();
     for(const t of vHotovych){
       if(+t.castka>=0||!t.projekt_id)continue;
-      m.set(String(t.projekt_id),(m.get(String(t.projekt_id))||0)+(-+t.castka));
+      const k=String(t.projekt_id);
+      if(!m.has(k))m.set(k,{suma:0,polozky:[]});
+      const z=m.get(k); z.suma+=(-+t.castka); z.polozky.push(t);
     }
-    return [...m.entries()].map(([k,v])=>({k,nazev:projMap[k]?`${projMap[k].emoji||"📁"} ${projMap[k].nazev}`:"Projekt",mesicne:v/n})).sort((a,b)=>b.mesicne-a.mesicne);
+    return [...m.entries()].map(([k,z])=>({k,nazev:projMap[k]?`${projMap[k].emoji||"📁"} ${projMap[k].nazev}`:"Projekt",mesicne:z.suma/n,polozky:z.polozky})).sort((a,b)=>b.mesicne-a.mesicne);
   })();
 
-  const karta=(l,v,barva,pozn)=><div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:190}}>
+  const karta=(l,v,barva,pozn,polozky)=><div
+    onClick={polozky?()=>setRozpad({titulek:`${l} · rozpad`,polozky}):undefined}
+    style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:190,cursor:polozky?"pointer":"default"}}>
     <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3}}>{l}</div>
     <div style={{fontSize:23,fontWeight:800,color:barva||C.text,marginTop:5}}>{kc0(v)}</div>
     {pozn&&<div style={{fontSize:11,color:C.dim,marginTop:3}}>{pozn}</div>}
+    {polozky&&<div style={{fontSize:10,color:C.accent,marginTop:5}}>▸ ukázat {polozky.length} pohybů</div>}
   </div>;
 
   const sloupec=(titulek,radky,barva)=><div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:260}}>
@@ -2833,7 +2909,8 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     {radky.length===0&&<div style={{fontSize:12,color:C.dim}}>Zatím nic</div>}
     {radky.slice(0,12).map(r=>{
       const max=radky[0].mesicne||1;
-      return <div key={r.k} style={{marginBottom:7}}>
+      return <div key={r.k} onClick={()=>r.polozky&&setRozpad({titulek:`${r.nazev} · rozpad`,polozky:r.polozky})}
+        style={{marginBottom:7,cursor:r.polozky?"pointer":"default"}}>
         <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:2}}>
           <span style={{color:C.text}}>{r.nazev}</span>
           <strong style={{color:barva||C.text}}>{kc0(r.mesicne)}</strong>
@@ -2874,10 +2951,13 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
 
     <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
       {karta("Příjmy měsíčně",mPrijmy+hotovostniPrijem,C.green,
-        hotovostniPrijem?`z toho ${kc0(hotovostniPrijem)} hotově mimo účty`:"jen to, co přišlo na účty")}
-      {karta("Povinné závazky",mZavazky,C.orange,"hypotéka, SJM, insolvence, auta")}
+        hotovostniPrijem?`z toho ${kc0(hotovostniPrijem)} hotově mimo účty`:"jen to, co přišlo na účty",
+        vHotovych.filter(t=>+t.castka>0))}
+      {karta("Povinné závazky",mZavazky,C.orange,"hypotéka, SJM, insolvence, auta",
+        vHotovych.filter(t=>+t.castka<0&&t.projekt_id))}
       {karta("Zbývá na život",kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků")}
-      {karta("Skutečně utrácíš",mZbytek,C.red,"všechno ostatní")}
+      {karta("Skutečně utrácíš",mZbytek,C.red,"všechno ostatní",
+        vHotovych.filter(t=>+t.castka<0&&!t.projekt_id))}
     </div>
 
     <div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
@@ -2909,6 +2989,9 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
       {sloupec("🏷 Kam jde zbytek · měsíčně",dleKategorii,C.red)}
       {sloupec("👥 Koho se to týká · měsíčně",dleSubjektu,C.accent)}
     </div>
+
+    {rozpad&&<RozpadModal {...rozpad} ucty={ucty} kategorie={kategorie} projekty={projekty}
+      deti={deti} auta={auta} onClose={()=>setRozpad(null)}/>}
   </div>;
 }
 
