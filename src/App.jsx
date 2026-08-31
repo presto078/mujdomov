@@ -1946,7 +1946,7 @@ const FORMATY=[
 
 function NapovedaFormatu(){
   const [otevreno,setOtevreno]=useState(true);
-  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",flex:"1 1 420px",minWidth:300}}>
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",flex:"1 1 400px",minWidth:290,textAlign:"left"}}>
     <div onClick={()=>setOtevreno(o=>!o)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
       <div style={{fontSize:13,fontWeight:800}}>💡 Co u které banky stáhnout</div>
       <span style={{fontSize:11,color:C.muted}}>{otevreno?"skrýt":"ukázat"}</span>
@@ -1955,7 +1955,7 @@ function NapovedaFormatu(){
       <div style={{fontSize:11,color:C.muted,margin:"6px 0 10px"}}>
         Když má banka víc formátů, ber ten zvýrazněný — nese nejvíc údajů.
       </div>
-      <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:290,overflowY:"auto"}}>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {FORMATY.map(f=><div key={f.banka} style={{borderLeft:`3px solid ${f.top?C.green:C.border}`,paddingLeft:9}}>
           <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"baseline",flexWrap:"wrap"}}>
             <span style={{fontSize:12,fontWeight:700}}>{f.banka}</span>
@@ -2227,10 +2227,10 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
   const katNazev=id=>(kategorie||[]).find(k=>k.id===id)?.nazev||"";
 
   return <div>
-    <div style={{display:"flex",gap:14,marginBottom:18,flexWrap:"wrap",alignItems:"stretch"}}>
-      <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"14px 18px",flex:"1 1 380px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+    <div style={{display:"flex",gap:14,marginBottom:18,flexWrap:"wrap",alignItems:"flex-start"}}>
+      <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"14px 18px",flex:"1 1 340px",textAlign:"left"}}>
         <div style={{fontSize:13,fontWeight:800,color:"#1a4fa8",marginBottom:6}}>📥 Načíst výpis z banky</div>
-        <div style={{fontSize:12,color:"#3066b0",marginBottom:12}}>
+        <div style={{fontSize:12,color:"#3066b0",marginBottom:12,lineHeight:1.5}}>
           Můžeš vybrat víc souborů najednou, klidně z různých bank.
           Formát i účet si najde sám. Nic se neuloží, dokud to nepotvrdíš.
         </div>
