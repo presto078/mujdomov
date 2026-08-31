@@ -1976,7 +1976,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
           existujici=new Set((data||[]).map(x=>x.banka_ref));
           // Pojistka pro případ, že se klíč mezi verzemi změnil: co už je z importu
           // uložené na stejný den a částku, se považuje za tutéž transakci.
-          const {data:h}=await sb.from("fin_transakce").select("id,datum,castka,popis,protistrana")
+          const {data:h}=await sb.from("fin_transakce").select("id,datum,castka,popis,protistrana,vs")
             .eq("ucet_id",ucet.id).eq("zdroj","import")
             .gte("datum",v.obdobi_od||"1900-01-01").lte("datum",v.obdobi_do||"2100-01-01");
           for(const x of (h||[])){
@@ -2032,10 +2032,16 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
               pouzite.set(k,i+1);
               const novyPopis=[r.popis,r.poznamka].filter(Boolean).join(" · ").slice(0,300);
               const lepsiPopis=novyPopis&&novyPopis.length>String(stary.popis||"").length;
-              const lepsiProti=r.protiucet&&!stary.protistrana;
-              if(lepsiPopis||lepsiProti)r.doplnit={id:stary.id,
+              // Protiúčet je lepší, když ho dřív nebyl žádný, nebo když nový nese
+              // navíc kód banky či předčíslí — camt.053 je má, GPC ne.
+              const lepsiProti=r.protiucet&&(!stary.protistrana
+                ||(r.protiucet.includes("/")&&!String(stary.protistrana).includes("/"))
+                ||(r.protiucet.includes("-")&&!String(stary.protistrana).includes("-")));
+              const lepsiVs=r.vs&&!stary.vs;
+              if(lepsiPopis||lepsiProti||lepsiVs)r.doplnit={id:stary.id,
                 popis:lepsiPopis?novyPopis:undefined,
                 protistrana:lepsiProti?r.protiucet:undefined,
+                vs:lepsiVs?r.vs:undefined,
                 stary:stary.popis||""};
             }
           }
@@ -2069,6 +2075,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
       const patch={};
       if(r.doplnit.popis)patch.popis=r.doplnit.popis;
       if(r.doplnit.protistrana)patch.protistrana=r.doplnit.protistrana;
+      if(r.doplnit.vs)patch.vs=r.doplnit.vs;
       if(!Object.keys(patch).length)continue;
       const {error}=await sb.from("fin_transakce").update(patch).eq("id",r.doplnit.id);
       if(error){setUklada(false);alert("Chyba: "+error.message);return;}
@@ -2304,7 +2311,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
         </div>
         {b.radky.some(r=>r.doplnit)&&<div style={{fontSize:11,color:"#5b3fd0",background:"#f2effe",border:"1px solid #cfc4f8",borderRadius:8,padding:"8px 12px",marginTop:8}}>
           Tenhle výpis nese u {b.radky.filter(r=>r.doplnit).length} už uložených plateb víc údajů než to, co je v databázi
-          — typicky jméno protistrany, které formát GPC vůbec neobsahuje a PDF ano.
+          — variabilní symbol, kód banky protistrany nebo delší popis.
           Tlačítkem se doplní, nic se nepřidá ani nesmaže.
         </div>}
       </>}
