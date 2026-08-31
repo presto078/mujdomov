@@ -12,10 +12,25 @@ update fin_projekty
        mesicni_castka = 28000,
        datum_do       = date '2027-02-28',
        poznamka       = 'Vypořádání SJM. Do 12/2025 zaplaceno 615 654 Kč (sheet). '
-                        'Od 1/2026 se platby berou z výpisů. Pozor: paušál O2 387 Kč '
-                        'a Kooperativa 437 Kč měsíčně se z výpisů samy nespárují — '
-                        'chodí v rámci větších faktur.'
+                        'Od 1/2026 se platby berou z výpisů. Nespáruje se jen paušál '
+                        'O2 387 Kč — z Fia odchází jedna platba za celou fakturu a '
+                        'tahle část se z ní vydělit nedá.'
  where nazev = 'SJM Tereza';
+
+-- ── Životní pojistka Terezy ──────────────────────────────────────────────
+-- Trvalý příkaz z komerčky, 437 Kč, každý měsíc kolem 13.–15. na 2226222/0800.
+-- Patří do vypořádání stejně jako splátka, jen odchází jinudy.
+insert into fin_pravidla (vzor, projekt_id, priorita)
+select '2226222/0800', p.id, 5 from fin_projekty p where p.nazev = 'SJM Tereza'
+on conflict (lower(vzor)) do update set projekt_id = excluded.projekt_id;
+
+insert into fin_pravidla (vzor, projekt_id, priorita)
+select 'pojisteni tereza', p.id, 5 from fin_projekty p where p.nazev = 'SJM Tereza'
+on conflict (lower(vzor)) do update set projekt_id = excluded.projekt_id;
+
+update fin_transakce t set projekt_id = p.id from fin_projekty p
+ where p.nazev = 'SJM Tereza' and t.zdroj = 'import' and t.projekt_id is null
+   and (t.protistrana like '2226222%' or t.popis ilike '%pojištění tereza%');
 
 -- Kontrola: kolik projekt vidí zaplaceno a kolik zbývá
 select p.nazev,

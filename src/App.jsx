@@ -1817,6 +1817,22 @@ const navrhniKategorii=(radek,pravidla)=>navrhniZarazeni(radek,pravidla).kategor
 
 const fmtKc=x=>(+x).toLocaleString("cs",{minimumFractionDigits:2,maximumFractionDigits:2})+" Kč";
 
+// ── Načtení všech řádků, ne jen první tisícovky ──────────────────────────────
+// PostgREST vrací na jeden dotaz nejvýš 1000 řádků bez ohledu na to, o kolik si
+// řekneš v limit(). Přehledy, které počítají průměry, tím tiše přišly o novější
+// měsíce — a nijak to nedaly najevo. Proto se stahuje po stránkách, dokud
+// nepřijde neúplná.
+async function nactiVse(dotaz,velikost=1000){
+  const out=[];
+  for(let od=0;od<200000;od+=velikost){
+    const {data,error}=await dotaz(od,od+velikost-1);
+    if(error)return {data:out,error};
+    out.push(...(data||[]));
+    if(!data||data.length<velikost)break;
+  }
+  return {data:out,error:null};
+}
+
 // ── Import výpisů ────────────────────────────────────────────────────────────
 function ImportVypisu({ucty,kategorie,onHotovo}){
   const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*").order("priorita"));
@@ -2220,9 +2236,9 @@ function SubjektSelect({deti,auta,value,onChange,style}){
 }
 
 function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie}){
-  const {data:transakce,loading,reload}=useData(()=>sb.from("fin_transakce")
+  const {data:transakce,loading,reload}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
     .select("id,datum,castka,popis,poznamka,protistrana,kategorie_id,projekt_id,subjekt_typ,subjekt_id,typ,ucet_id")
-    .eq("zdroj","import").order("datum",{ascending:false}).limit(5000));
+    .eq("zdroj","import").order("datum",{ascending:false}).range(od,do_)));
   const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*"));
   const [jenNezarazene,setJenNezarazene]=useState(true);
   const [volba,setVolba]=useState({});        // klíč skupiny → kategorie_id
@@ -2412,8 +2428,8 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
 // ne podle období souboru — jeden CSV za sedm měsíců se tak správně rozloží
 // do sedmi sloupců místo do jednoho.
 function PokrytiImportu({ucty}){
-  const {data:trans,loading}=useData(()=>sb.from("fin_transakce")
-    .select("ucet_id,datum").eq("zdroj","import").order("datum").limit(20000));
+  const {data:trans,loading}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
+    .select("ucet_id,datum").eq("zdroj","import").order("datum").range(od,do_)));
   if(loading)return <Spinner/>;
 
   const bankovni=(ucty||[]).filter(u=>u.cislo_uctu||["finance","deti"].includes(u.skupina||"finance"))
@@ -2511,8 +2527,8 @@ const mesicuDo=d=>{
 
 function FinProjektyTab(){
   const {data:projekty,loading,reload}=useData(()=>sb.from("fin_projekty").select("*").order("poradi"));
-  const {data:trans,loading:lt}=useData(()=>sb.from("fin_transakce")
-    .select("id,datum,castka,projekt_id").eq("zdroj","import").not("projekt_id","is",null).limit(20000));
+  const {data:trans,loading:lt}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
+    .select("id,datum,castka,projekt_id").eq("zdroj","import").not("projekt_id","is",null).order("datum").range(od,do_)));
   const {data:platby,reload:reloadPlatby}=useData(()=>sb.from("fin_projekt_platby").select("*").order("datum",{ascending:false}).limit(2000));
   const [edit,setEdit]=useState(null);      // projekt objekt nebo "novy"
   const [hotove,setHotove]=useState(null);  // {projekt_id} → přidat hotovostní platbu
@@ -2716,10 +2732,10 @@ function HotovostniPlatbaModal({zaznam,onClose,onSaved}){
 // Převody mezi vlastními účty se ignorují, aby se příjem nenafoukl.
 // ══════════════════════════════════════════════════════════════════════════════
 function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
-  const {data:trans,loading}=useData(()=>sb.from("fin_transakce")
+  const {data:trans,loading}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
     .select("datum,castka,typ,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id")
-    .eq("zdroj","import").order("datum").limit(20000));
-  const {data:stavy,loading:ls}=useData(()=>sb.from("fin_stavy").select("*").gte("rok",2025).limit(3000));
+    .eq("zdroj","import").order("datum").range(od,do_)));
+  const {data:stavy,loading:ls}=useData(()=>nactiVse((od,do_)=>sb.from("fin_stavy").select("*").gte("rok",2025).order("rok").range(od,do_)));
   const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("app_nastaveni").select("*").eq("klic","fin_hotovostni_prijem"));
   const [hotEdit,setHotEdit]=useState(null);
 
@@ -2759,7 +2775,26 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
   };
   const likvidni=(ucty||[]).filter(u=>["finance","hotovost"].includes(u.skupina||"finance"));
   const likvidita=likvidni.reduce((a,u)=>a+posledniStav(u),0);
-  const dojezd=rozdil<0?likvidita/Math.abs(rozdil):null;
+  // Dojezd má smysl počítat, jen když je schodek dost velký na to, aby nebyl
+  // v šumu. Při schodku pár set korun vychází stovky měsíců a to nic neznamená.
+  const schodekVyrazny=Math.abs(rozdil)>(mPrijmy+hotovostniPrijem)*0.05;
+  const dojezd=(rozdil<0&&schodekVyrazny)?likvidita/Math.abs(rozdil):null;
+
+  // Kontrola úplnosti: chybí uvnitř období nějaký měsíc? A jak velká část
+  // výdajů nemá kategorii? Bez toho jsou čísla níž hezká, ale nepravdivá.
+  const chybejiciMesice=(()=>{
+    if(hotoveMesice.length<2)return [];
+    const out=[], [r1,m1]=hotoveMesice[0].split("-").map(Number);
+    const posl=hotoveMesice[hotoveMesice.length-1];
+    for(let d=new Date(r1,m1-1,1);;d.setMonth(d.getMonth()+1)){
+      const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+      if(k>posl)break;
+      if(!hotoveMesice.includes(k))out.push(k);
+    }
+    return out;
+  })();
+  const bezKategorie=vHotovych.reduce((a,t)=>a+(+t.castka<0&&!t.projekt_id&&!t.kategorie_id?-+t.castka:0),0);
+  const podilNezarazenych=zbytek?bezKategorie/zbytek:0;
 
   // Kam to teče — průměr na měsíc podle kategorie a podle toho, koho se to týká
   const podle=(klic,nazev)=>{
@@ -2820,6 +2855,23 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
       Rozdělaný měsíc se nepočítá, aby průměr nelhal.
     </div>
 
+    {(chybejiciMesice.length>0||podilNezarazenych>0.3||!hotovostniPrijem)&&
+      <div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:12,color:"#9a5b00"}}>
+        <div style={{fontWeight:800,marginBottom:6}}>Než těmhle číslům uvěříš</div>
+        {chybejiciMesice.length>0&&<div style={{marginBottom:4}}>
+          • Uvnitř období chybí {chybejiciMesice.join(", ")} — z těch měsíců nemáš nahraný výpis.
+          Průměr je tím pádem počítaný z menšího vzorku, než si myslíš. Zkontroluj záložku Pokrytí.
+        </div>}
+        {podilNezarazenych>0.3&&<div style={{marginBottom:4}}>
+          • <strong>{Math.round(podilNezarazenych*100)} %</strong> výdajů nemá kategorii ({kc0(bezKategorie/n)} měsíčně).
+          Sloupec „kam jde zbytek" tím pádem neodpovídá na nic — projdi Zařazení.
+        </div>}
+        {!hotovostniPrijem&&<div>
+          • Hotovostní příjem je nastavený na nulu. Pokud část peněz dostáváš mimo účty,
+          nastav ho níž, jinak ti přehled ukazuje horší situaci, než jaká je.
+        </div>}
+      </div>}
+
     <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
       {karta("Příjmy měsíčně",mPrijmy+hotovostniPrijem,C.green,
         hotovostniPrijem?`z toho ${kc0(hotovostniPrijem)} hotově mimo účty`:"jen to, co přišlo na účty")}
@@ -2830,13 +2882,16 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
 
     <div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:800,color:rozdil>=0?"#3f7d33":"#b03030"}}>
-        {rozdil>=0
-          ? `Měsíčně ti zbývá ${kc0(rozdil)}.`
-          : `Měsíčně ti chybí ${kc0(Math.abs(rozdil))}.`}
+        {!schodekVyrazny
+          ? `Vycházíš zhruba na nulu — rozdíl ${kc0(rozdil)} měsíčně je v šumu.`
+          : rozdil>0
+            ? `Měsíčně ti zbývá ${kc0(rozdil)}.`
+            : `Měsíčně ti chybí ${kc0(Math.abs(rozdil))}.`}
       </div>
       <div style={{fontSize:12,color:C.muted,marginTop:6}}>
         Likvidní peníze (běžné účty + hotovost): <strong>{kc0(likvidita)}</strong>.
-        {dojezd!=null&&<> Při současném tempu vydrží <strong style={{color:dojezd<3?C.red:C.orange}}>{dojezd.toFixed(1)} měsíce</strong>.</>}
+        {dojezd!=null&&<> Při současném tempu vydrží <strong style={{color:dojezd<6?C.red:C.orange}}>{dojezd.toFixed(1)} měsíce</strong>.</>}
+        {!schodekVyrazny&&<> Dojezd nemá cenu počítat — při takhle malém rozdílu by stačila jedna větší platba a číslo se překlopí.</>}
         {" "}Dětské spoření, investice ani Fortuna se do toho nepočítají.
       </div>
       <div style={{fontSize:11,color:C.dim,marginTop:8}}>
