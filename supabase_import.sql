@@ -24,6 +24,13 @@ update fin_ucty set cislo_uctu='123-3228050227', kod_banky='0100' where nazev='K
 alter table fin_transakce add column if not exists banka_ref text;
 alter table fin_transakce add column if not exists vs        text;
 alter table fin_transakce add column if not exists poznamka  text;
+-- Odkud transakce je: 'import' = z bankovniho vypisu (skutecne protekle penize),
+-- 'modul' = zalozil ji jiny modul (Alimenty, Pravnik), 'rucne' = rucni zapis.
+-- Statistiky maji verit bance; modulove zaznamy jsou evidence, ne pohyb penez.
+alter table fin_transakce add column if not exists zdroj text default 'rucne';
+update fin_transakce set zdroj='modul'
+ where zdroj is null or (zdroj='rucne' and banka_ref is null
+   and (popis like 'Alimenty %' or popis like 'Mimořádné %' or popis like 'Právník%'));
 
 -- Stejná transakce z téhož účtu se nemůže uložit dvakrát
 create unique index if not exists fin_transakce_banka_ref_uniq
@@ -112,3 +119,26 @@ create policy fin_pravidla_auth on fin_pravidla for all to authenticated using (
 -- delete from fin_stavy s using fin_ucty u
 --  where s.ucet_id = u.id and s.rok = 2026 and s.mesic = 8
 --    and u.nazev in ('Airbank Hlavní','Raiffeisen Kreditní karta','Úspory Aquapark');
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- ROZDĚLENÍ ÚČTŮ DO SKUPIN
+-- Ve Financích mají zůstat jen účty, přes které tečou peníze. Zbytek se
+-- chová jinak (hodnota jednou za čas, žádné výpisy) a patří do vlastních
+-- dlaždic. Data se nikam nestěhují, mění se jen zařazení účtu.
+--   finance   — běžné, spořicí a podnikatelské účty, kreditka
+--   investice — Portu, penzijko, stavební spoření
+--   hotovost  — fyzické peníze a obálky
+--   deti      — spoření dětí, na které se nesahá
+--   konicek   — sázkový účet; do majetku se nepočítá
+-- ══════════════════════════════════════════════════════════════════════════
+alter table fin_ucty add column if not exists skupina text default 'finance';
+
+update fin_ucty set skupina='investice' where nazev in
+  ('Portu Investiční','Penzijní připojištění','Modrá Pyramida','RB Stavební Spořitelna');
+update fin_ucty set skupina='hotovost'  where nazev in
+  ('Peněženka','Úspory Doma','Úspory Aquapark','Úspory Revoluční');
+update fin_ucty set skupina='deti'      where nazev = 'Airbank Spořící děti';
+update fin_ucty set skupina='konicek'   where nazev = 'Fortuna';
+update fin_ucty set skupina='finance'   where skupina is null;
+
+create index if not exists fin_ucty_skupina_idx on fin_ucty (skupina);

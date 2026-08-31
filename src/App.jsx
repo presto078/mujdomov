@@ -1827,16 +1827,25 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
         if(!v||!v.radky?.length){nove.push({soubor:f.name,chyba:"Nepodařilo se přečíst — neznámý formát výpisu."});continue;}
         const ucet=ucetPodleCisla(v.cislo_uctu);
         // duplicity proti tomu, co už v databázi je
-        let existujici=new Set();
+        let existujici=new Set(), rucni=[];
         if(ucet){
           const {data}=await sb.from("fin_transakce").select("banka_ref").eq("ucet_id",ucet.id).not("banka_ref","is",null);
           existujici=new Set((data||[]).map(x=>x.banka_ref));
+          // Ruční a modulové záznamy ve stejném období — můžou to být tytéž peníze
+          const {data:r}=await sb.from("fin_transakce").select("id,datum,castka,popis,zdroj")
+            .eq("ucet_id",ucet.id).is("banka_ref",null)
+            .gte("datum",v.obdobi_od||"1900-01-01").lte("datum",v.obdobi_do||"2100-01-01");
+          rucni=r||[];
         }
+        const najdiKolizi=r=>rucni.find(x=>Math.abs(+x.castka-r.castka)<0.01
+          &&Math.abs(new Date(x.datum)-new Date(r.datum))/86400000<=3);
         const radky=v.radky.map((r,i)=>({
           ...r,
           klic:r.ref||`${r.datum}|${r.castka}|${r.popis}`.slice(0,120),
           duplicita:existujici.has(r.ref||`${r.datum}|${r.castka}|${r.popis}`.slice(0,120)),
           kategorie_id:navrhniKategorii(r,pravidla),
+          kolize:najdiKolizi(r)||null,
+          smazatKolizi:true,
           vybrano:true,
         }));
         const suma=radky.reduce((a,r)=>a+r.castka,0);
@@ -1854,6 +1863,11 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
     if(!davka.ucet_id){alert("Nejdřív vyber, do kterého účtu výpis patří.");return;}
     setUklada(true);
     const kVlozeni=davka.radky.filter(r=>r.vybrano&&!r.duplicita);
+    const kSmazani=davka.radky.filter(r=>r.vybrano&&!r.duplicita&&r.kolize&&r.smazatKolizi).map(r=>r.kolize.id);
+    if(kSmazani.length){
+      const {error}=await sb.from("fin_transakce").delete().in("id",kSmazani);
+      if(error){setUklada(false);alert("Chyba při mazání ručních záznamů: "+error.message);return;}
+    }
     const rows=kVlozeni.map(r=>{
       const cizi=r.protiucet?ucetPodleCisla(r.protiucet):null;   // převod mezi vlastními účty
       return {
@@ -1863,7 +1877,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
         protistrana:r.protiucet||null,
         typ:cizi?"prevod":(r.castka>=0?"prijem":"vydaj"),
         prevod_ucet_id:cizi?cizi.id:null,
-        banka_ref:r.klic,vs:r.vs||null,poznamka:r.poznamka||null,
+        banka_ref:r.klic,vs:r.vs||null,poznamka:r.poznamka||null,zdroj:"import",
       };
     });
     let vlozeno=0;
@@ -1988,6 +2002,12 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
                   <div style={{fontWeight:600}}>{r.popis||"—"}</div>
                   {r.poznamka&&<div style={{color:C.dim,fontSize:11}}>{r.poznamka.slice(0,70)}</div>}
                   {r.duplicita&&<div style={{color:C.orange,fontSize:11,fontWeight:700}}>už je v databázi</div>}
+                  {r.kolize&&!r.duplicita&&<div style={{color:"#c87000",fontSize:11,marginTop:2}}>
+                    <label style={{cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+                      <input type="checkbox" checked={r.smazatKolizi} onChange={e=>uprav(di,ri,{smazatKolizi:e.target.checked})}/>
+                      <span>tytéž peníze už máš ručně ({new Date(r.kolize.datum).toLocaleDateString("cs-CZ")}, {r.kolize.popis?.slice(0,26)}) — smazat ten ruční</span>
+                    </label>
+                  </div>}
                 </td>
                 <td style={{padding:"6px 8px",whiteSpace:"nowrap",fontWeight:700,color:r.castka<0?C.red:C.green}}>{fmtKc(r.castka)}</td>
                 <td style={{padding:"6px 8px"}}>
@@ -2011,6 +2031,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
             k uložení <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita).length}</strong> ·
             duplicit <strong>{b.radky.filter(r=>r.duplicita).length}</strong> ·
             bez kategorie <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!r.kategorie_id).length}</strong>
+            {b.radky.some(r=>r.kolize&&!r.duplicita)&&<> · nahradí ručních <strong style={{color:"#c87000"}}>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&r.kolize&&r.smazatKolizi).length}</strong></>}
           </div>
           <button onClick={()=>uloz(b)} disabled={uklada||!b.ucet_id} style={btnC()}>{uklada?"Ukládám…":"Uložit do databáze"}</button>
         </div>
