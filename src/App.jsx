@@ -1901,6 +1901,10 @@ function navrhniZarazeni(radek,pravidla){
     projekt_id  :sedi.find(p=>p.projekt_id)?.projekt_id||null,
     subjekt_typ :subj?.subjekt_typ||null,
     subjekt_id  :subj?.subjekt_id||null,
+    // Pravidlo může platbu rovnou přeznačit na převod — pro peníze, které
+    // vypadají jako příjem, ale příjem nejsou (matka posílá zpátky hotovost,
+    // proplacení nákladu, který jsme za někoho zaplatili).
+    typ_navrh   :sedi.find(p=>p.typ)?.typ||null,
   };
 }
 const navrhniKategorii=(radek,pravidla)=>navrhniZarazeni(radek,pravidla).kategorie_id;
@@ -2146,7 +2150,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
     }
     const rows=kVlozeni.map(r=>{
       const cizi=r.protiucet?ucetPodleCisla(r.protiucet):null;   // převod mezi vlastními účty
-      const interni=!!cizi||jeVlastniPresun(r);
+      const interni=!!cizi||jeVlastniPresun(r)||r.typ_navrh==="prevod";
       return {
         ucet_id:davka.ucet_id,datum:r.datum,castka:r.castka,
         kategorie_id:r.kategorie_id||null,
@@ -3087,23 +3091,56 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
   };
 
   const uctyMap=Object.fromEntries((ucty||[]).map(u=>[u.id,u]));
-  const bezne=new Set((ucty||[]).filter(u=>(u.skupina||"finance")==="finance").map(u=>u.id));
-  const pohyby=(trans||[]).filter(t=>t.typ!=="prevod"&&bezne.has(t.ucet_id));
+  // Rodinné peníze a podnikání se počítají odděleně. Na podnikatelský účet
+  // přijde hrubý obrat, ze kterého většina zase odejde na náklady — kdyby se
+  // přičetl k příjmům, „kolik můžu utratit" by bylo nafouklé o celé náklady.
+  const bezne =new Set((ucty||[]).filter(u=>(u.skupina||"finance")==="finance").map(u=>u.id));
+  const podnik=new Set((ucty||[]).filter(u=>u.skupina==="podnikani").map(u=>u.id));
+  const sledovane=new Set([...bezne,...podnik]);
+  const pohyby=(trans||[]).filter(t=>t.typ!=="prevod"&&!t.prevod_ucet_id&&sledovane.has(t.ucet_id));
 
   // Jen dokončené měsíce — rozdělaný měsíc by průměr stáhl dolů.
   const ted=new Date(), tentoMesic=`${ted.getFullYear()}-${String(ted.getMonth()+1).padStart(2,"0")}`;
   // Poslední den v měsíci už je měsíc hotový — nemá cenu ho zahazovat.
   const posledniDen=new Date(ted.getFullYear(),ted.getMonth()+1,0).getDate()===ted.getDate();
-  const mesice=[...new Set(pohyby.map(t=>String(t.datum).slice(0,7)))].sort();
-  const hotoveMesice=mesice.filter(m=>posledniDen?m<=tentoMesic:m<tentoMesic);
+
+  // Do průměru smí jen měsíc, za který je nahraný výpis ze VŠECH sledovaných
+  // účtů. Jinak stačí samotný výpis z kreditky za listopad a průměr se dělí
+  // měsícem, ve kterém o příjmech nevíme vůbec nic — a všechna čísla klesnou.
+  const vsePohyby=(trans||[]).filter(t=>sledovane.has(t.ucet_id));
+  const mesiceUctu=new Map();                 // ucet_id → měsíce, kde má pohyb
+  for(const t of vsePohyby){
+    if(!mesiceUctu.has(t.ucet_id))mesiceUctu.set(t.ucet_id,new Set());
+    mesiceUctu.get(t.ucet_id).add(String(t.datum).slice(0,7));
+  }
+  // Účet měsíc pokrývá, když v něm má pohyb — nebo když má pohyby před ním
+  // i po něm. To znamená, že výpisy kolem nahrané jsou a měsíc byl prostě prázdný.
+  const pokryva=(uid,m)=>{
+    const s=mesiceUctu.get(uid); if(!s)return false;
+    if(s.has(m))return true;
+    const ms=[...s];
+    return ms.some(x=>x<m)&&ms.some(x=>x>m);
+  };
+  const sUdaji=[...sledovane].filter(uid=>mesiceUctu.has(uid));
+  const mesice=[...new Set(vsePohyby.map(t=>String(t.datum).slice(0,7)))].sort()
+    .filter(m=>posledniDen?m<=tentoMesic:m<tentoMesic);
+  const hotoveMesice=mesice.filter(m=>sUdaji.every(uid=>pokryva(uid,m)));
+  const neuplneMesice=mesice.filter(m=>!hotoveMesice.includes(m));
   const n=hotoveMesice.length||1;
   const vHotovych=pohyby.filter(t=>hotoveMesice.includes(String(t.datum).slice(0,7)));
 
-  const prijmy=vHotovych.reduce((a,t)=>a+(+t.castka>0?+t.castka:0),0);
-  const zavazky=vHotovych.reduce((a,t)=>a+(+t.castka<0&&t.projekt_id?-+t.castka:0),0);
-  const zbytek =vHotovych.reduce((a,t)=>a+(+t.castka<0&&!t.projekt_id?-+t.castka:0),0);
+  const rodinne =vHotovych.filter(t=>bezne.has(t.ucet_id));
+  const firemni =vHotovych.filter(t=>podnik.has(t.ucet_id));
+  const soucet=(xs,f)=>xs.reduce((a,t)=>a+(f(t)?Math.abs(+t.castka):0),0);
+  const prijmy  =soucet(rodinne,t=>+t.castka>0);
+  // Závazky se berou ze všech účtů — splátka může odejít i z podnikatelského.
+  const zavazky =soucet(vHotovych,t=>+t.castka<0&&t.projekt_id);
+  const zbytek  =soucet(rodinne, t=>+t.castka<0&&!t.projekt_id);
+  const bizIn   =soucet(firemni, t=>+t.castka>0);
+  const bizOut  =soucet(firemni, t=>+t.castka<0&&!t.projekt_id);
   const mPrijmy=prijmy/n, mZavazky=zavazky/n, mZbytek=zbytek/n;
-  const kDispozici=mPrijmy+hotovostniPrijem-mZavazky;
+  const mBizNetto=(bizIn-bizOut)/n;
+  const kDispozici=mPrijmy+hotovostniPrijem+mBizNetto-mZavazky;
   const rozdil=kDispozici-mZbytek;
 
   // Likvidita: poslední známý stav běžných účtů a hotovosti. Dětské spoření,
@@ -3112,7 +3149,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     const s=(stavy||[]).filter(x=>x.ucet_id===u.id).sort((a,b)=>b.rok-a.rok||b.mesic-a.mesic)[0];
     return s?+s.stav:0;
   };
-  const likvidni=(ucty||[]).filter(u=>["finance","hotovost"].includes(u.skupina||"finance"));
+  const likvidni=(ucty||[]).filter(u=>["finance","hotovost","podnikani"].includes(u.skupina||"finance"));
   const likvidita=likvidni.reduce((a,u)=>a+posledniStav(u),0);
   // Dojezd má smysl počítat, jen když je schodek dost velký na to, aby nebyl
   // v šumu. Při schodku pár set korun vychází stovky měsíců a to nic neznamená.
@@ -3132,13 +3169,14 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     }
     return out;
   })();
-  const bezKategorie=vHotovych.reduce((a,t)=>a+(+t.castka<0&&!t.projekt_id&&!t.kategorie_id?-+t.castka:0),0);
+  const bezKategorie=soucet(rodinne,t=>+t.castka<0&&!t.projekt_id&&!t.kategorie_id);
   const podilNezarazenych=zbytek?bezKategorie/zbytek:0;
 
-  // Kam to teče — průměr na měsíc podle kategorie a podle toho, koho se to týká
+  // Kam to teče — průměr na měsíc podle kategorie a podle toho, koho se to týká.
+  // Jen rodinné účty; náklady podnikání by sloupce zaplevelily.
   const podle=(klic,nazev)=>{
     const m=new Map();
-    for(const t of vHotovych){
+    for(const t of rodinne){
       if(+t.castka>=0||t.projekt_id)continue;
       const k=klic(t);
       if(!m.has(k))m.set(k,{suma:0,polozky:[]});
@@ -3201,7 +3239,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
       Rozdělaný měsíc se nepočítá, aby průměr nelhal.
     </div>
 
-    {(chybejiciMesice.length>0||podilNezarazenych>0.3||!hotovostniPrijem)&&
+    {(chybejiciMesice.length>0||neuplneMesice.length>0||podilNezarazenych>0.3||!hotovostniPrijem)&&
       <div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:12,color:"#9a5b00"}}>
         <div style={{fontWeight:800,marginBottom:6}}>Než těmhle číslům uvěříš</div>
         {chybejiciMesice.length>0&&<div style={{marginBottom:4}}>
@@ -3212,6 +3250,10 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
           • <strong>{Math.round(podilNezarazenych*100)} %</strong> výdajů nemá kategorii ({kc0(bezKategorie/n)} měsíčně).
           Sloupec „kam jde zbytek" tím pádem neodpovídá na nic — projdi Zařazení.
         </div>}
+        {neuplneMesice.length>0&&<div style={{marginBottom:4}}>
+          • {neuplneMesice.join(", ")} se do průměru nepočítá — za ten měsíc nemáš výpis
+          ze všech účtů, takže by se dělilo měsícem, o kterém skoro nic nevíme.
+        </div>}
         {!hotovostniPrijem&&<div>
           • Hotovostní příjem je nastavený na nulu. Pokud část peněz dostáváš mimo účty,
           nastav ho níž, jinak ti přehled ukazuje horší situaci, než jaká je.
@@ -3220,13 +3262,16 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
 
     <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
       {karta("Příjmy měsíčně",mPrijmy+hotovostniPrijem,C.green,
-        hotovostniPrijem?`z toho ${kc0(hotovostniPrijem)} hotově mimo účty`:"jen to, co přišlo na účty",
-        vHotovych.filter(t=>+t.castka>0))}
+        hotovostniPrijem?`z toho ${kc0(hotovostniPrijem)} hotově mimo účty`:"jen to, co přišlo na rodinné účty",
+        rodinne.filter(t=>+t.castka>0))}
+      {podnik.size>0&&karta("Podnikání čistě",mBizNetto,mBizNetto>=0?C.green:C.red,
+        `přišlo ${kc0(bizIn/n)}, odešlo na náklady ${kc0(bizOut/n)}`,
+        firemni)}
       {karta("Povinné závazky",mZavazky,C.orange,"hypotéka, SJM, insolvence, auta",
         vHotovych.filter(t=>+t.castka<0&&t.projekt_id))}
       {karta("Zbývá na život",kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků")}
-      {karta("Skutečně utrácíš",mZbytek,C.red,"všechno ostatní",
-        vHotovych.filter(t=>+t.castka<0&&!t.projekt_id))}
+      {karta("Skutečně utrácíš",mZbytek,C.red,"všechno ostatní mimo podnikání",
+        rodinne.filter(t=>+t.castka<0&&!t.projekt_id))}
     </div>
 
     <div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
@@ -3273,7 +3318,9 @@ function FinanceNoveTab(){
   const [zalozka,setZalozka]=useState("prehled");
   const {data:pocet,reload:reloadPocet}=useData(()=>sb.from("fin_transakce").select("id",{count:"exact",head:true}).eq("zdroj","import").then(({count,error})=>({data:count??0,error})));
   if(lu||lk)return <Spinner/>;
-  const bankovni=(ucty||[]).filter(u=>(u.skupina||"finance")==="finance");
+  // Podnikatelské účty se v přehledu počítají zvlášť, ale výpisy se do nich
+  // nahrávají stejně jako do rodinných — v Pokrytí a Importu patří mezi ostatní.
+  const bankovni=(ucty||[]).filter(u=>["finance","podnikani"].includes(u.skupina||"finance"));
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:10}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:800}}>💰 Finance</h2>
