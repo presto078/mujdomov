@@ -39,16 +39,14 @@ on conflict (lower(vzor)) do update set typ = excluded.typ;
 
 
 -- ── C) Doznačit, co už je v databázi ──────────────────────────────────────
+-- ilike je case-insensitive a s diakritikou si poradí — rozšíření unaccent
+-- (které v téhle databázi nainstalované není) k tomu potřeba nemáme.
 update fin_transakce
    set typ = 'prevod'
  where zdroj = 'import'
    and typ <> 'prevod'
-   and (   unaccent(lower(coalesce(popis,'')||' '||coalesce(poznamka,''))) like '%prevod za duchod v hotovosti%'
-        or unaccent(lower(coalesce(popis,'')||' '||coalesce(poznamka,''))) like '%internet + tv miskovice%');
--- Kdyby rozšíření unaccent nebylo nainstalované, spusť místo toho tohle:
--- update fin_transakce set typ='prevod'
---  where zdroj='import' and typ<>'prevod'
---    and (popis ilike '%evod za d%chod v hotovosti%' or popis ilike '%Internet + TV Mi%kovice%');
+   and (   coalesce(popis,'')||' '||coalesce(poznamka,'') ilike '%Převod za důchod v hotovosti%'
+        or coalesce(popis,'')||' '||coalesce(poznamka,'') ilike '%Internet + TV Miškovice%');
 
 
 -- ── Kontrola: příjmy po opravě, po měsících a po skupinách účtů ───────────
@@ -72,5 +70,5 @@ select to_char(t.datum,'YYYY-MM')                       as mesic,
 -- update fin_ucty set skupina='finance' where trim(nazev) in ('Fio DATA PRESCO','Airbank Podnikatelský');
 -- update fin_transakce set typ = case when castka>=0 then 'prijem' else 'vydaj' end
 --  where zdroj='import' and typ='prevod'
---    and (popis ilike '%chod v hotovosti%' or popis ilike '%Internet + TV%');
+--    and (popis ilike '%Převod za důchod v hotovosti%' or popis ilike '%Internet + TV Miškovice%');
 -- delete from fin_pravidla where lower(vzor) in ('prevod za duchod v hotovosti','internet + tv miskovice');
