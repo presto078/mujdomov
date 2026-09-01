@@ -2954,8 +2954,11 @@ function normCislo(c){
 // Rozpad jednoho čísla na řádky, ze kterých vzniklo. Nejdřív souhrn podle
 // protistrany — tam je hned vidět, jestli se do příjmů nepletou přesuny mezi
 // vlastními účty — a pod tím jednotlivé transakce po měsících.
-function RozpadModal({titulek,polozky,pocetMesicu,ucty,kategorie,projekty,deti,auta,onClose}){
+function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekty,deti,auta,onZmena,onClose}){
   const [rozbaleno,setRozbaleno]=useState(null);
+  const [mesic,setMesic]=useState(null);      // vybraný měsíc, null = všechny
+  const [zmeny,setZmeny]=useState({});        // id → co se změnilo, ať je to vidět hned
+  const [uklada,setUklada]=useState(null);
   const {data:jmena,reload:reloadJmena}=useData(()=>sb.from("fin_protistrany").select("*"));
   const jmenoMap=Object.fromEntries((jmena||[]).map(x=>[x.cislo,x.nazev]));
   const pojmenuj=async cislo=>{
@@ -2970,14 +2973,31 @@ function RozpadModal({titulek,polozky,pocetMesicu,ucty,kategorie,projekty,deti,a
   const uctyMap=Object.fromEntries((ucty||[]).map(u=>[u.id,u.nazev]));
   const katMap=Object.fromEntries((kategorie||[]).map(k=>[k.id,k]));
   const projMap=Object.fromEntries((projekty||[]).map(p=>[String(p.id),p]));
-  const celkem=polozky.reduce((a,t)=>a+Math.abs(+t.castka),0);
+
+  // Změny se zapisují rovnou do databáze, ale ať se nemusí přenačítat celý
+  // přehled, drží se navíc lokálně a překryjí původní hodnotu.
+  const svzmenou=t=>zmeny[t.id]?{...t,...zmeny[t.id]}:t;
+  const polozky=vsechny.map(svzmenou);
+  const uprav=async(t,patch)=>{
+    if(!t.id){alert("Tuhle položku nejde upravit — chybí jí ID.");return;}
+    setUklada(t.id);
+    const {error}=await sb.from("fin_transakce").update(patch).eq("id",t.id);
+    setUklada(null);
+    if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+    setZmeny(z=>({...z,[t.id]:{...(z[t.id]||{}),...patch}}));
+  };
+  // Přehled se přepočítá až při zavření — jinak by se okno pod rukama překreslovalo.
+  const zavri=()=>{ if(Object.keys(zmeny).length)onZmena&&onZmena(); onClose(); };
+
+  const viditelne=mesic?polozky.filter(t=>String(t.datum).slice(0,7)===mesic):polozky;
+  const celkem=viditelne.reduce((a,t)=>a+Math.abs(+t.castka),0);
 
   // U příchozích plateb je jediné, co odesílatele identifikuje, číslo protiúčtu
   // — popis nese jen text platby, což je většinou vlastní jméno příjemce.
   // Seskupuje se proto přednostně podle protiúčtu a název se bere z číselníku.
   const skupiny=(()=>{
     const m=new Map();
-    for(const t of polozky){
+    for(const t of viditelne){
       const cislo=normCislo(t.protistrana);
       const k=cislo?`#${cislo}`:klicObchodnika(t);
       if(!m.has(k))m.set(k,{klic:k,cislo,polozky:[],suma:0});
@@ -2997,22 +3017,39 @@ function RozpadModal({titulek,polozky,pocetMesicu,ucty,kategorie,projekty,deti,a
     return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
   })();
 
-  return <Modal title={titulek} onClose={onClose} width={860}>
+  return <Modal title={titulek} onClose={zavri} width={860}>
     <div style={{fontSize:13,marginBottom:12}}>
-      <strong>{polozky.length}</strong> pohybů, celkem <strong>{kc0(celkem)}</strong> za {poMesicich.length} měsíců
-      {pocetMesicu?<> → průměr <strong>{kc0(celkem/pocetMesicu)}</strong> měsíčně</>:null}.
+      <strong>{viditelne.length}</strong> pohybů, celkem <strong>{kc0(celkem)}</strong>
+      {mesic
+        ? <> za {mesic}. <button onClick={()=>setMesic(null)} style={{...btnC(C.muted,true),fontSize:11,padding:"2px 8px",marginLeft:6}}>zpět na všechny měsíce</button></>
+        : <> za {poMesicich.length} měsíců{pocetMesicu?<> → průměr <strong>{kc0(celkem/pocetMesicu)}</strong> měsíčně</>:null}.</>}
     </div>
     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
-      {poMesicich.map(([m,v])=><div key={m} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",fontSize:11}}>
-        <div style={{color:C.muted}}>{m}</div>
-        <div style={{fontWeight:700}}>{kc0(v)}</div>
-      </div>)}
+      {poMesicich.map(([m,v])=>{
+        const akt=mesic===m;
+        return <div key={m} onClick={()=>{setMesic(akt?null:m);setRozbaleno(null);}}
+          title="Ukázat všechny platby v tomhle měsíci"
+          style={{background:akt?C.accent:C.bg,color:akt?"#fff":C.text,border:`1px solid ${akt?C.accent:C.border}`,
+                  borderRadius:8,padding:"5px 10px",fontSize:11,cursor:"pointer"}}>
+          <div style={{color:akt?"#ffffffcc":C.muted}}>{m}</div>
+          <div style={{fontWeight:700}}>{kc0(v)}</div>
+        </div>;
+      })}
     </div>
     <div style={{fontSize:12,color:C.muted,marginBottom:10}}>
-      Seskupeno podle protiúčtu — u příchozí platby banka jméno odesílatele neposílá, jen číslo účtu.
-      Klikni na řádek pro jednotlivé platby, nebo si protistranu pojmenuj.
+      {mesic
+        ? <>Všechny platby za {mesic} od nejnovější. U každé můžeš rovnou přepnout kategorii — a jestli tam nepatří, označit ji jako převod, čímž z příjmů i výdajů vypadne.</>
+        : <>Seskupeno podle protiúčtu — u příchozí platby banka jméno odesílatele neposílá, jen číslo účtu.
+           Klikni na řádek pro jednotlivé platby, na měsíc nahoře pro všechny platby v něm, nebo si protistranu pojmenuj.</>}
     </div>
-    <div style={{maxHeight:"62vh",overflowY:"auto"}}>
+
+    {mesic&&<div style={{maxHeight:"62vh",overflowY:"auto"}}>
+      {viditelne.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
+        <Radek key={t.id||i} t={t} uctyMap={uctyMap} katMap={katMap} projMap={projMap} kategorie={kategorie}
+          deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav} editovatelny/>)}
+    </div>}
+
+    {!mesic&&<div style={{maxHeight:"62vh",overflowY:"auto"}}>
       {skupiny.map(s=>{
         const otevreno=rozbaleno===s.klic;
         return <div key={s.klic} style={{borderBottom:`1px solid ${C.border}`}}>
@@ -3044,35 +3081,63 @@ function RozpadModal({titulek,polozky,pocetMesicu,ucty,kategorie,projekty,deti,a
             </div>
           </div>
           {otevreno&&<div style={{padding:"0 4px 10px 20px"}}>
-            {s.polozky.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>{
-              const kat=katMap[t.kategorie_id], pr=projMap[String(t.projekt_id)];
-              const su=subjektNazev(t.subjekt_typ,t.subjekt_id,deti,auta);
-              return <div key={i} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"4px 0",borderTop:`1px solid ${C.bg}`}}>
-                <div style={{flex:1,minWidth:0}}>
-                  <div>{new Date(t.datum).toLocaleDateString("cs-CZ")} · <span style={{color:C.muted}}>{uctyMap[t.ucet_id]||"?"}</span></div>
-                  <div style={{fontSize:11,color:C.dim}}>
-                    {t.vs?<span style={{color:C.accent,fontWeight:700}}>VS {t.vs} · </span>:null}
-                    {(t.popis||"").slice(0,110)}
-                  </div>
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:2}}>
-                    {kat&&<span style={stitek}>{kat.emoji||"🏷"} {kat.nazev}</span>}
-                    {pr&&<span style={{...stitek,background:"#eef4fc",color:"#3066b0"}}>{pr.emoji||"📁"} {pr.nazev}</span>}
-                    {su&&<span style={{...stitek,background:"#f0f7ee",color:"#3f7d33"}}>{su}</span>}
-                    {t.typ==="prevod"&&<span style={{...stitek,background:"#fff3e0",color:"#9a5b00"}}>převod</span>}
-                  </div>
-                </div>
-                <div style={{fontWeight:700,whiteSpace:"nowrap",color:+t.castka>0?C.green:C.red}}>{kc0(t.castka)}</div>
-              </div>;
-            })}
+            {s.polozky.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
+              <Radek key={t.id||i} t={t} uctyMap={uctyMap} katMap={katMap} projMap={projMap} kategorie={kategorie}
+                deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav} editovatelny/>)}
           </div>}
         </div>;
       })}
-    </div>
+    </div>}
   </Modal>;
 }
 
+// Jeden řádek platby v rozpadu. Když je editovatelný, jde u něj rovnou přepnout
+// kategorii nebo ho označit za převod — tedy říct „tohle není příjem ani výdaj".
+function Radek({t,uctyMap,katMap,projMap,kategorie,deti,auta,uklada,uprav,editovatelny}){
+  const kat=katMap[t.kategorie_id], pr=projMap[String(t.projekt_id)];
+  const su=subjektNazev(t.subjekt_typ,t.subjekt_id,deti,auta);
+  const prevod=t.typ==="prevod";
+  const prijem=+t.castka>0;
+  return <div style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"6px 0",borderTop:`1px solid ${C.bg}`,opacity:prevod?.55:1}}>
+    <div style={{flex:1,minWidth:0}}>
+      <div>{new Date(t.datum).toLocaleDateString("cs-CZ")} · <span style={{color:C.muted}}>{uctyMap[t.ucet_id]||"?"}</span></div>
+      <div style={{fontSize:11,color:C.dim}}>
+        {t.vs?<span style={{color:C.accent,fontWeight:700}}>VS {t.vs} · </span>:null}
+        {(t.popis||"").slice(0,110)}
+      </div>
+      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:3,alignItems:"center"}}>
+        {editovatelny
+          ? <select disabled={uklada} value={t.kategorie_id||""} onChange={e=>uprav(t,{kategorie_id:e.target.value||null})}
+              style={{...inp,width:"auto",maxWidth:230,fontSize:11,padding:"2px 6px"}}>
+              <option value="">— bez kategorie —</option>
+              <optgroup label={prijem?"Příjmy":"Výdaje"}>
+                {(kategorie||[]).filter(k=>prijem?k.typ==="prijem":k.typ!=="prijem").map(k=>
+                  <option key={k.id} value={k.id}>{k.emoji||"🏷"} {k.nazev}</option>)}
+              </optgroup>
+              <optgroup label="Ostatní kategorie">
+                {(kategorie||[]).filter(k=>prijem?k.typ!=="prijem":k.typ==="prijem").map(k=>
+                  <option key={k.id} value={k.id}>{k.emoji||"🏷"} {k.nazev}</option>)}
+              </optgroup>
+            </select>
+          : kat&&<span style={stitek}>{kat.emoji||"🏷"} {kat.nazev}</span>}
+        {pr&&<span style={{...stitek,background:"#eef4fc",color:"#3066b0"}}>{pr.emoji||"📁"} {pr.nazev}</span>}
+        {su&&<span style={{...stitek,background:"#f0f7ee",color:"#3f7d33"}}>{su}</span>}
+        {prevod&&<span style={{...stitek,background:"#fff3e0",color:"#9a5b00"}}>převod — nepočítá se</span>}
+        {editovatelny&&<button disabled={uklada}
+          onClick={()=>uprav(t,{typ:prevod?(prijem?"prijem":"vydaj"):"prevod"})}
+          title={prevod?"Vrátit mezi příjmy a výdaje":"Tohle není příjem ani výdaj — jen přesun vlastních peněz"}
+          style={{...btnC(prevod?C.accent:C.muted,true),fontSize:10.5,padding:"2px 8px"}}>
+          {prevod?"vrátit do přehledu":"není příjem — převod"}
+        </button>}
+        {uklada&&<span style={{fontSize:10.5,color:C.dim}}>ukládám…</span>}
+      </div>
+    </div>
+    <div style={{fontWeight:700,whiteSpace:"nowrap",color:prevod?C.dim:(prijem?C.green:C.red)}}>{kc0(t.castka)}</div>
+  </div>;
+}
+
 function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
-  const {data:trans,loading}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
+  const {data:trans,loading,reload:reloadTrans}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
     .select("id,datum,castka,typ,popis,poznamka,protistrana,vs,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id")
     .eq("zdroj","import").order("datum").range(od,do_)));
   const [rozpad,setRozpad]=useState(null);   // {titulek, polozky}
@@ -3091,10 +3156,11 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
   };
 
   const uctyMap=Object.fromEntries((ucty||[]).map(u=>[u.id,u]));
-  // Rodinné peníze a podnikání se počítají odděleně. Na podnikatelský účet
-  // přijde hrubý obrat, ze kterého většina zase odejde na náklady — kdyby se
-  // přičetl k příjmům, „kolik můžu utratit" by bylo nafouklé o celé náklady.
-  const bezne =new Set((ucty||[]).filter(u=>(u.skupina||"finance")==="finance").map(u=>u.id));
+  // Podnikatelské účty se do rozpočtu počítají stejně jako rodinné — Jirka
+  // s těmi penězi počítá hned, jak dorazí, a platí z nich běžné rodinné věci
+  // (splátky aut, servis, telefony, právník). Skupina `podnikani` slouží jen
+  // k tomu, aby šlo ukázat, kolik z příjmů odtamtud pochází.
+  const bezne =new Set((ucty||[]).filter(u=>["finance","podnikani"].includes(u.skupina||"finance")).map(u=>u.id));
   const podnik=new Set((ucty||[]).filter(u=>u.skupina==="podnikani").map(u=>u.id));
   const sledovane=new Set([...bezne,...podnik]);
   const pohyby=(trans||[]).filter(t=>t.typ!=="prevod"&&!t.prevod_ucet_id&&sledovane.has(t.ucet_id));
@@ -3129,18 +3195,14 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
   const n=hotoveMesice.length||1;
   const vHotovych=pohyby.filter(t=>hotoveMesice.includes(String(t.datum).slice(0,7)));
 
-  const rodinne =vHotovych.filter(t=>bezne.has(t.ucet_id));
   const firemni =vHotovych.filter(t=>podnik.has(t.ucet_id));
   const soucet=(xs,f)=>xs.reduce((a,t)=>a+(f(t)?Math.abs(+t.castka):0),0);
-  const prijmy  =soucet(rodinne,t=>+t.castka>0);
-  // Závazky se berou ze všech účtů — splátka může odejít i z podnikatelského.
+  const prijmy  =soucet(vHotovych,t=>+t.castka>0);
   const zavazky =soucet(vHotovych,t=>+t.castka<0&&t.projekt_id);
-  const zbytek  =soucet(rodinne, t=>+t.castka<0&&!t.projekt_id);
-  const bizIn   =soucet(firemni, t=>+t.castka>0);
-  const bizOut  =soucet(firemni, t=>+t.castka<0&&!t.projekt_id);
+  const zbytek  =soucet(vHotovych,t=>+t.castka<0&&!t.projekt_id);
+  const bizIn   =soucet(firemni,  t=>+t.castka>0);     // jen pro informaci
   const mPrijmy=prijmy/n, mZavazky=zavazky/n, mZbytek=zbytek/n;
-  const mBizNetto=(bizIn-bizOut)/n;
-  const kDispozici=mPrijmy+hotovostniPrijem+mBizNetto-mZavazky;
+  const kDispozici=mPrijmy+hotovostniPrijem-mZavazky;
   const rozdil=kDispozici-mZbytek;
 
   // Likvidita: poslední známý stav běžných účtů a hotovosti. Dětské spoření,
@@ -3169,14 +3231,13 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     }
     return out;
   })();
-  const bezKategorie=soucet(rodinne,t=>+t.castka<0&&!t.projekt_id&&!t.kategorie_id);
+  const bezKategorie=soucet(vHotovych,t=>+t.castka<0&&!t.projekt_id&&!t.kategorie_id);
   const podilNezarazenych=zbytek?bezKategorie/zbytek:0;
 
   // Kam to teče — průměr na měsíc podle kategorie a podle toho, koho se to týká.
-  // Jen rodinné účty; náklady podnikání by sloupce zaplevelily.
   const podle=(klic,nazev)=>{
     const m=new Map();
-    for(const t of rodinne){
+    for(const t of vHotovych){
       if(+t.castka>=0||t.projekt_id)continue;
       const k=klic(t);
       if(!m.has(k))m.set(k,{suma:0,polozky:[]});
@@ -3262,16 +3323,14 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
 
     <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
       {karta("Příjmy měsíčně",mPrijmy+hotovostniPrijem,C.green,
-        hotovostniPrijem?`z toho ${kc0(hotovostniPrijem)} hotově mimo účty`:"jen to, co přišlo na rodinné účty",
-        rodinne.filter(t=>+t.castka>0))}
-      {podnik.size>0&&karta("Podnikání čistě",mBizNetto,mBizNetto>=0?C.green:C.red,
-        `přišlo ${kc0(bizIn/n)}, odešlo na náklady ${kc0(bizOut/n)}`,
-        firemni)}
+        [hotovostniPrijem?`${kc0(hotovostniPrijem)} hotově mimo účty`:null,
+         bizIn?`${kc0(bizIn/n)} z podnikání`:null].filter(Boolean).join(" · ")||"jen to, co přišlo na účty",
+        vHotovych.filter(t=>+t.castka>0))}
       {karta("Povinné závazky",mZavazky,C.orange,"hypotéka, SJM, insolvence, auta",
         vHotovych.filter(t=>+t.castka<0&&t.projekt_id))}
       {karta("Zbývá na život",kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků")}
-      {karta("Skutečně utrácíš",mZbytek,C.red,"všechno ostatní mimo podnikání",
-        rodinne.filter(t=>+t.castka<0&&!t.projekt_id))}
+      {karta("Skutečně utrácíš",mZbytek,C.red,"všechno ostatní",
+        vHotovych.filter(t=>+t.castka<0&&!t.projekt_id))}
     </div>
 
     <div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
@@ -3305,7 +3364,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     </div>
 
     {rozpad&&<RozpadModal {...rozpad} pocetMesicu={n} ucty={ucty} kategorie={kategorie} projekty={projekty}
-      deti={deti} auta={auta} onClose={()=>setRozpad(null)}/>}
+      deti={deti} auta={auta} onZmena={reloadTrans} onClose={()=>setRozpad(null)}/>}
   </div>;
 }
 
