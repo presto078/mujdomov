@@ -1,36 +1,26 @@
 -- ══════════════════════════════════════════════════════════════════════════
--- AKCE JAKO FINANČNÍ PROJEKT
+-- AKCE JAKO FINANČNÍ PROJEKT — příprava databáze
 --
 -- Svatba a případ u právníka jsou stejná otázka jako hypotéka nebo auta:
 -- „kolik mě tahle věc dohromady stála". Liší se jen tím, že nemají cíl, ke
 -- kterému se splácí — jen se sčítají. Proto třetí typ projektu: `akce`.
 --
--- Moduly Projekty (hosté, oběd, zákusky) a Právník (případy, sazby, záznamy)
--- zůstávají, kde jsou. Dostanou jen odkaz na svůj finanční projekt, aby se
--- číslo dalo proklikat oběma směry.
+-- Samotné akce si zakládáš v aplikaci (Finance → Projekty → + Nový projekt,
+-- typ „Akce"). Tenhle skript jen připraví databázi a napojí moduly.
 --
 -- Spustit v Supabase SQL Editoru. Dá se pustit opakovaně.
 -- ══════════════════════════════════════════════════════════════════════════
 
 
--- ── A) Založení projektů ──────────────────────────────────────────────────
--- Cílová částka u akce znamená rozpočet, ne dluh — nechává se prázdná,
--- dokud se nedoplní z modulu Projekty.
-
--- Měsíční částka se nevyplňuje — akce se nesplácí. (Sloupec se tu ani
--- neuvádí: netypované `null` uvnitř VALUES si Postgres přebere jako text
--- a na numeric ho pak nepustí.)
-insert into fin_projekty (nazev, emoji, typ, poznamka, poradi)
-select * from (values
-  ('Svatba',         '💍', 'akce',
-   'Červen 2026. Sbírá platby z výpisů i hotovostní. Rozpočet je v modulu Projekty.', 10),
-  ('Právník Zeman',  '⚖️', 'akce',
-   'JUDr. Zeman — odměny a soudní poplatky. Detail případu je v modulu Právník.', 11)
-) as v(nazev,emoji,typ,poznamka,poradi)
-where not exists (select 1 from fin_projekty p where p.nazev = v.nazev);
+-- ── A) Sloupce, které formulář potřebuje ──────────────────────────────────
+-- `typ` je obyčejný text bez omezení, takže hodnota 'akce' projde sama.
+-- Chybí jen datum začátku — u akce se hodí („svatba 6/2026").
+alter table fin_projekty add column if not exists datum_od date;
 
 
 -- ── B) Odkaz z modulů na finanční projekt ─────────────────────────────────
+-- Moduly Projekty (hosté, oběd, zákusky) a Právník (případy, sazby, záznamy)
+-- zůstávají, kde jsou. Dostanou jen odkaz, aby se číslo dalo proklikat.
 alter table projekty          add column if not exists fin_projekt_id bigint references fin_projekty(id) on delete set null;
 alter table pravnici_pripady  add column if not exists fin_projekt_id bigint references fin_projekty(id) on delete set null;
 
@@ -39,32 +29,32 @@ comment on column projekty.fin_projekt_id is
 comment on column pravnici_pripady.fin_projekt_id is
   'Finanční projekt, pod kterým se sčítají odměny a poplatky k tomuhle případu.';
 
--- Napojení podle názvu — pokud se projekt ve tvých datech jmenuje jinak,
--- oprav si řetězec vpravo.
+
+-- ── C) Napojení modulů na už založené akce ────────────────────────────────
+-- Pusť až POTOM, co si v aplikaci akce založíš. Páruje podle názvu, takže
+-- když se tvůj projekt jmenuje jinak, oprav si řetězec vpravo.
+
 update projekty p set fin_projekt_id = f.id
   from fin_projekty f
- where f.nazev = 'Svatba' and p.fin_projekt_id is null
-   and lower(p.nazev) like '%svatb%';
+ where f.typ = 'akce' and p.fin_projekt_id is null
+   and lower(p.nazev) like '%svatb%' and lower(f.nazev) like '%svatb%';
 
 update pravnici_pripady c set fin_projekt_id = f.id
   from fin_projekty f
- where f.nazev = 'Právník Zeman' and c.fin_projekt_id is null;
+ where f.typ = 'akce' and c.fin_projekt_id is null
+   and (lower(f.nazev) like '%právník%' or lower(f.nazev) like '%pravnik%');
 
 
--- ── C) Pravidla, ať se platby chytají samy ────────────────────────────────
--- Právník: platby JUDr. Zemanovi a notářské poplatky poznáme z textu výpisu.
+-- ── D) Pravidla, ať se platby chytají samy ────────────────────────────────
+-- Právníka poznáme z textu výpisu. Spustí se, jen když projekt existuje.
 insert into fin_pravidla (vzor, projekt_id, priorita)
-select v.vzor, f.id, 8 from (values
-  ('judr zeman'),
-  ('zeman advokat'),
-  ('notar')
-) as v(vzor)
-join fin_projekty f on f.nazev = 'Právník Zeman'
+select v.vzor, f.id, 8
+  from (values ('judr zeman'), ('zeman advokat'), ('notar')) as v(vzor)
+  join fin_projekty f on lower(f.nazev) like '%právník%' or lower(f.nazev) like '%pravnik%'
 on conflict (lower(vzor)) do update set projekt_id = excluded.projekt_id;
 
--- Svatba se z textu výpisu poznat nedá (dodavatelé se jmenují všelijak),
--- proto se platby přiřazují ručně při procházení měsíců. Jakmile budeš mít
--- pár typických jmen, přidej je sem stejným způsobem:
+-- Svatbu z textu výpisu poznat nejde — dodavatelé se jmenují všelijak.
+-- Ty platby přiřadíš ručně v rozpadu. Až budeš mít pár typických jmen:
 --
 -- insert into fin_pravidla (vzor, projekt_id, priorita)
 -- select v.vzor, f.id, 8 from (values ('nazev dodavatele')) as v(vzor)
@@ -74,7 +64,7 @@ on conflict (lower(vzor)) do update set projekt_id = excluded.projekt_id;
 
 -- ── Kontrola ──────────────────────────────────────────────────────────────
 select f.nazev, f.typ,
-       count(t.id)                                as plateb_z_vypisu,
+       count(t.id)                                                  as plateb_z_vypisu,
        coalesce(sum(-t.castka) filter (where t.castka < 0), 0)::int as z_vypisu,
        coalesce((select sum(castka)::int from fin_projekt_platby x where x.projekt_id = f.id), 0) as hotove
   from fin_projekty f

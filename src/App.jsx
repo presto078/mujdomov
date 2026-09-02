@@ -2842,7 +2842,8 @@ function FinProjektyTab(){
 }
 
 function FinProjektModal({projekt,onClose,onSaved}){
-  const [f,setF]=useState(projekt||{nazev:"",emoji:"📁",typ:"zavazek",cilova_castka:"",zaplaceno_pred:"",mesicni_castka:"",datum_do:"",poznamka:"",aktivni:true});
+  const [f,setF]=useState(projekt||{nazev:"",emoji:"📁",typ:"zavazek",cilova_castka:"",zaplaceno_pred:"",mesicni_castka:"",datum_od:"",datum_do:"",poznamka:"",aktivni:true});
+  const akce=f.typ==="akce";
   const [saving,setSaving]=useState(false);
   const uloz=async()=>{
     if(!f.nazev.trim())return;
@@ -2851,7 +2852,10 @@ function FinProjektModal({projekt,onClose,onSaved}){
       cilova_castka:f.cilova_castka===""||f.cilova_castka==null?null:+f.cilova_castka,
       zaplaceno_pred:f.zaplaceno_pred===""||f.zaplaceno_pred==null?0:+f.zaplaceno_pred,
       mesicni_castka:f.mesicni_castka===""||f.mesicni_castka==null?null:+f.mesicni_castka,
-      datum_do:f.datum_do||null};
+      datum_od:f.datum_od||null, datum_do:f.datum_do||null};
+    // U akce nemá splátka ani „zaplaceno před" smysl — ať se do dat nedostane
+    // číslo, které by pak kazilo součty.
+    if(akce){row.mesicni_castka=null;row.zaplaceno_pred=0;}
     const {error}=projekt?await sb.from("fin_projekty").update(row).eq("id",projekt.id)
                           :await sb.from("fin_projekty").insert(row);
     setSaving(false);
@@ -2880,13 +2884,19 @@ function FinProjektModal({projekt,onClose,onSaved}){
         </select>
       </div>
     </div>
-    <div style={{display:"flex",gap:10,marginBottom:11}}>
-      {pole("Cílová částka","cilova_castka","number","např. 1000000")}
-      {pole("Zaplaceno před evidencí","zaplaceno_pred","number","0")}
+    <div style={{fontSize:11,color:C.dim,marginBottom:11,marginTop:-4}}>
+      {f.typ==="zavazek"&&"Má cílovou částku a konec. Počítá se, kolik zbývá a jestli na to současná splátka stačí."}
+      {f.typ==="provoz"&&"Běží bez konce. Sčítá se, kolik měsíčně bere."}
+      {akce&&"Nemá cíl ani splátku — jen se sečte, kolik ta věc dohromady stála. Platby jí přiřadíš v rozpadu u konkrétní platby, hotovostní se dopisují tlačítkem + Platba hotově."}
     </div>
     <div style={{display:"flex",gap:10,marginBottom:11}}>
-      {pole("Měsíční splátka","mesicni_castka","number")}
-      {pole("Konec","datum_do","date")}
+      {pole(akce?"Rozpočet (nepovinné)":"Cílová částka","cilova_castka","number",akce?"kolik to mělo stát":"např. 1000000")}
+      {!akce&&pole("Zaplaceno před evidencí","zaplaceno_pred","number","0")}
+    </div>
+    <div style={{display:"flex",gap:10,marginBottom:11}}>
+      {!akce&&pole("Měsíční splátka","mesicni_castka","number")}
+      {akce&&pole("Od","datum_od","date")}
+      {pole(akce?"Do":"Konec","datum_do","date")}
     </div>
     <div style={{marginBottom:11}}>
       <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Poznámka</div>
@@ -3066,7 +3076,7 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
       </div>}
       {kTrideni.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
         <Radek key={t.id||i} t={t} uctyMap={uctyMap} katMap={katMap} projMap={projMap} kategorie={kategorie}
-          deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav} editovatelny/>)}
+          projekty={projekty} deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav} editovatelny/>)}
     </div>}
 
     {!mesic&&<div style={{maxHeight:"62vh",overflowY:"auto"}}>
@@ -3103,7 +3113,7 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
           {otevreno&&<div style={{padding:"0 4px 10px 20px"}}>
             {s.polozky.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
               <Radek key={t.id||i} t={t} uctyMap={uctyMap} katMap={katMap} projMap={projMap} kategorie={kategorie}
-                deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav} editovatelny/>)}
+                projekty={projekty} deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav} editovatelny/>)}
           </div>}
         </div>;
       })}
@@ -3113,7 +3123,7 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
 
 // Jeden řádek platby v rozpadu. Když je editovatelný, jde u něj rovnou přepnout
 // kategorii nebo ho označit za převod — tedy říct „tohle není příjem ani výdaj".
-function Radek({t,uctyMap,katMap,projMap,kategorie,deti,auta,uklada,uprav,editovatelny}){
+function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,uprav,editovatelny}){
   const kat=katMap[t.kategorie_id], pr=projMap[String(t.projekt_id)];
   const su=subjektNazev(t.subjekt_typ,t.subjekt_id,deti,auta);
   const prevod=t.typ==="prevod";
@@ -3140,7 +3150,14 @@ function Radek({t,uctyMap,katMap,projMap,kategorie,deti,auta,uklada,uprav,editov
               </optgroup>
             </select>
           : kat&&<span style={stitek}>{kat.emoji||"🏷"} {kat.nazev}</span>}
-        {pr&&<span style={{...stitek,background:"#eef4fc",color:"#3066b0"}}>{pr.emoji||"📁"} {pr.nazev}</span>}
+        {editovatelny&&(projekty||[]).length>0
+          ? <select disabled={uklada} value={t.projekt_id||""} onChange={e=>uprav(t,{projekt_id:e.target.value?+e.target.value:null})}
+              title="Ke které velké věci tahle platba patří — svatba, auta, hypotéka…"
+              style={{...inp,width:"auto",maxWidth:190,fontSize:11,padding:"2px 6px"}}>
+              <option value="">— bez projektu —</option>
+              {(projekty||[]).map(x=><option key={x.id} value={x.id}>{x.emoji||"📁"} {x.nazev}</option>)}
+            </select>
+          : pr&&<span style={{...stitek,background:"#eef4fc",color:"#3066b0"}}>{pr.emoji||"📁"} {pr.nazev}</span>}
         {su&&<span style={{...stitek,background:"#f0f7ee",color:"#3f7d33"}}>{su}</span>}
         {prevod&&<span style={{...stitek,background:"#fff3e0",color:"#9a5b00"}}>převod — nepočítá se</span>}
         {editovatelny&&<button disabled={uklada}
