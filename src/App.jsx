@@ -2474,6 +2474,42 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
     return out.sort((a,b)=>Math.abs(b.suma)-Math.abs(a.suma));
   })();
 
+  // Pravidla vznikají postupně, ale platby už v databázi leží. Tohle projde
+  // všechny naimportované transakce a doplní jim, co pravidla říkají — ale jen
+  // tam, kde je pole prázdné, aby to nepřepsalo ruční rozhodnutí.
+  const [zpetne,setZpetne]=useState(null);   // text průběhu
+  const pustPravidlaZpetne=async()=>{
+    if(!confirm("Projít všechny naimportované platby a doplnit jim kategorii, projekt a koho se týkají podle uložených pravidel?\n\nUž vyplněné údaje se nepřepíšou."))return;
+    setZpetne("Počítám…");
+    const davky=new Map();               // podpis patche → seznam id
+    let dotcenych=0;
+    for(const t of (transakce||[])){
+      if(t.typ==="prevod")continue;
+      const n=navrhniZarazeni({popis:t.popis,poznamka:t.poznamka,protiucet:t.protistrana},pravidla);
+      const patch={};
+      if(n.kategorie_id&&!t.kategorie_id)patch.kategorie_id=n.kategorie_id;
+      if(n.projekt_id  &&!t.projekt_id)  patch.projekt_id=n.projekt_id;
+      if(n.subjekt_typ &&!t.subjekt_typ){patch.subjekt_typ=n.subjekt_typ;patch.subjekt_id=n.subjekt_id||null;}
+      if(!Object.keys(patch).length)continue;
+      const klic=JSON.stringify(patch);
+      if(!davky.has(klic))davky.set(klic,{patch,ids:[]});
+      davky.get(klic).ids.push(t.id); dotcenych++;
+    }
+    if(!dotcenych){setZpetne(null);alert("Pravidla už jsou uplatněná — není co doplnit.");return;}
+    let hotovo=0;
+    for(const {patch,ids} of davky.values()){
+      for(let i=0;i<ids.length;i+=200){
+        const cast=ids.slice(i,i+200);
+        const {error}=await sb.from("fin_transakce").update(patch).in("id",cast);
+        if(error){setZpetne(null);alert("Chyba: "+error.message);return;}
+        hotovo+=cast.length; setZpetne(`Doplňuji… ${hotovo}/${dotcenych}`);
+      }
+    }
+    setZpetne(null);
+    alert(`Doplněno u ${hotovo} plateb.`);
+    onZmena&&onZmena(); reload();
+  };
+
   const celkemNezarazenych=(transakce||[]).filter(t=>!t.kategorie_id&&t.typ!=="prevod").length;
   const celkemBezSubjektu=(transakce||[]).filter(t=>!t.subjekt_typ&&t.typ!=="prevod").length;
 
@@ -2534,6 +2570,11 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
         <input type="checkbox" checked={jenNezarazene} onChange={e=>setJenNezarazene(e.target.checked)}/> jen nedodělané
       </label>
       <button onClick={()=>setNovaKat({nazev:"",typ:"vydaj",emoji:"🏷"})} style={{...btnC(C.green,true),fontSize:12,padding:"5px 12px"}}>+ Nová kategorie</button>
+      <button onClick={pustPravidlaZpetne} disabled={!!zpetne}
+        title="Projde staré platby a doplní jim zařazení podle pravidel, která vznikla až po importu"
+        style={{...btnC(C.accent,true),fontSize:12,padding:"5px 12px"}}>
+        {zpetne||`🔁 Uplatnit pravidla zpětně (${(pravidla||[]).length})`}
+      </button>
     </div>
 
     <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:10,padding:"9px 14px",fontSize:12,color:"#3066b0",marginBottom:14}}>
@@ -3022,6 +3063,7 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
 
   // Z popisu platby se nabídnou kusy, ze kterých se dá udělat vzor — celý popis
   // většinou obsahuje i variabilní symbol nebo číslo měsíce, které se mění.
+  const maZarazeni=t=>!!(t.kategorie_id||t.projekt_id||t.subjekt_typ);
   const otevriPravidlo=t=>{
     const popis=String(t.popis||"");
     const kandidati=[...new Set(popis.split(/\s·\s|\s—\s/).map(x=>x.trim()).filter(x=>x.length>=3&&x.length<=60))];
@@ -3029,16 +3071,18 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
     setPravidlo({
       vzorNavrh:kandidati[kandidati.length-1]||popis.slice(0,50),
       kandidati,
-      patch:{kategorie_id:t.kategorie_id||null,projekt_id:t.projekt_id||null},
+      patch:{kategorie_id:t.kategorie_id||null,projekt_id:t.projekt_id||null,
+             subjekt_typ:t.subjekt_typ||null,subjekt_id:t.subjekt_id||null},
       popisPatche:[kat?`${kat.emoji||"🏷"} ${kat.nazev}`:"bez kategorie",
-                   pr?`${pr.emoji||"📁"} ${pr.nazev}`:null].filter(Boolean).join(" · "),
+                   pr?`${pr.emoji||"📁"} ${pr.nazev}`:null,
+                   subjektNazev(t.subjekt_typ,t.subjekt_id,deti,auta)].filter(Boolean).join(" · "),
     });
   };
 
   const viditelne=mesic?polozky.filter(t=>String(t.datum).slice(0,7)===mesic):polozky;
   // Zařazená je platba, která má kategorii nebo patří pod projekt; převody se
   // netřídí. Filtr „jen nezařazené" pak drží seznam krátký, jak se prochází.
-  const nezarazena=t=>t.typ!=="prevod"&&!t.kategorie_id&&!t.projekt_id;
+  const nezarazena=t=>t.typ!=="prevod"&&!t.kategorie_id&&!t.projekt_id&&!t.subjekt_typ;
   const nezarazenych=viditelne.filter(nezarazena).length;
   const kTrideni=jenNezarazene?viditelne.filter(nezarazena):viditelne;
   const celkem=viditelne.reduce((a,t)=>a+Math.abs(+t.castka),0);
@@ -3317,6 +3361,12 @@ function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,upr
               onVyber={id=>uprav(t,{kategorie_id:id||null})}
               onNova={novaKategorie?nazev=>novaKategorie(t,nazev):null}/>
           : kat&&<span style={stitek}>{kat.emoji||"🏷"} {kat.nazev}</span>}
+        {editovatelny
+          ? <SubjektSelect deti={deti} auta={auta}
+              value={t.subjekt_typ?`${t.subjekt_typ}|${t.subjekt_id||""}`:""}
+              onChange={v=>{const [tp,id]=String(v).split("|");uprav(t,{subjekt_typ:tp||null,subjekt_id:id||null});}}
+              style={{...inp,width:"auto",maxWidth:170,fontSize:11,padding:"2px 6px"}}/>
+          : su&&<span style={{...stitek,background:"#f0f7ee",color:"#3f7d33"}}>{su}</span>}
         {editovatelny&&(projekty||[]).length>0
           ? <select disabled={uklada} value={t.projekt_id||""} onChange={e=>uprav(t,{projekt_id:e.target.value?+e.target.value:null})}
               title="Ke které velké věci tahle platba patří — svatba, auta, hypotéka…"
@@ -3325,7 +3375,6 @@ function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,upr
               {(projekty||[]).map(x=><option key={x.id} value={x.id}>{x.emoji||"📁"} {x.nazev}</option>)}
             </select>
           : pr&&<span style={{...stitek,background:"#eef4fc",color:"#3066b0"}}>{pr.emoji||"📁"} {pr.nazev}</span>}
-        {su&&<span style={{...stitek,background:"#f0f7ee",color:"#3f7d33"}}>{su}</span>}
         {prevod&&<span style={{...stitek,background:"#fff3e0",color:"#9a5b00"}}>převod — nepočítá se</span>}
         {editovatelny&&<button disabled={uklada}
           onClick={()=>uprav(t,{typ:prevod?(prijem?"prijem":"vydaj"):"prevod"})}
@@ -3333,7 +3382,7 @@ function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,upr
           style={{...btnC(prevod?C.accent:C.muted,true),fontSize:10.5,padding:"2px 8px"}}>
           {prevod?"vrátit do přehledu":"není příjem — převod"}
         </button>}
-        {editovatelny&&naOstatni&&(t.kategorie_id||t.projekt_id)&&<button disabled={uklada}
+        {editovatelny&&naOstatni&&(t.kategorie_id||t.projekt_id||t.subjekt_typ)&&<button disabled={uklada}
           onClick={()=>naOstatni(t)}
           title="Stejné zařazení nastavit i u ostatních plateb se stejným textem — minulých i budoucích"
           style={{...btnC(C.accent,true),fontSize:10.5,padding:"2px 8px"}}>🔁 i na ostatní</button>}
