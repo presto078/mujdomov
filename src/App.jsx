@@ -2966,7 +2966,7 @@ function normCislo(c){
 // Rozpad jednoho čísla na řádky, ze kterých vzniklo. Nejdřív souhrn podle
 // protistrany — tam je hned vidět, jestli se do příjmů nepletou přesuny mezi
 // vlastními účty — a pod tím jednotlivé transakce po měsících.
-function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekty,deti,auta,onZmena,onClose}){
+function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekty,deti,auta,reloadKategorie,onZmena,onClose}){
   const [rozbaleno,setRozbaleno]=useState(null);
   // Když rozpad stejně obsahuje jen jeden měsíc, není co vybírat — rovnou se
   // ukáže seznam plateb, aby se do něj nemuselo klikat navíc.
@@ -2975,6 +2975,7 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
     return ms.length===1?ms[0]:null;
   });
   const [jenNezarazene,setJenNezarazene]=useState(false);
+  const [pravidlo,setPravidlo]=useState(null);   // {vzorNavrh, kandidati, patch, popisPatche}
   const [zmeny,setZmeny]=useState({});        // id → co se změnilo, ať je to vidět hned
   const [uklada,setUklada]=useState(null);
   const {data:jmena,reload:reloadJmena}=useData(()=>sb.from("fin_protistrany").select("*"));
@@ -3006,6 +3007,33 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
   };
   // Přehled se přepočítá až při zavření — jinak by se okno pod rukama překreslovalo.
   const zavri=()=>{ if(Object.keys(zmeny).length)onZmena&&onZmena(); onClose(); };
+
+  // Kategorie, která v číselníku ještě není, se dá založit rovnou od platby.
+  const novaKategorie=async(t,navrh)=>{
+    const nazev=navrh||window.prompt("Název nové kategorie:","");
+    if(!nazev||!nazev.trim())return;
+    const {data,error}=await sb.from("fin_kategorie")
+      .insert({nazev:nazev.trim(),emoji:"🏷",typ:+t.castka>0?"prijem":"vydaj",poradi:900})
+      .select().single();
+    if(error){alert("Nepodařilo se založit: "+error.message);return;}
+    await uprav(t,{kategorie_id:data.id});
+    reloadKategorie&&reloadKategorie();
+  };
+
+  // Z popisu platby se nabídnou kusy, ze kterých se dá udělat vzor — celý popis
+  // většinou obsahuje i variabilní symbol nebo číslo měsíce, které se mění.
+  const otevriPravidlo=t=>{
+    const popis=String(t.popis||"");
+    const kandidati=[...new Set(popis.split(/\s·\s|\s—\s/).map(x=>x.trim()).filter(x=>x.length>=3&&x.length<=60))];
+    const kat=katMap[t.kategorie_id], pr=projMap[String(t.projekt_id)];
+    setPravidlo({
+      vzorNavrh:kandidati[kandidati.length-1]||popis.slice(0,50),
+      kandidati,
+      patch:{kategorie_id:t.kategorie_id||null,projekt_id:t.projekt_id||null},
+      popisPatche:[kat?`${kat.emoji||"🏷"} ${kat.nazev}`:"bez kategorie",
+                   pr?`${pr.emoji||"📁"} ${pr.nazev}`:null].filter(Boolean).join(" · "),
+    });
+  };
 
   const viditelne=mesic?polozky.filter(t=>String(t.datum).slice(0,7)===mesic):polozky;
   // Zařazená je platba, která má kategorii nebo patří pod projekt; převody se
@@ -3076,8 +3104,16 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
       </div>}
       {kTrideni.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
         <Radek key={t.id||i} t={t} uctyMap={uctyMap} katMap={katMap} projMap={projMap} kategorie={kategorie}
-          projekty={projekty} deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav} editovatelny/>)}
+          projekty={projekty} deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav}
+          novaKategorie={novaKategorie} naOstatni={otevriPravidlo} editovatelny/>)}
     </div>}
+
+    {pravidlo&&<PravidloModal {...pravidlo} onClose={()=>setPravidlo(null)}
+      onHotovo={(pocet,vzor)=>{
+        setPravidlo(null);
+        alert(`Nastaveno u ${pocet} plateb podle textu „${vzor}".`);
+        onZmena&&onZmena(); onClose();
+      }}/>}
 
     {!mesic&&<div style={{maxHeight:"62vh",overflowY:"auto"}}>
       {skupiny.map(s=>{
@@ -3113,7 +3149,8 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
           {otevreno&&<div style={{padding:"0 4px 10px 20px"}}>
             {s.polozky.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
               <Radek key={t.id||i} t={t} uctyMap={uctyMap} katMap={katMap} projMap={projMap} kategorie={kategorie}
-                projekty={projekty} deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav} editovatelny/>)}
+                projekty={projekty} deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav}
+                novaKategorie={novaKategorie} naOstatni={otevriPravidlo} editovatelny/>)}
           </div>}
         </div>;
       })}
@@ -3121,9 +3158,148 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
   </Modal>;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Výběr kategorie psaním. Kategorií jsou desítky, rolovat je nesmysl — napíšeš
+// „poj" a zbydou pojistky. Seznam se rozbaluje pod polem (ne přes něj), aby ho
+// neuřízl okraj rolovacího seznamu plateb. Enter bere první nabídku.
+// ══════════════════════════════════════════════════════════════════════════════
+function VyberKategorie({hodnota,kategorie,prijem,disabled,sirka=230,onVyber,onNova}){
+  const [otevreno,setOtevreno]=useState(false);
+  const [q,setQ]=useState("");
+  const vybrana=(kategorie||[]).find(k=>String(k.id)===String(hodnota));
+  const dotaz=bezDiakritiky(q.trim());
+  // Nejdřív kategorie, které sedí na směr platby — u výdaje nemá smysl
+  // nabízet „Mzda", i když na hledaný text náhodou sedí.
+  const seznam=(kategorie||[])
+    .filter(k=>!dotaz||bezDiakritiky(k.nazev).includes(dotaz))
+    .sort((a,b)=>(((b.typ==="prijem")===prijem)?1:0)-(((a.typ==="prijem")===prijem)?1:0));
+  const zavri=()=>{setOtevreno(false);setQ("");};
+  const vyber=k=>{onVyber(k?k.id:null);zavri();};
+
+  if(!otevreno)return <button disabled={disabled} onClick={()=>setOtevreno(true)}
+    style={{...inp,width:"auto",maxWidth:sirka,fontSize:11,padding:"3px 8px",textAlign:"left",
+            cursor:"pointer",color:vybrana?C.text:C.dim,background:C.surface}}>
+    {vybrana?`${vybrana.emoji||"🏷"} ${vybrana.nazev}`:"— bez kategorie —"} ▾
+  </button>;
+
+  const radek={padding:"4px 8px",fontSize:11.5,cursor:"pointer",borderRadius:6};
+  return <div style={{width:sirka}}>
+    <input autoFocus value={q} placeholder="piš pro filtrování…"
+      onChange={e=>setQ(e.target.value)}
+      onKeyDown={e=>{if(e.key==="Enter"&&seznam[0])vyber(seznam[0]);if(e.key==="Escape")zavri();}}
+      onBlur={()=>setTimeout(zavri,180)}
+      style={{...inp,width:"100%",fontSize:11,padding:"3px 8px"}}/>
+    <div style={{marginTop:3,maxHeight:190,overflowY:"auto",background:C.surface,
+                 border:`1px solid ${C.border}`,borderRadius:8,padding:3}}>
+      <div onMouseDown={()=>vyber(null)} style={{...radek,color:C.dim}}>— bez kategorie —</div>
+      {seznam.map(k=><div key={k.id} onMouseDown={()=>vyber(k)}
+        style={{...radek,color:(k.typ==="prijem")===prijem?C.text:C.muted}}>
+        {k.emoji||"🏷"} {k.nazev}
+      </div>)}
+      {seznam.length===0&&!onNova&&<div style={{...radek,color:C.dim,cursor:"default"}}>Nic neodpovídá</div>}
+      {onNova&&q.trim().length>1&&<div onMouseDown={()=>{const n=q.trim();zavri();onNova(n);}}
+        style={{...radek,color:C.accent,fontWeight:700,borderTop:`1px solid ${C.border}`,marginTop:3,paddingTop:6}}>
+        ➕ založit kategorii „{q.trim()}"
+      </div>}
+    </div>
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// „Nastav to i u ostatních" — trvalé platby (pojistky, splátky, inkasa) chodí
+// každý měsíc se stejným textem. Zařazovat je jednu po druhé je zbytečná práce,
+// takže se z jedné platby udělá vzor: přepíše všechny, které mu odpovídají,
+// a uloží se jako pravidlo, aby budoucí importy přišly zařazené samy.
+// ══════════════════════════════════════════════════════════════════════════════
+function PravidloModal({vzorNavrh,kandidati,patch,popisPatche,onClose,onHotovo}){
+  const [vzor,setVzor]=useState(vzorNavrh||"");
+  const [nalezene,setNalezene]=useState(null);
+  const [hleda,setHleda]=useState(false);
+  const [ulozit,setUlozit]=useState(true);
+  const [pracuje,setPracuje]=useState(false);
+
+  // Náhled se přepočítává při psaní, ať je vidět, co vzor chytí, ještě než
+  // se zmáčkne tlačítko. Krátké vzory se neposílají — chytily by půlku výpisu.
+  useEffect(()=>{
+    const v=vzor.trim();
+    if(v.length<3){setNalezene(null);return;}
+    let zruseno=false; setHleda(true);
+    const casovac=setTimeout(async()=>{
+      const {data}=await sb.from("fin_transakce").select("id,datum,castka,popis")
+        .eq("zdroj","import").ilike("popis",`%${v}%`).order("datum",{ascending:false}).limit(500);
+      if(!zruseno){setNalezene(data||[]);setHleda(false);}
+    },350);
+    return ()=>{zruseno=true;clearTimeout(casovac);};
+  },[vzor]);
+
+  const pouzij=async()=>{
+    const v=vzor.trim(); if(v.length<3)return;
+    setPracuje(true);
+    const {error}=await sb.from("fin_transakce").update(patch).eq("zdroj","import").ilike("popis",`%${v}%`);
+    if(error){setPracuje(false);alert("Nepodařilo se uložit: "+error.message);return;}
+    if(ulozit){
+      // Unikátní index je na lower(vzor), což PostgREST v upsertu zacílit neumí —
+      // proto se existující pravidlo najde a přepíše se do něj.
+      const {data:stare}=await sb.from("fin_pravidla").select("id").ilike("vzor",v).limit(1);
+      if(stare&&stare.length)await sb.from("fin_pravidla").update(patch).eq("id",stare[0].id);
+      else await sb.from("fin_pravidla").insert({vzor:v,priorita:30,...patch});
+    }
+    setPracuje(false);
+    onHotovo(nalezene?nalezene.length:0,v);
+  };
+
+  const kratky=vzor.trim().length<3;
+  return <Modal title="Nastavit i u ostatních plateb" onClose={onClose} width={600}>
+    <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
+      Všem platbám, jejichž popis obsahuje tenhle text, se nastaví: <strong style={{color:C.text}}>{popisPatche}</strong>
+    </div>
+    <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Text, podle kterého se platby poznají</div>
+    <input style={inp} autoFocus value={vzor} onChange={e=>setVzor(e.target.value)}/>
+    {(kandidati||[]).length>1&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:7}}>
+      {kandidati.map((k,i)=><button key={i} onClick={()=>setVzor(k)}
+        style={{...btnC(C.muted,true),fontSize:11,padding:"3px 9px"}}>{k}</button>)}
+    </div>}
+    <div style={{fontSize:11,color:C.dim,marginTop:7}}>
+      Čím kratší text, tím víc plateb chytí. Zkrať ho tak, aby v něm nezůstalo číslo měsíce
+      ani variabilní symbol, který se každou platbu mění.
+    </div>
+
+    <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginTop:14}}>
+      {kratky&&<div style={{fontSize:12,color:C.dim}}>Napiš aspoň tři znaky.</div>}
+      {!kratky&&hleda&&<div style={{fontSize:12,color:C.dim}}>Hledám…</div>}
+      {!kratky&&!hleda&&nalezene&&<>
+        <div style={{fontSize:13,fontWeight:800,marginBottom:8,color:nalezene.length?C.text:C.dim}}>
+          {nalezene.length?`Odpovídá ${nalezene.length} plateb`:"Neodpovídá žádná platba"}
+        </div>
+        <div style={{maxHeight:200,overflowY:"auto"}}>
+          {nalezene.slice(0,25).map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:11.5,padding:"3px 0",color:C.muted}}>
+            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {new Date(t.datum).toLocaleDateString("cs-CZ")} · {(t.popis||"").slice(0,70)}
+            </span>
+            <strong style={{whiteSpace:"nowrap",color:+t.castka<0?C.red:C.green}}>{kc0(t.castka)}</strong>
+          </div>)}
+          {nalezene.length>25&&<div style={{fontSize:11,color:C.dim,marginTop:4}}>…a dalších {nalezene.length-25}</div>}
+        </div>
+      </>}
+    </div>
+
+    <label style={{display:"flex",alignItems:"center",gap:7,marginTop:12,fontSize:12,cursor:"pointer"}}>
+      <input type="checkbox" checked={ulozit} onChange={e=>setUlozit(e.target.checked)}/>
+      Uložit jako pravidlo — příští importy přijdou zařazené samy
+    </label>
+
+    <div style={{display:"flex",gap:10,marginTop:16}}>
+      <button onClick={pouzij} disabled={pracuje||kratky||!nalezene?.length} style={btnC()}>
+        {pracuje?"Ukládám…":`Nastavit u ${nalezene?.length||0} plateb`}
+      </button>
+      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+    </div>
+  </Modal>;
+}
+
 // Jeden řádek platby v rozpadu. Když je editovatelný, jde u něj rovnou přepnout
 // kategorii nebo ho označit za převod — tedy říct „tohle není příjem ani výdaj".
-function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,uprav,editovatelny}){
+function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,uprav,novaKategorie,naOstatni,editovatelny}){
   const kat=katMap[t.kategorie_id], pr=projMap[String(t.projekt_id)];
   const su=subjektNazev(t.subjekt_typ,t.subjekt_id,deti,auta);
   const prevod=t.typ==="prevod";
@@ -3137,18 +3313,9 @@ function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,upr
       </div>
       <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:3,alignItems:"center"}}>
         {editovatelny
-          ? <select disabled={uklada} value={t.kategorie_id||""} onChange={e=>uprav(t,{kategorie_id:e.target.value||null})}
-              style={{...inp,width:"auto",maxWidth:230,fontSize:11,padding:"2px 6px"}}>
-              <option value="">— bez kategorie —</option>
-              <optgroup label={prijem?"Příjmy":"Výdaje"}>
-                {(kategorie||[]).filter(k=>prijem?k.typ==="prijem":k.typ!=="prijem").map(k=>
-                  <option key={k.id} value={k.id}>{k.emoji||"🏷"} {k.nazev}</option>)}
-              </optgroup>
-              <optgroup label="Ostatní kategorie">
-                {(kategorie||[]).filter(k=>prijem?k.typ!=="prijem":k.typ==="prijem").map(k=>
-                  <option key={k.id} value={k.id}>{k.emoji||"🏷"} {k.nazev}</option>)}
-              </optgroup>
-            </select>
+          ? <VyberKategorie hodnota={t.kategorie_id} kategorie={kategorie} prijem={prijem} disabled={uklada}
+              onVyber={id=>uprav(t,{kategorie_id:id||null})}
+              onNova={novaKategorie?nazev=>novaKategorie(t,nazev):null}/>
           : kat&&<span style={stitek}>{kat.emoji||"🏷"} {kat.nazev}</span>}
         {editovatelny&&(projekty||[]).length>0
           ? <select disabled={uklada} value={t.projekt_id||""} onChange={e=>uprav(t,{projekt_id:e.target.value?+e.target.value:null})}
@@ -3166,6 +3333,10 @@ function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,upr
           style={{...btnC(prevod?C.accent:C.muted,true),fontSize:10.5,padding:"2px 8px"}}>
           {prevod?"vrátit do přehledu":"není příjem — převod"}
         </button>}
+        {editovatelny&&naOstatni&&(t.kategorie_id||t.projekt_id)&&<button disabled={uklada}
+          onClick={()=>naOstatni(t)}
+          title="Stejné zařazení nastavit i u ostatních plateb se stejným textem — minulých i budoucích"
+          style={{...btnC(C.accent,true),fontSize:10.5,padding:"2px 8px"}}>🔁 i na ostatní</button>}
         {uklada&&<span style={{fontSize:10.5,color:C.dim}}>ukládám…</span>}
       </div>
     </div>
@@ -3173,7 +3344,7 @@ function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,upr
   </div>;
 }
 
-function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
+function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   const {data:trans,loading,reload:reloadTrans}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
     .select("id,datum,castka,typ,popis,poznamka,protistrana,vs,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id")
     .eq("zdroj","import").order("datum").range(od,do_)));
@@ -3467,7 +3638,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     </div>
 
     {rozpad&&<RozpadModal {...rozpad} pocetMesicu={prumer?n:null} ucty={ucty} kategorie={kategorie} projekty={projekty}
-      deti={deti} auta={auta} onZmena={reloadTrans} onClose={()=>setRozpad(null)}/>}
+      deti={deti} auta={auta} reloadKategorie={reloadKategorie} onZmena={reloadTrans} onClose={()=>setRozpad(null)}/>}
   </div>;
 }
 
@@ -3492,7 +3663,7 @@ function FinanceNoveTab(){
       {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"zarazeni",l:"🏷 Zařazení"}].map(t=>
         <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{t.l}</button>)}
     </div>
-    {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta}/>}
+    {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>}
     {zalozka==="projekty"&&<FinProjektyTab/>}
     {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
     {zalozka==="pokryti"&&<PokrytiImportu ucty={ucty}/>}
