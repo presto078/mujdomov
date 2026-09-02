@@ -2757,7 +2757,8 @@ function FinProjektyTab(){
       procenta:p.cilova_castka?Math.min(100,zaplaceno/+p.cilova_castka*100):null};
   };
 
-  const celkemMesicne=(projekty||[]).filter(p=>p.aktivni!==false).reduce((a,p)=>a+(+p.mesicni_castka||0),0);
+  // Akce nemají měsíční splátku — do „berou měsíčně" tedy nepatří.
+  const celkemMesicne=(projekty||[]).filter(p=>p.aktivni!==false&&p.typ!=="akce").reduce((a,p)=>a+(+p.mesicni_castka||0),0);
 
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14}}>
@@ -2778,7 +2779,7 @@ function FinProjektyTab(){
             <div style={{minWidth:220,flex:1}}>
               <div style={{fontWeight:800,fontSize:15}}>{p.emoji||"📁"} {p.nazev}</div>
               <div style={{fontSize:11,color:C.muted,marginTop:3}}>
-                {p.typ==="zavazek"?"Závazek":"Provoz"}
+                {p.typ==="zavazek"?"Závazek":p.typ==="akce"?"Akce":"Provoz"}
                 {p.mesicni_castka?` · ${kc0(p.mesicni_castka)} měsíčně`:""}
                 {p.datum_do?` · konec ${new Date(p.datum_do).toLocaleDateString("cs-CZ")}${s.mes!=null?` (${s.mes} měs.)`:""}`:""}
                 {` · ${s.zVypisu.length} plateb z výpisů`}
@@ -2789,7 +2790,7 @@ function FinProjektyTab(){
             <div style={{textAlign:"right"}}>
               <div style={{fontSize:18,fontWeight:800,color:C.text}}>{kc0(s.zaplaceno)}</div>
               <div style={{fontSize:11,color:C.muted}}>
-                {p.cilova_castka?<>z {kc0(p.cilova_castka)}</>:"zaplaceno celkem"}
+                {p.cilova_castka?<>z {kc0(p.cilova_castka)}{p.typ==="akce"?" v rozpočtu":""}</>:p.typ==="akce"?"stálo celkem":"zaplaceno celkem"}
               </div>
               {s.zbyva!=null&&<div style={{fontSize:12,fontWeight:700,color:s.zbyva>0?C.orange:C.green,marginTop:2}}>
                 {s.zbyva>0?`zbývá ${kc0(s.zbyva)}`:"✓ splaceno"}
@@ -2875,6 +2876,7 @@ function FinProjektModal({projekt,onClose,onSaved}){
         <select style={inp} value={f.typ} onChange={e=>setF(x=>({...x,typ:e.target.value}))}>
           <option value="zavazek">Závazek — splácí se do nuly</option>
           <option value="provoz">Provoz — běží dál</option>
+          <option value="akce">Akce — jednorázová věc, jen se sčítá (svatba, případ u právníka)</option>
         </select>
       </div>
     </div>
@@ -2956,7 +2958,13 @@ function normCislo(c){
 // vlastními účty — a pod tím jednotlivé transakce po měsících.
 function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekty,deti,auta,onZmena,onClose}){
   const [rozbaleno,setRozbaleno]=useState(null);
-  const [mesic,setMesic]=useState(null);      // vybraný měsíc, null = všechny
+  // Když rozpad stejně obsahuje jen jeden měsíc, není co vybírat — rovnou se
+  // ukáže seznam plateb, aby se do něj nemuselo klikat navíc.
+  const [mesic,setMesic]=useState(()=>{
+    const ms=[...new Set((vsechny||[]).map(t=>String(t.datum).slice(0,7)))];
+    return ms.length===1?ms[0]:null;
+  });
+  const [jenNezarazene,setJenNezarazene]=useState(false);
   const [zmeny,setZmeny]=useState({});        // id → co se změnilo, ať je to vidět hned
   const [uklada,setUklada]=useState(null);
   const {data:jmena,reload:reloadJmena}=useData(()=>sb.from("fin_protistrany").select("*"));
@@ -2990,6 +2998,11 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
   const zavri=()=>{ if(Object.keys(zmeny).length)onZmena&&onZmena(); onClose(); };
 
   const viditelne=mesic?polozky.filter(t=>String(t.datum).slice(0,7)===mesic):polozky;
+  // Zařazená je platba, která má kategorii nebo patří pod projekt; převody se
+  // netřídí. Filtr „jen nezařazené" pak drží seznam krátký, jak se prochází.
+  const nezarazena=t=>t.typ!=="prevod"&&!t.kategorie_id&&!t.projekt_id;
+  const nezarazenych=viditelne.filter(nezarazena).length;
+  const kTrideni=jenNezarazene?viditelne.filter(nezarazena):viditelne;
   const celkem=viditelne.reduce((a,t)=>a+Math.abs(+t.castka),0);
 
   // U příchozích plateb je jediné, co odesílatele identifikuje, číslo protiúčtu
@@ -3038,13 +3051,20 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
     </div>
     <div style={{fontSize:12,color:C.muted,marginBottom:10}}>
       {mesic
-        ? <>Všechny platby za {mesic} od nejnovější. U každé můžeš rovnou přepnout kategorii — a jestli tam nepatří, označit ji jako převod, čímž z příjmů i výdajů vypadne.</>
+        ? <>Platby za {mesic} od nejnovější. U každé můžeš rovnou přepnout kategorii — a jestli tam nepatří, označit ji jako převod, čímž z příjmů i výdajů vypadne.
+           {" "}<label style={{cursor:"pointer",color:C.accent}}>
+             <input type="checkbox" checked={jenNezarazene} onChange={e=>setJenNezarazene(e.target.checked)} style={{marginRight:4,verticalAlign:"-1px"}}/>
+             jen nezařazené ({nezarazenych})
+           </label></>
         : <>Seskupeno podle protiúčtu — u příchozí platby banka jméno odesílatele neposílá, jen číslo účtu.
            Klikni na řádek pro jednotlivé platby, na měsíc nahoře pro všechny platby v něm, nebo si protistranu pojmenuj.</>}
     </div>
 
     {mesic&&<div style={{maxHeight:"62vh",overflowY:"auto"}}>
-      {viditelne.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
+      {kTrideni.length===0&&<div style={{fontSize:12,color:C.dim,padding:"10px 0"}}>
+        {jenNezarazene?"Všechno v tomhle měsíci je zařazené.":"Za tenhle měsíc tu nic není."}
+      </div>}
+      {kTrideni.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
         <Radek key={t.id||i} t={t} uctyMap={uctyMap} katMap={katMap} projMap={projMap} kategorie={kategorie}
           deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav} editovatelny/>)}
     </div>}
