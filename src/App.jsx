@@ -3141,6 +3141,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     .select("id,datum,castka,typ,popis,poznamka,protistrana,vs,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id")
     .eq("zdroj","import").order("datum").range(od,do_)));
   const [rozpad,setRozpad]=useState(null);   // {titulek, polozky}
+  const [obdobi,setObdobi]=useState(null);   // null = výchozí (poslední dokončený měsíc)
   const {data:stavy,loading:ls}=useData(()=>nactiVse((od,do_)=>sb.from("fin_stavy").select("*").gte("rok",2025).order("rok").range(od,do_)));
   const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("app_nastaveni").select("*").eq("klic","fin_hotovostni_prijem"));
   const [hotEdit,setHotEdit]=useState(null);
@@ -3188,12 +3189,41 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     return ms.some(x=>x<m)&&ms.some(x=>x>m);
   };
   const sUdaji=[...sledovane].filter(uid=>mesiceUctu.has(uid));
-  const mesice=[...new Set(vsePohyby.map(t=>String(t.datum).slice(0,7)))].sort()
-    .filter(m=>posledniDen?m<=tentoMesic:m<tentoMesic);
+  const vsechnyMesice=[...new Set(vsePohyby.map(t=>String(t.datum).slice(0,7)))].sort();
+  const mesice=vsechnyMesice.filter(m=>posledniDen?m<=tentoMesic:m<tentoMesic);
   const hotoveMesice=mesice.filter(m=>sUdaji.every(uid=>pokryva(uid,m)));
   const neuplneMesice=mesice.filter(m=>!hotoveMesice.includes(m));
-  const n=hotoveMesice.length||1;
-  const vHotovych=pohyby.filter(t=>hotoveMesice.includes(String(t.datum).slice(0,7)));
+
+  // ── Za jaké období se počítá ────────────────────────────────────────────
+  // Výchozí je poslední dokončený měsíc — průměr je hezký na orientaci, ale
+  // když se čísla třídí měsíc po měsíci, potřebuje člověk vidět ten měsíc.
+  const ob=obdobi||{rezim:"mesic",mesic:hotoveMesice[hotoveMesice.length-1]||vsechnyMesice[vsechnyMesice.length-1]};
+  const nazevMesice=m=>{const [r,ms]=String(m||"").split("-");return `${MESICE[+ms-1]||m} ${r}`;};
+  const pocetMesicuMezi=(od,do_)=>{
+    const a=new Date(od), b=new Date(do_);
+    return Math.max(1,(b.getFullYear()-a.getFullYear())*12+(b.getMonth()-a.getMonth())+1);
+  };
+  let vybrane, delitel, nMesicu, popisObdobi, prumer=false;
+  if(ob.rezim==="prumer"){
+    prumer=true;
+    vybrane=pohyby.filter(t=>hotoveMesice.includes(String(t.datum).slice(0,7)));
+    nMesicu=delitel=hotoveMesice.length||1;
+    popisObdobi=hotoveMesice.length
+      ? `Průměr z ${nMesicu} dokončených měsíců (${nazevMesice(hotoveMesice[0])} – ${nazevMesice(hotoveMesice[hotoveMesice.length-1])}). Rozdělaný měsíc se nepočítá, aby průměr nelhal.`
+      : "Zatím není dokončený žádný měsíc.";
+  }else if(ob.rezim==="rozsah"){
+    vybrane=pohyby.filter(t=>String(t.datum)>=ob.od&&String(t.datum)<=ob.do);
+    nMesicu=pocetMesicuMezi(ob.od,ob.do); delitel=1;
+    popisObdobi=`Součet za ${new Date(ob.od).toLocaleDateString("cs-CZ")} – ${new Date(ob.do).toLocaleDateString("cs-CZ")} (${nMesicu} ${nMesicu===1?"měsíc":nMesicu<5?"měsíce":"měsíců"}).`;
+  }else{
+    vybrane=pohyby.filter(t=>String(t.datum).slice(0,7)===ob.mesic);
+    nMesicu=delitel=1;
+    popisObdobi=`${nazevMesice(ob.mesic)}${hotoveMesice.includes(ob.mesic)?"":" — pozor, za tenhle měsíc nemáš výpisy ze všech účtů"}.`;
+  }
+  const n=delitel;                       // dělitel pro průměry ve sloupcích níž
+  const vHotovych=vybrane;
+  const naMesic=x=>x*delitel/nMesicu;    // převod na měsíční tempo (kvůli dojezdu)
+  const zaObdobi=prumer?" měsíčně":"";
 
   const firemni =vHotovych.filter(t=>podnik.has(t.ucet_id));
   const soucet=(xs,f)=>xs.reduce((a,t)=>a+(f(t)?Math.abs(+t.castka):0),0);
@@ -3201,8 +3231,10 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
   const zavazky =soucet(vHotovych,t=>+t.castka<0&&t.projekt_id);
   const zbytek  =soucet(vHotovych,t=>+t.castka<0&&!t.projekt_id);
   const bizIn   =soucet(firemni,  t=>+t.castka>0);     // jen pro informaci
+  // Hotovostní příjem je zadaný jako měsíční, takže se natáhne na délku období.
+  const hotovostZaObdobi=hotovostniPrijem*nMesicu/delitel;
   const mPrijmy=prijmy/n, mZavazky=zavazky/n, mZbytek=zbytek/n;
-  const kDispozici=mPrijmy+hotovostniPrijem-mZavazky;
+  const kDispozici=mPrijmy+hotovostZaObdobi-mZavazky;
   const rozdil=kDispozici-mZbytek;
 
   // Likvidita: poslední známý stav běžných účtů a hotovosti. Dětské spoření,
@@ -3215,8 +3247,8 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
   const likvidita=likvidni.reduce((a,u)=>a+posledniStav(u),0);
   // Dojezd má smysl počítat, jen když je schodek dost velký na to, aby nebyl
   // v šumu. Při schodku pár set korun vychází stovky měsíců a to nic neznamená.
-  const schodekVyrazny=Math.abs(rozdil)>(mPrijmy+hotovostniPrijem)*0.05;
-  const dojezd=(rozdil<0&&schodekVyrazny)?likvidita/Math.abs(rozdil):null;
+  const schodekVyrazny=Math.abs(rozdil)>(mPrijmy+hotovostZaObdobi)*0.05;
+  const dojezd=(rozdil<0&&schodekVyrazny)?likvidita/Math.abs(naMesic(rozdil)):null;
 
   // Kontrola úplnosti: chybí uvnitř období nějaký měsíc? A jak velká část
   // výdajů nemá kategorii? Bez toho jsou čísla níž hezká, ale nepravdivá.
@@ -3294,11 +3326,45 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     Ještě není dokončený žádný měsíc s naimportovanými výpisy. Nahraj je v záložce Import.
   </div>;
 
+  const dnesStr=new Date().toISOString().slice(0,10);
+  const prvniDen=m=>`${m}-01`;
+  const posledniDenM=m=>{const [r,ms]=m.split("-").map(Number);return `${m}-${String(new Date(r,ms,0).getDate()).padStart(2,"0")}`;};
+
   return <div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
-      Průměr z {n} dokončených měsíců ({hotoveMesice[0]} – {hotoveMesice[hotoveMesice.length-1]}).
-      Rozdělaný měsíc se nepočítá, aby průměr nelhal.
+    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
+      <span style={{fontSize:12,fontWeight:700,color:C.muted}}>Období:</span>
+      <select style={{...inp,width:"auto",fontSize:12,padding:"5px 10px"}}
+        value={ob.rezim==="mesic"?ob.mesic:ob.rezim}
+        onChange={e=>{
+          const v=e.target.value;
+          if(v==="prumer")setObdobi({rezim:"prumer"});
+          else if(v==="rozsah")setObdobi({rezim:"rozsah",
+            od:prvniDen(vsechnyMesice[0]||dnesStr.slice(0,7)),
+            do:posledniDenM(vsechnyMesice[vsechnyMesice.length-1]||dnesStr.slice(0,7))});
+          else setObdobi({rezim:"mesic",mesic:v});
+        }}>
+        <optgroup label="Měsíc">
+          {vsechnyMesice.slice().reverse().map(m=>
+            <option key={m} value={m}>{nazevMesice(m)}{hotoveMesice.includes(m)?"":" ⚠"}</option>)}
+        </optgroup>
+        <optgroup label="Souhrn">
+          <option value="prumer">Průměr ze všech dokončených měsíců</option>
+          <option value="rozsah">Vlastní období od–do…</option>
+        </optgroup>
+      </select>
+      {ob.rezim==="rozsah"&&<>
+        <input type="date" value={ob.od} max={ob.do} onChange={e=>setObdobi({...ob,od:e.target.value})}
+          style={{...inp,width:"auto",fontSize:12,padding:"5px 8px"}}/>
+        <span style={{fontSize:12,color:C.muted}}>–</span>
+        <input type="date" value={ob.do} min={ob.od} onChange={e=>setObdobi({...ob,do:e.target.value})}
+          style={{...inp,width:"auto",fontSize:12,padding:"5px 8px"}}/>
+      </>}
+      {ob.rezim!=="prumer"&&hotoveMesice.length>1&&
+        <button onClick={()=>setObdobi({rezim:"prumer"})} style={{...btnC(C.muted,true),fontSize:11,padding:"4px 10px"}}>
+          porovnat s průměrem
+        </button>}
     </div>
+    <div style={{fontSize:12,color:C.muted,marginBottom:12}}>{popisObdobi}</div>
 
     {(chybejiciMesice.length>0||neuplneMesice.length>0||podilNezarazenych>0.3||!hotovostniPrijem)&&
       <div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:12,color:"#9a5b00"}}>
@@ -3308,7 +3374,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
           Průměr je tím pádem počítaný z menšího vzorku, než si myslíš. Zkontroluj záložku Pokrytí.
         </div>}
         {podilNezarazenych>0.3&&<div style={{marginBottom:4}}>
-          • <strong>{Math.round(podilNezarazenych*100)} %</strong> výdajů nemá kategorii ({kc0(bezKategorie/n)} měsíčně).
+          • <strong>{Math.round(podilNezarazenych*100)} %</strong> výdajů nemá kategorii ({kc0(bezKategorie/n)}{zaObdobi||" za období"}).
           Sloupec „kam jde zbytek" tím pádem neodpovídá na nic — projdi Zařazení.
         </div>}
         {neuplneMesice.length>0&&<div style={{marginBottom:4}}>
@@ -3322,24 +3388,24 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
       </div>}
 
     <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
-      {karta("Příjmy měsíčně",mPrijmy+hotovostniPrijem,C.green,
-        [hotovostniPrijem?`${kc0(hotovostniPrijem)} hotově mimo účty`:null,
+      {karta("Příjmy"+zaObdobi,mPrijmy+hotovostZaObdobi,C.green,
+        [hotovostZaObdobi?`${kc0(hotovostZaObdobi)} hotově mimo účty`:null,
          bizIn?`${kc0(bizIn/n)} z podnikání`:null].filter(Boolean).join(" · ")||"jen to, co přišlo na účty",
         vHotovych.filter(t=>+t.castka>0))}
-      {karta("Povinné závazky",mZavazky,C.orange,"hypotéka, SJM, insolvence, auta",
+      {karta("Povinné závazky"+zaObdobi,mZavazky,C.orange,"hypotéka, SJM, insolvence, auta",
         vHotovych.filter(t=>+t.castka<0&&t.projekt_id))}
-      {karta("Zbývá na život",kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků")}
-      {karta("Skutečně utrácíš",mZbytek,C.red,"všechno ostatní",
+      {karta("Zbývá na život"+zaObdobi,kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků")}
+      {karta("Skutečně utrácíš"+zaObdobi,mZbytek,C.red,"všechno ostatní",
         vHotovych.filter(t=>+t.castka<0&&!t.projekt_id))}
     </div>
 
     <div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:800,color:rozdil>=0?"#3f7d33":"#b03030"}}>
         {!schodekVyrazny
-          ? `Vycházíš zhruba na nulu — rozdíl ${kc0(rozdil)} měsíčně je v šumu.`
+          ? `Vycházíš zhruba na nulu — rozdíl ${kc0(rozdil)}${zaObdobi} je v šumu.`
           : rozdil>0
-            ? `Měsíčně ti zbývá ${kc0(rozdil)}.`
-            : `Měsíčně ti chybí ${kc0(Math.abs(rozdil))}.`}
+            ? `${prumer?"Měsíčně ti":"Za tohle období ti"} zbývá ${kc0(rozdil)}.`
+            : `${prumer?"Měsíčně ti":"Za tohle období ti"} chybí ${kc0(Math.abs(rozdil))}.`}
       </div>
       <div style={{fontSize:12,color:C.muted,marginTop:6}}>
         Likvidní peníze (běžné účty + hotovost): <strong>{kc0(likvidita)}</strong>.
@@ -3358,12 +3424,12 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta}){
     </div>
 
     <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-      {sloupec("📁 Závazky a projekty · měsíčně",dleProjektu,C.orange)}
-      {sloupec("🏷 Kam jde zbytek · měsíčně",dleKategorii,C.red)}
-      {sloupec("👥 Koho se to týká · měsíčně",dleSubjektu,C.accent)}
+      {sloupec("📁 Závazky a projekty"+zaObdobi,dleProjektu,C.orange)}
+      {sloupec("🏷 Kam jde zbytek"+zaObdobi,dleKategorii,C.red)}
+      {sloupec("👥 Koho se to týká"+zaObdobi,dleSubjektu,C.accent)}
     </div>
 
-    {rozpad&&<RozpadModal {...rozpad} pocetMesicu={n} ucty={ucty} kategorie={kategorie} projekty={projekty}
+    {rozpad&&<RozpadModal {...rozpad} pocetMesicu={prumer?n:null} ucty={ucty} kategorie={kategorie} projekty={projekty}
       deti={deti} auta={auta} onZmena={reloadTrans} onClose={()=>setRozpad(null)}/>}
   </div>;
 }
