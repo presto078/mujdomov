@@ -17,13 +17,16 @@
 -- Cílová částka u akce znamená rozpočet, ne dluh — nechává se prázdná,
 -- dokud se nedoplní z modulu Projekty.
 
-insert into fin_projekty (nazev, emoji, typ, mesicni_castka, poznamka, poradi)
+-- Měsíční částka se nevyplňuje — akce se nesplácí. (Sloupec se tu ani
+-- neuvádí: netypované `null` uvnitř VALUES si Postgres přebere jako text
+-- a na numeric ho pak nepustí.)
+insert into fin_projekty (nazev, emoji, typ, poznamka, poradi)
 select * from (values
-  ('Svatba',         '💍', 'akce', null,
+  ('Svatba',         '💍', 'akce',
    'Červen 2026. Sbírá platby z výpisů i hotovostní. Rozpočet je v modulu Projekty.', 10),
-  ('Právník Zeman',  '⚖️', 'akce', null,
+  ('Právník Zeman',  '⚖️', 'akce',
    'JUDr. Zeman — odměny a soudní poplatky. Detail případu je v modulu Právník.', 11)
-) as v(nazev,emoji,typ,mesicni_castka,poznamka,poradi)
+) as v(nazev,emoji,typ,poznamka,poradi)
 where not exists (select 1 from fin_projekty p where p.nazev = v.nazev);
 
 
