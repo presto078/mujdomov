@@ -2245,6 +2245,20 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
 
   // Projekt, který ještě neexistuje, se dá založit rovnou od platby — jinak by
   // se kvůli němu musel opustit rozdělaný import a výpis nahrát znovu.
+  // Pozná se to samé, co při ukládání — ať je v náhledu vidět, že řádek
+  // skončí jako převod a zařazovat ho nemá smysl.
+  const prevodNahled=r=>{
+    const cizi=r.protiucet?ucetPodleCisla(r.protiucet):null;
+    if(cizi)return {ucet:cizi.nazev};
+    if(r.prevod_navrh){
+      const u=(ucty||[]).find(x=>String(x.id)===String(r.prevod_navrh));
+      return {ucet:u?u.nazev:"vlastní účet"};
+    }
+    if(jeVlastniPresun(r))return {ucet:null};
+    if(r.typ_navrh==="prevod")return {ucet:null};
+    return null;
+  };
+
   const novyProjekt=async(di,ri)=>{
     const nazev=window.prompt("Název nového projektu:","");
     if(!nazev||!nazev.trim())return;
@@ -2362,6 +2376,13 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
                 </td>
                 <td style={{padding:"6px 8px",whiteSpace:"nowrap",fontWeight:700,color:r.castka<0?C.red:C.green}}>{fmtKc(r.castka)}</td>
                 <td style={{padding:"6px 8px",minWidth:210}}>
+                  {prevodNahled(r)
+                    ? <div style={{fontSize:11,color:"#9a5b00",background:"#fff3e0",border:"1px solid #f0c98a",
+                                   borderRadius:8,padding:"4px 9px",display:"inline-block",fontWeight:700}}>
+                        🔄 převod{prevodNahled(r).ucet?` ${+r.castka<0?"→":"←"} ${prevodNahled(r).ucet}`:""}
+                        <div style={{fontWeight:400,color:"#a8763a",fontSize:10.5}}>nepočítá se do příjmů ani výdajů</div>
+                      </div>
+                    : <>
                   {/* Všechny tři rozměry rovnou při importu — za co, na čem, pro koho. */}
                   <VyberKategorie hodnota={r.kategorie_id} kategorie={kategorie} prijem={+r.castka>0}
                     sirka={200} onVyber={id=>uprav(di,ri,{kategorie_id:id||null})}/>
@@ -2379,6 +2400,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
                       onChange={v=>{const [tp,id]=String(v).split("|");uprav(di,ri,{subjekt_typ:tp||null,subjekt_id:id||null});}}
                       style={{...inp,padding:"2px 5px",fontSize:10.5,width:"auto",maxWidth:120}}/>
                   </div>
+                    </>}
                 </td>
                 <td style={{padding:"6px 4px"}}>
                   {(r.kategorie_id||r.projekt_id||r.subjekt_typ)&&r.popis&&
@@ -2397,8 +2419,9 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
           <div style={{fontSize:12,color:C.muted}}>
             k uložení <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita).length}</strong> ·
             duplicit <strong>{b.radky.filter(r=>r.duplicita).length}</strong> ·
-            bez kategorie <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!r.kategorie_id).length}</strong> ·
-            bez určení koho se týká <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!r.subjekt_typ).length}</strong>
+            převodů <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&prevodNahled(r)).length}</strong> ·
+            bez kategorie <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.kategorie_id).length}</strong> ·
+            bez určení koho se týká <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.subjekt_typ).length}</strong>
             {b.radky.some(r=>r.kolize&&!r.duplicita)&&<> · nahradí ručních <strong style={{color:"#c87000"}}>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&r.kolize&&r.smazatKolizi).length}</strong></>}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
