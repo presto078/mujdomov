@@ -1979,7 +1979,7 @@ function NapovedaFormatu(){
   </div>;
 }
 
-function ImportVypisu({ucty,kategorie,onHotovo}){
+function ImportVypisu({ucty,kategorie,projekty,deti,auta,onHotovo}){
   const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*").order("priorita"));
   const {data:importy,reload:reloadImporty}=useData(()=>sb.from("fin_importy").select("*").order("created_at",{ascending:false}).limit(15));
   const [davky,setDavky]=useState([]);      // načtené výpisy čekající na uložení
@@ -2223,12 +2223,22 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
     alert(`Zůstatek ${fmtKc(v.zustatek_konecny)} zapsán jako stav za ${d.getMonth()+1}/${d.getFullYear()}.`);
   };
 
-  const ulozPravidlo=async(vzor,kategorie_id)=>{
+  // Pravidlo si pamatuje všechny tři rozměry naráz — kategorii, projekt
+  // i koho se platba týká. Prázdné se do pravidla nedává, ať nepřepíše
+  // to, co určuje jiné, přesnější pravidlo.
+  const ulozPravidlo=async(vzor,r)=>{
     const v=(vzor||"").trim();
-    if(!v||!kategorie_id)return;
-    const {error}=await sb.from("fin_pravidla").insert({vzor:v,kategorie_id,priorita:50});
-    if(error&&!String(error.message).includes("duplicate")){alert("Chyba: "+error.message);return;}
-    reloadPravidla();alert(`Pravidlo „${v}" uloženo — příště se kategorie doplní sama.`);
+    const patch={};
+    if(r.kategorie_id)patch.kategorie_id=r.kategorie_id;
+    if(r.projekt_id)  patch.projekt_id=r.projekt_id;
+    if(r.subjekt_typ){patch.subjekt_typ=r.subjekt_typ;patch.subjekt_id=r.subjekt_id||null;}
+    if(!v||!Object.keys(patch).length)return;
+    const {error}=await sb.from("fin_pravidla").insert({vzor:v,priorita:50,...patch});
+    if(error&&/duplicate|unique/i.test(error.message)){
+      const {data:stare}=await sb.from("fin_pravidla").select("id").ilike("vzor",v).limit(1);
+      if(stare?.length)await sb.from("fin_pravidla").update(patch).eq("id",stare[0].id);
+    }else if(error){alert("Chyba: "+error.message);return;}
+    reloadPravidla();alert(`Pravidlo „${v}" uloženo — příště se zařazení doplní samo.`);
   };
 
   const katNazev=id=>(kategorie||[]).find(k=>k.id===id)?.nazev||"";
@@ -2314,7 +2324,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
         <div style={{maxHeight:420,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:8}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
             <thead><tr style={{background:C.bg,position:"sticky",top:0}}>
-              {["","Datum","Popis","Částka","Kategorie",""].map(h=><th key={h} style={{padding:"7px 8px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+              {["","Datum","Popis","Částka","Zařazení",""].map(h=><th key={h} style={{padding:"7px 8px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
             </tr></thead>
             <tbody>
               {b.radky.map((r,ri)=><tr key={ri} style={{borderBottom:`1px solid ${C.border}`,opacity:r.duplicita?.45:1,background:ri%2?"#fafbff":C.surface}}>
@@ -2339,16 +2349,30 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
                   </div>}
                 </td>
                 <td style={{padding:"6px 8px",whiteSpace:"nowrap",fontWeight:700,color:r.castka<0?C.red:C.green}}>{fmtKc(r.castka)}</td>
-                <td style={{padding:"6px 8px"}}>
-                  <select style={{...inp,padding:"3px 6px",fontSize:11,minWidth:150}} value={r.kategorie_id||""} onChange={e=>uprav(di,ri,{kategorie_id:e.target.value||null})}>
-                    <option value="">— bez kategorie —</option>
-                    {(kategorie||[]).map(k=><option key={k.id} value={k.id}>{k.nazev}</option>)}
-                  </select>
+                <td style={{padding:"6px 8px",minWidth:210}}>
+                  {/* Všechny tři rozměry rovnou při importu — za co, na čem, pro koho. */}
+                  <VyberKategorie hodnota={r.kategorie_id} kategorie={kategorie} prijem={+r.castka>0}
+                    sirka={200} onVyber={id=>uprav(di,ri,{kategorie_id:id||null})}/>
+                  <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+                    {(projekty||[]).length>0&&
+                      <select style={{...inp,padding:"2px 5px",fontSize:10.5,width:"auto",maxWidth:120}}
+                        value={r.projekt_id||""} onChange={e=>uprav(di,ri,{projekt_id:e.target.value?+e.target.value:null})}>
+                        <option value="">— projekt —</option>
+                        {(projekty||[]).map(x=><option key={x.id} value={x.id}>{x.emoji||"📁"} {x.nazev}</option>)}
+                      </select>}
+                    <SubjektSelect deti={deti} auta={auta}
+                      value={r.subjekt_typ?`${r.subjekt_typ}|${r.subjekt_id||""}`:""}
+                      onChange={v=>{const [tp,id]=String(v).split("|");uprav(di,ri,{subjekt_typ:tp||null,subjekt_id:id||null});}}
+                      style={{...inp,padding:"2px 5px",fontSize:10.5,width:"auto",maxWidth:120}}/>
+                  </div>
                 </td>
                 <td style={{padding:"6px 4px"}}>
-                  {r.kategorie_id&&r.popis&&<button title={`Zapamatovat: „${r.popis.slice(0,24)}" → ${katNazev(r.kategorie_id)}`}
-                    onClick={()=>ulozPravidlo(r.popis.slice(0,24),r.kategorie_id)}
-                    style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10}}>＋pravidlo</button>}
+                  {(r.kategorie_id||r.projekt_id||r.subjekt_typ)&&r.popis&&
+                    <button title={`Zapamatovat „${r.popis.slice(0,24)}" → ${[katNazev(r.kategorie_id),
+                      (projekty||[]).find(x=>String(x.id)===String(r.projekt_id))?.nazev,
+                      subjektNazev(r.subjekt_typ,r.subjekt_id,deti,auta)].filter(Boolean).join(" · ")}`}
+                      onClick={()=>ulozPravidlo(r.popis.slice(0,24),r)}
+                      style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10}}>＋pravidlo</button>}
                 </td>
               </tr>)}
             </tbody>
@@ -2359,7 +2383,8 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
           <div style={{fontSize:12,color:C.muted}}>
             k uložení <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita).length}</strong> ·
             duplicit <strong>{b.radky.filter(r=>r.duplicita).length}</strong> ·
-            bez kategorie <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!r.kategorie_id).length}</strong>
+            bez kategorie <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!r.kategorie_id).length}</strong> ·
+            bez určení koho se týká <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!r.subjekt_typ).length}</strong>
             {b.radky.some(r=>r.kolize&&!r.duplicita)&&<> · nahradí ručních <strong style={{color:"#c87000"}}>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&r.kolize&&r.smazatKolizi).length}</strong></>}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -4289,7 +4314,7 @@ function FinanceNoveTab(){
     </div>
     {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>}
     {zalozka==="projekty"&&<FinProjektyTab/>}
-    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
+    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
     {zalozka==="pokryti"&&<PokrytiImportu ucty={ucty}/>}
     {zalozka==="majetek"&&<MajetekTab ucty={ucty} reloadUcty={reloadUcty}/>}
     {zalozka==="kategorie"&&<KategorieTab kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadPocet();}}/>}
