@@ -1025,20 +1025,6 @@ function ObleceniTab(){
   const [vybratM,setVybratM]=useState(false);
   const [newVelId,setNewVelId]=useState("");
   const [fixRunning,setFixRunning]=useState(false);
-  const [stitekKontejner,setStitekKontejner]=useState(null);
-
-  useEffect(()=>{
-    if(!stitekKontejner)return;
-    const t=setTimeout(()=>window.print(),50);
-    return ()=>clearTimeout(t);
-  },[stitekKontejner]);
-
-  useEffect(()=>{
-    const onAfterPrint=()=>setStitekKontejner(null);
-    window.addEventListener("afterprint",onAfterPrint);
-    return ()=>window.removeEventListener("afterprint",onAfterPrint);
-  },[]);
-
   const reloadAll=()=>{reloadVel();reloadKonts();reloadPol();};
   const spustFix=async()=>{setFixRunning(true);await fixDuplicatePolozky();reloadAll();setFixRunning(false);};
 
@@ -1117,21 +1103,7 @@ function ObleceniTab(){
   if(loading)return <Spinner/>;
 
   return <div>
-    <style>{`.oblcell:hover{background:#e8eeff!important}
-@media print{
-  body *{visibility:hidden}
-  .tisk-stitek,.tisk-stitek *{visibility:visible}
-  .tisk-stitek{position:absolute;top:0;left:0;width:100%}
-}`}</style>
-
-    {stitekKontejner&&<div className="tisk-stitek" style={{padding:"40px 30px",background:"#fff"}}>
-      <div style={{fontSize:72,fontWeight:800,textAlign:"center",marginBottom:40}}>{stitekKontejner.velikost}</div>
-      <div style={{fontSize:18}}>
-        {stitekKontejner.polozky.map(p=>(
-          <div key={p.id||p.nazev} style={{padding:"4px 0",borderBottom:"1px solid #ddd"}}>{p.nazev}{p.pocet>1?` × ${p.pocet}`:""}</div>
-        ))}
-      </div>
-    </div>}
+    <style>{`.oblcell:hover{background:#e8eeff!important}`}</style>
 
     {/* Hlavička */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
@@ -1239,7 +1211,6 @@ function ObleceniTab(){
                 <div style={{color:C.dim,fontSize:12}}>{[k.umisteni,st.label].filter(Boolean).join(" · ")} · {pocetKs} ks</div>
               </div>
               <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
-                <button onClick={()=>setStitekKontejner({velikost:k.velikost_id,polozky:(vsechnyPolDedup||[]).filter(p=>p.kontejner_id===k.id&&p.pocet>0).sort((a,b)=>a.nazev.localeCompare(b.nazev,"cs"))})} style={{...btnC(C.blue,true),padding:"4px 9px",fontSize:12}}>🖨 Tisk štítku</button>
                 <button onClick={()=>setEditKont(k)} style={{...btnC(C.muted,true),padding:"4px 9px",fontSize:12}}>✎</button>
                 <button onClick={async()=>{if(!confirm(`Smazat "${k.nazev}"?`))return;await sb.from("vel_kontejnery").delete().eq("id",k.id);reloadAll();}} style={{...btnC(C.red,true),padding:"4px 9px",fontSize:12}}>✕</button>
               </div>
@@ -2506,9 +2477,13 @@ const SKUPINY_MAJETEK=[
 function MajetekTab({ucty,reloadUcty}){
   const {data:stavy,loading,reload}=useData(()=>nactiVse((od,do_)=>
     sb.from("fin_stavy").select("*").gte("rok",2024).order("rok").range(od,do_)));
+  const {data:trans,loading:lt}=useData(()=>nactiVse((od,do_)=>
+    sb.from("fin_transakce").select("ucet_id,datum,castka").eq("zdroj","import").order("datum").range(od,do_)));
   const [zapis,setZapis]=useState(null);   // {ucet, rok, mesic, stav}
+  const [dopocet,setDopocet]=useState(null);  // náhled toho, co se zapíše
+  const [pracuje,setPracuje]=useState(false);
 
-  if(loading)return <Spinner/>;
+  if(loading||lt)return <Spinner/>;
 
   const historie=u=>(stavy||[]).filter(x=>String(x.ucet_id)===String(u.id))
     .sort((a,b)=>a.rok-b.rok||a.mesic-b.mesic);
@@ -2539,6 +2514,66 @@ function MajetekTab({ucty,reloadUcty}){
   const majetek =soucet(sk=>sk.doMajetku);
   const fortuna =soucet(sk=>sk.klic==="konicek");
 
+  // ── Dopočet chybějících zůstatků ────────────────────────────────────────
+  // Když znám zůstatek k 30. 6. a mám všechny pohyby za červenec, zůstatek
+  // k 31. 7. spočítám. Doplňují se jen měsíce, kde zůstatek CHYBÍ — zapsaná
+  // čísla se nikdy nepřepisují, ta jsou z banky a mají přednost. Měsíce, kde
+  // zapsaný zůstatek nesedí s pohyby, se jen vypíšou jako podezřelé.
+  const mesicniPohyby=(()=>{
+    const m=new Map();                       // "ucet|rok-mesic" → {suma, pocet}
+    for(const t of (trans||[])){
+      const k=`${t.ucet_id}|${String(t.datum).slice(0,7)}`;
+      if(!m.has(k))m.set(k,{suma:0,pocet:0});
+      const z=m.get(k); z.suma+=(+t.castka||0); z.pocet++;
+    }
+    return m;
+  })();
+  const klicMes=(r,mm)=>`${r}-${String(mm).padStart(2,"0")}`;
+  const dalsi=(r,mm)=>mm===12?[r+1,1]:[r,mm+1];
+
+  const spoctiDopocet=()=>{
+    const navrhy=[], nesedi=[];
+    for(const u of aktivni){
+      const h=historie(u);
+      if(!h.length)continue;                 // bez jediného zůstatku není z čeho vyjít
+      const mesiceUctu=[...(trans||[]).filter(t=>String(t.ucet_id)===String(u.id))
+        .map(t=>String(t.datum).slice(0,7))].sort();
+      if(!mesiceUctu.length)continue;        // bez pohybů se dopočítat nedá
+      const posledniPohyb=mesiceUctu[mesiceUctu.length-1];
+      const mapaStavu=new Map(h.map(x=>[klicMes(x.rok,x.mesic),x]));
+      let [r,mm]=[h[0].rok,h[0].mesic];
+      let bezne=+h[0].stav;                  // běžící zůstatek podle řetězu
+      for(let i=0;i<240;i++){
+        const [nr,nm]=dalsi(r,mm); r=nr; mm=nm;
+        const k=klicMes(r,mm);
+        if(k>posledniPohyb)break;
+        const p=mesicniPohyby.get(`${u.id}|${k}`);
+        const spocteno=bezne+(p?p.suma:0);
+        const zapsany=mapaStavu.get(k);
+        if(zapsany){
+          if(Math.abs(+zapsany.stav-spocteno)>1.5)
+            nesedi.push({ucet:u,rok:r,mesic:mm,zapsany:+zapsany.stav,spocteno,rozdil:spocteno-+zapsany.stav});
+          bezne=+zapsany.stav;               // banka má přednost, řetěz se na ni srovná
+        }else{
+          if(p)navrhy.push({ucet:u,rok:r,mesic:mm,stav:spocteno,pohybu:p.pocet,zBaze:bezne});
+          bezne=spocteno;
+        }
+      }
+    }
+    setDopocet({navrhy,nesedi});
+  };
+
+  const zapisDopocet=async()=>{
+    const rows=(dopocet?.navrhy||[]).map(x=>({ucet_id:x.ucet.id,rok:x.rok,mesic:x.mesic,stav:x.stav}));
+    if(!rows.length)return;
+    setPracuje(true);
+    for(let i=0;i<rows.length;i+=200){
+      const {error}=await sb.from("fin_stavy").upsert(rows.slice(i,i+200),{onConflict:"ucet_id,rok,mesic"});
+      if(error){setPracuje(false);alert("Chyba: "+error.message);return;}
+    }
+    setPracuje(false);setDopocet(null);reload();
+  };
+
   const ulozStav=async()=>{
     const z=zapis;
     if(!z||z.stav==="")return;
@@ -2567,6 +2602,15 @@ function MajetekTab({ucty,reloadUcty}){
       {karta("Nesaháš",svate+investice,C.orange,`${kc0(svate)} dětem · ${kc0(investice)} v investicích`)}
       {karta("Majetek celkem",majetek,C.text,"bez Fortuny — sázky se do majetku nepočítají")}
       {fortuna!==0&&karta("Fortuna",fortuna,C.muted,"koníček, mimo majetek")}
+    </div>
+
+    <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
+      <button onClick={spoctiDopocet} style={{...btnC(C.accent,true),fontSize:12.5,padding:"6px 14px"}}>
+        🧮 Dopočítat chybějící zůstatky
+      </button>
+      <span style={{fontSize:11.5,color:C.dim}}>
+        Doplní měsíce, kde zůstatek chybí, z posledního známého plus pohybů. Zapsaná čísla nepřepisuje.
+      </span>
     </div>
 
     {stareUcty.length>0&&<div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:12,color:"#9a5b00"}}>
@@ -2608,6 +2652,38 @@ function MajetekTab({ucty,reloadUcty}){
         </div>)}
       </div>)}
     </div>
+
+    {dopocet&&<Modal title="Dopočet chybějících zůstatků" onClose={()=>setDopocet(null)} width={720}>
+      {dopocet.nesedi.length>0&&<div style={{background:"#fdefef",border:"1px solid #e59a9a",borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#b03030"}}>
+        <div style={{fontWeight:800,marginBottom:6}}>{dopocet.nesedi.length} zapsaných zůstatků nesedí s pohyby</div>
+        {dopocet.nesedi.slice(0,8).map((x,i)=><div key={i} style={{marginBottom:2}}>
+          {x.ucet.nazev} · {x.mesic}/{x.rok}: zapsáno <strong>{kc0(x.zapsany)}</strong>, z pohybů vychází <strong>{kc0(x.spocteno)}</strong> ({kc0(x.rozdil)} rozdíl)
+        </div>)}
+        <div style={{marginTop:6,color:"#8a4444"}}>
+          Tyhle se nepřepisují — zapsaný zůstatek je z banky a má přednost. Když je zjevně špatný
+          (jako ta dvacetikoruna z omylu), smaž ho křížkem u účtu a pusť dopočet znovu.
+        </div>
+      </div>}
+
+      <div style={{fontSize:13,fontWeight:700,marginBottom:10}}>
+        {dopocet.navrhy.length?`Doplní se ${dopocet.navrhy.length} zůstatků:`:"Není co doplnit — všechny měsíce s pohyby už zůstatek mají."}
+      </div>
+      <div style={{maxHeight:"46vh",overflowY:"auto"}}>
+        {dopocet.navrhy.map((x,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"5px 0",borderTop:`1px solid ${C.bg}`}}>
+          <div>
+            <strong>{x.ucet.nazev}</strong> · {x.mesic}/{x.rok}
+            <div style={{fontSize:11,color:C.dim}}>z {kc0(x.zBaze)} plus {x.pohybu} pohybů</div>
+          </div>
+          <strong style={{whiteSpace:"nowrap"}}>{kc0(x.stav)}</strong>
+        </div>)}
+      </div>
+      <div style={{display:"flex",gap:10,marginTop:16}}>
+        <button onClick={zapisDopocet} disabled={pracuje||!dopocet.navrhy.length} style={btnC()}>
+          {pracuje?"Zapisuji…":`Zapsat ${dopocet.navrhy.length} zůstatků`}
+        </button>
+        <button onClick={()=>setDopocet(null)} style={btnC(C.muted,true)}>Zrušit</button>
+      </div>
+    </Modal>}
 
     {zapis&&<Modal title={`Zůstatek — ${zapis.ucet.nazev}`} onClose={()=>setZapis(null)} width={380}>
       <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
