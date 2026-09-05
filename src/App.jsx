@@ -3272,12 +3272,16 @@ function FinProjektyTab(){
   const spocti=p=>{
     const zVypisu=(trans||[]).filter(t=>String(t.projekt_id)===String(p.id));
     const zVypisuSuma=zVypisu.reduce((a,t)=>a+(+t.castka<0?-+t.castka:0),0);
+    // Některé projekty mají i příjmovou stranu — příspěvek na péči přijde,
+    // část se utratí a zbytek zůstane. Pak nedává smysl ukazovat jen výdaje.
+    const prijmy=zVypisu.reduce((a,t)=>a+(+t.castka>0?+t.castka:0),0);
     const hot=(platby||[]).filter(x=>String(x.projekt_id)===String(p.id));
     const hotSuma=hot.reduce((a,x)=>a+(+x.castka||0),0);
     const zaplaceno=(+p.zaplaceno_pred||0)+zVypisuSuma+hotSuma;
     const zbyva=p.cilova_castka?Math.max(0,+p.cilova_castka-zaplaceno):null;
     const mes=mesicuDo(p.datum_do);
-    return {zVypisu,zVypisuSuma,hot,hotSuma,zaplaceno,zbyva,mes,
+    return {zVypisu,zVypisuSuma,prijmy,obousmerny:prijmy>0,zustava:prijmy-zaplaceno,
+      hot,hotSuma,zaplaceno,zbyva,mes,
       potreba:(zbyva!=null&&mes)?zbyva/mes:null,
       procenta:p.cilova_castka?Math.min(100,zaplaceno/+p.cilova_castka*100):null};
   };
@@ -3313,17 +3317,28 @@ function FinProjektyTab(){
               {p.poznamka&&<div style={{fontSize:11,color:C.dim,marginTop:4}}>{p.poznamka}</div>}
             </div>
             <div style={{textAlign:"right"}}>
-              <div style={{fontSize:18,fontWeight:800,color:C.text}}>{kc0(s.zaplaceno)}</div>
-              <div style={{fontSize:11,color:C.muted}}>
-                {p.cilova_castka?<>z {kc0(p.cilova_castka)}{p.typ==="akce"?" v rozpočtu":""}</>:p.typ==="akce"?"stálo celkem":"zaplaceno celkem"}
-              </div>
-              {s.zbyva!=null&&<div style={{fontSize:12,fontWeight:700,color:s.zbyva>0?C.orange:C.green,marginTop:2}}>
-                {s.zbyva>0?`zbývá ${kc0(s.zbyva)}`:"✓ splaceno"}
-              </div>}
+              {s.obousmerny
+                ? <>
+                    <div style={{fontSize:18,fontWeight:800,color:s.zustava>=0?C.green:C.red}}>{kc0(s.zustava)}</div>
+                    <div style={{fontSize:11,color:C.muted}}>zůstává stranou</div>
+                    <div style={{fontSize:11.5,color:C.muted,marginTop:3}}>
+                      přišlo <strong style={{color:C.green}}>{kc0(s.prijmy)}</strong>
+                      {" · "}odešlo <strong style={{color:C.red}}>{kc0(s.zaplaceno)}</strong>
+                    </div>
+                  </>
+                : <>
+                    <div style={{fontSize:18,fontWeight:800,color:C.text}}>{kc0(s.zaplaceno)}</div>
+                    <div style={{fontSize:11,color:C.muted}}>
+                      {p.cilova_castka?<>z {kc0(p.cilova_castka)}{p.typ==="akce"?" v rozpočtu":""}</>:p.typ==="akce"?"stálo celkem":"zaplaceno celkem"}
+                    </div>
+                    {s.zbyva!=null&&<div style={{fontSize:12,fontWeight:700,color:s.zbyva>0?C.orange:C.green,marginTop:2}}>
+                      {s.zbyva>0?`zbývá ${kc0(s.zbyva)}`:"✓ splaceno"}
+                    </div>}
+                  </>}
             </div>
           </div>
 
-          {s.procenta!=null&&<div style={{marginTop:10}}>
+          {s.procenta!=null&&!s.obousmerny&&<div style={{marginTop:10}}>
             <div style={{height:8,background:C.border,borderRadius:6,overflow:"hidden"}}>
               <div style={{width:`${s.procenta}%`,height:"100%",background:s.procenta>=100?C.green:C.accent}}/>
             </div>
@@ -3346,7 +3361,8 @@ function FinProjektyTab(){
 
           {detail===p.id&&<div style={{marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8,maxHeight:280,overflowY:"auto"}}>
             {[...s.hot.map(x=>({datum:x.datum,castka:+x.castka,popis:"Hotově"+(x.poznamka?" · "+x.poznamka:""),hot:x})),
-              ...s.zVypisu.map(t=>({datum:t.datum,castka:-+t.castka,popis:"Z výpisu"}))]
+              ...s.zVypisu.map(t=>({datum:t.datum,castka:-+t.castka,
+                popis:(+t.castka>0?"Přišlo · ":"Z výpisu · ")+String(t.popis||"").slice(0,50)}))]
               .sort((a,b)=>String(b.datum).localeCompare(String(a.datum)))
               .map((r,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"3px 0",color:C.muted}}>
                 <span>{new Date(r.datum).toLocaleDateString("cs-CZ")} · {r.popis}</span>
