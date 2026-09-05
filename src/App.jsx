@@ -1891,10 +1891,21 @@ const bezDiakritiky=s=>String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toL
 // Pravidlo může nést kategorii, projekt i to, koho se platba týká. Každý rozměr
 // se bere z prvního pravidla, které ho vyplněné má — jedno pravidlo tak může
 // určit kategorii a jiné, přesnější, projekt.
-function navrhniZarazeni(radek,pravidla){
+function navrhniZarazeni(radek,pravidla,ucetId){
   const text=bezDiakritiky(`${radek.popis} ${radek.poznamka} ${radek.protiucet}`);
-  const sedi=(pravidla||[]).filter(p=>p.aktivni!==false&&text.includes(bezDiakritiky(p.vzor)))
-    .sort((a,b)=>(a.priorita??100)-(b.priorita??100));
+  const castka=+radek.castka||0;
+  // Samotný text nestačí. Terezino číslo účtu je v protiúčtu u splátky SJM,
+  // u alimentů i u příspěvku na péči — liší se jen směrem a cílovým účtem.
+  // Pravidlo si proto může vyžádat směr platby a konkrétní účet; když je
+  // nevyplní, platí jako dřív pro všechno.
+  const sedi=(pravidla||[]).filter(p=>{
+    if(p.aktivni===false)return false;
+    if(!text.includes(bezDiakritiky(p.vzor)))return false;
+    if(p.smer==="prijem"&&castka<0)return false;
+    if(p.smer==="vydaj" &&castka>0)return false;
+    if(p.ucet_id&&ucetId&&String(p.ucet_id)!==String(ucetId))return false;
+    return true;
+  }).sort((a,b)=>(a.priorita??100)-(b.priorita??100));
   const subj=sedi.find(p=>p.subjekt_typ);
   return {
     kategorie_id:sedi.find(p=>p.kategorie_id)?.kategorie_id||null,
@@ -2070,7 +2081,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
           ...r,
           klic:udelejKlic(r),
           duplicita:false,   // doplní se hned po sestavení klíčů
-          ...navrhniZarazeni(r,pravidla),
+          ...navrhniZarazeni(r,pravidla,ucet?.id),
           kolize:najdiKolizi(r)||null,
           smazatKolizi:true,
           vybrano:true,
@@ -2233,6 +2244,24 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   // Pravidlo si pamatuje všechny tři rozměry naráz — kategorii, projekt
   // i koho se platba týká. Prázdné se do pravidla nedává, ať nepřepíše
   // to, co určuje jiné, přesnější pravidlo.
+  const [pravidloModal,setPravidloModal]=useState(null);
+  const otevriPravidlo=r=>{
+    const cely=[r.popis,r.poznamka].filter(Boolean).join(" · ");
+    const kandidati=[...new Set(cely.split(/\s·\s|\s—\s/).map(x=>x.trim())
+      .filter(x=>x.length>=3&&x.length<=60&&!jeObecny(x)))];
+    const patch={};
+    if(r.kategorie_id)patch.kategorie_id=r.kategorie_id;
+    if(r.projekt_id)  patch.projekt_id=r.projekt_id;
+    if(r.subjekt_typ){patch.subjekt_typ=r.subjekt_typ;patch.subjekt_id=r.subjekt_id||null;}
+    setPravidloModal({
+      vzorNavrh:kandidati[0]||"",
+      kandidati,patch,smer:+r.castka>0?"prijem":"vydaj",
+      popisPatche:[katNazev(r.kategorie_id),
+        (projekty||[]).find(x=>String(x.id)===String(r.projekt_id))?.nazev,
+        subjektNazev(r.subjekt_typ,r.subjekt_id,deti,auta)].filter(Boolean).join(" · "),
+    });
+  };
+
   const ulozPravidlo=async(vzor,r)=>{
     const v=(vzor||"").trim();
     const patch={};
@@ -2240,6 +2269,9 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
     if(r.projekt_id)  patch.projekt_id=r.projekt_id;
     if(r.subjekt_typ){patch.subjekt_typ=r.subjekt_typ;patch.subjekt_id=r.subjekt_id||null;}
     if(!v||!Object.keys(patch).length)return;
+    // Směr se bere z té platby, ze které se pravidlo učí — pravidlo naučené
+    // na výdaji nemá zařazovat příjem, i když text sedí.
+    patch.smer=+r.castka>0?"prijem":"vydaj";
     const {error}=await sb.from("fin_pravidla").insert({vzor:v,priorita:50,...patch});
     if(error&&/duplicate|unique/i.test(error.message)){
       const {data:stare}=await sb.from("fin_pravidla").select("id").ilike("vzor",v).limit(1);
@@ -2277,6 +2309,10 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   };
 
   return <div>
+    {pravidloModal&&<PravidloModal {...pravidloModal} jenPravidlo
+      onClose={()=>setPravidloModal(null)}
+      onHotovo={(pocet,vzor)=>{setPravidloModal(null);reloadPravidla();
+        alert(`Pravidlo „${vzor}" uloženo — sedí na ${pocet} plateb v databázi a příští importy zařadí samo.`);}}/>}
     <div style={{display:"flex",gap:14,marginBottom:18,flexWrap:"wrap",alignItems:"flex-start"}}>
       <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"14px 18px",flex:"1 1 340px",textAlign:"left"}}>
         <div style={{fontSize:13,fontWeight:800,color:"#1a4fa8",marginBottom:6}}>📥 Načíst výpis z banky</div>
@@ -2422,7 +2458,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
                     <button title={`Zapamatovat „${r.popis.slice(0,24)}" → ${[katNazev(r.kategorie_id),
                       (projekty||[]).find(x=>String(x.id)===String(r.projekt_id))?.nazev,
                       subjektNazev(r.subjekt_typ,r.subjekt_id,deti,auta)].filter(Boolean).join(" · ")}`}
-                      onClick={()=>ulozPravidlo(r.popis.slice(0,24),r)}
+                      onClick={()=>otevriPravidlo(r)}
                       style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10}}>＋pravidlo</button>}
                 </td>
               </tr>)}
@@ -3021,7 +3057,7 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
     let dotcenych=0;
     for(const t of (transakce||[])){
       if(t.typ==="prevod")continue;
-      const n=navrhniZarazeni({popis:t.popis,poznamka:t.poznamka,protiucet:t.protistrana},pravidla);
+      const n=navrhniZarazeni({popis:t.popis,poznamka:t.poznamka,protiucet:t.protistrana,castka:t.castka},pravidla,t.ucet_id);
       const patch={};
       if(n.kategorie_id&&!t.kategorie_id)patch.kategorie_id=n.kategorie_id;
       if(n.projekt_id  &&!t.projekt_id)  patch.projekt_id=n.projekt_id;
@@ -3625,6 +3661,7 @@ function RozpadModal({titulek,polozky:vsechny,pocetMesicu,ucty,kategorie,projekt
       kandidati,
       patch:{kategorie_id:t.kategorie_id||null,projekt_id:t.projekt_id||null,
              subjekt_typ:t.subjekt_typ||null,subjekt_id:t.subjekt_id||null},
+      smer:+t.castka>0?"prijem":"vydaj",
       popisPatche:[kat?`${kat.emoji||"🏷"} ${kat.nazev}`:"bez kategorie",
                    pr?`${pr.emoji||"📁"} ${pr.nazev}`:null,
                    subjektNazev(t.subjekt_typ,t.subjekt_id,deti,auta)].filter(Boolean).join(" · "),
@@ -3807,7 +3844,14 @@ function VyberKategorie({hodnota,kategorie,prijem,disabled,sirka=230,onVyber,onN
 // takže se z jedné platby udělá vzor: přepíše všechny, které mu odpovídají,
 // a uloží se jako pravidlo, aby budoucí importy přišly zařazené samy.
 // ══════════════════════════════════════════════════════════════════════════════
-function PravidloModal({vzorNavrh,kandidati,patch,popisPatche,onClose,onHotovo}){
+// Obecné bankovní fráze — samy o sobě neidentifikují vůbec nic. Pravidlo
+// postavené na nich sedne na půlku výpisu, což je přesně to, co se stalo.
+const OBECNE_FRAZE=["odchozi uhrada","prichozi uhrada","odchozi platba","prichozi platba",
+  "platba kartou","platba","uhrada","nakup","trvaly prikaz","okamzita uhrada","prevod",
+  "odeslane inkaso","prijate inkaso","karetni transakce","vyber hotovosti","vklad hotovosti"];
+const jeObecny=v=>OBECNE_FRAZE.includes(bezDiakritiky(v).trim());
+
+function PravidloModal({vzorNavrh,kandidati,patch,popisPatche,smer,jenPravidlo,onClose,onHotovo}){
   const [vzor,setVzor]=useState(vzorNavrh||"");
   const [nalezene,setNalezene]=useState(null);
   const [hleda,setHleda]=useState(false);
@@ -3821,8 +3865,11 @@ function PravidloModal({vzorNavrh,kandidati,patch,popisPatche,onClose,onHotovo})
     if(v.length<3){setNalezene(null);return;}
     let zruseno=false; setHleda(true);
     const casovac=setTimeout(async()=>{
-      const {data}=await sb.from("fin_transakce").select("id,datum,castka,popis")
-        .eq("zdroj","import").ilike("popis",`%${v}%`).order("datum",{ascending:false}).limit(500);
+      let q=sb.from("fin_transakce").select("id,datum,castka,popis")
+        .eq("zdroj","import").ilike("popis",`%${v}%`);
+      if(smer==="prijem")q=q.gt("castka",0);
+      if(smer==="vydaj") q=q.lt("castka",0);
+      const {data}=await q.order("datum",{ascending:false}).limit(500);
       if(!zruseno){setNalezene(data||[]);setHleda(false);}
     },350);
     return ()=>{zruseno=true;clearTimeout(casovac);};
@@ -3831,14 +3878,20 @@ function PravidloModal({vzorNavrh,kandidati,patch,popisPatche,onClose,onHotovo})
   const pouzij=async()=>{
     const v=vzor.trim(); if(v.length<3)return;
     setPracuje(true);
-    const {error}=await sb.from("fin_transakce").update(patch).eq("zdroj","import").ilike("popis",`%${v}%`);
-    if(error){setPracuje(false);alert("Nepodařilo se uložit: "+error.message);return;}
+    if(!jenPravidlo){
+      let q=sb.from("fin_transakce").update(patch).eq("zdroj","import").ilike("popis",`%${v}%`);
+      if(smer==="prijem")q=q.gt("castka",0);
+      if(smer==="vydaj") q=q.lt("castka",0);
+      const {error}=await q;
+      if(error){setPracuje(false);alert("Nepodařilo se uložit: "+error.message);return;}
+    }
     if(ulozit){
       // Unikátní index je na lower(vzor), což PostgREST v upsertu zacílit neumí —
       // proto se existující pravidlo najde a přepíše se do něj.
       const {data:stare}=await sb.from("fin_pravidla").select("id").ilike("vzor",v).limit(1);
-      if(stare&&stare.length)await sb.from("fin_pravidla").update(patch).eq("id",stare[0].id);
-      else await sb.from("fin_pravidla").insert({vzor:v,priorita:30,...patch});
+      const sPravidlem={...patch,smer:smer||null};
+      if(stare&&stare.length)await sb.from("fin_pravidla").update(sPravidlem).eq("id",stare[0].id);
+      else await sb.from("fin_pravidla").insert({vzor:v,priorita:30,...sPravidlem});
     }
     setPracuje(false);
     onHotovo(nalezene?nalezene.length:0,v);
@@ -3847,10 +3900,15 @@ function PravidloModal({vzorNavrh,kandidati,patch,popisPatche,onClose,onHotovo})
   const kratky=vzor.trim().length<3;
   return <Modal title="Nastavit i u ostatních plateb" onClose={onClose} width={600}>
     <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
-      Všem platbám, jejichž popis obsahuje tenhle text, se nastaví: <strong style={{color:C.text}}>{popisPatche}</strong>
+      Všem {smer==="prijem"?"příchozím":smer==="vydaj"?"odchozím":""} platbám, jejichž popis obsahuje
+      tenhle text, se nastaví: <strong style={{color:C.text}}>{popisPatche}</strong>
     </div>
     <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Text, podle kterého se platby poznají</div>
-    <input style={inp} autoFocus value={vzor} onChange={e=>setVzor(e.target.value)}/>
+    <input style={{...inp,borderColor:jeObecny(vzor)?"#e59a9a":undefined}} autoFocus value={vzor} onChange={e=>setVzor(e.target.value)}/>
+    {jeObecny(vzor)&&<div style={{fontSize:11.5,color:"#b03030",marginTop:6,fontWeight:700}}>
+      „{vzor.trim()}" je obecný bankovní pojem, ne jméno obchodníka — takové pravidlo sedne
+      na každou takovou platbu. Vyber si radši něco z nabídky pod polem.
+    </div>}
     {(kandidati||[]).length>1&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:7}}>
       {kandidati.map((k,i)=><button key={i} onClick={()=>setVzor(k)}
         style={{...btnC(C.muted,true),fontSize:11,padding:"3px 9px"}}>{k}</button>)}
@@ -3885,8 +3943,8 @@ function PravidloModal({vzorNavrh,kandidati,patch,popisPatche,onClose,onHotovo})
     </label>
 
     <div style={{display:"flex",gap:10,marginTop:16}}>
-      <button onClick={pouzij} disabled={pracuje||kratky||!nalezene?.length} style={btnC()}>
-        {pracuje?"Ukládám…":`Nastavit u ${nalezene?.length||0} plateb`}
+      <button onClick={pouzij} disabled={pracuje||kratky||jeObecny(vzor)||!nalezene?.length} style={btnC()}>
+        {pracuje?"Ukládám…":jenPravidlo?"Uložit pravidlo":`Nastavit u ${nalezene?.length||0} plateb`}
       </button>
       <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
     </div>
