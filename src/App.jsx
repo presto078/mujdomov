@@ -3603,7 +3603,7 @@ function FinProjektyTab(){
             <button onClick={()=>setDetail(detail===p.id?null:p.id)} style={{...btnC(C.muted,true),fontSize:11,padding:"4px 10px"}}>
               {detail===p.id?"Skrýt platby":"Platby"}
             </button>
-            <button onClick={()=>setHotove({projekt_id:p.id,datum:new Date().toISOString().slice(0,10),castka:"",poznamka:""})} style={{...btnC(C.green,true),fontSize:11,padding:"4px 10px"}}>+ Platba hotově</button>
+            <button onClick={()=>setHotove({projekt_id:p.id,datum:new Date().toISOString().slice(0,10),castka:"",poznamka:""})} style={{...btnC(C.green,true),fontSize:11,padding:"4px 10px"}}>+ Platba mimo výpisy</button>
             <button onClick={()=>setEdit(p)} style={{...btnC(C.accent,true),fontSize:11,padding:"4px 10px"}}>Upravit</button>
           </div>
 
@@ -3701,17 +3701,40 @@ function FinProjektModal({projekt,onClose,onSaved}){
 function HotovostniPlatbaModal({zaznam,onClose,onSaved}){
   const [f,setF]=useState(zaznam);
   const [saving,setSaving]=useState(false);
+  const [opakovat,setOpakovat]=useState(false);
+  const [doData,setDoData]=useState(new Date().toISOString().slice(0,10));
+
+  // Pravidelná platba, kterou ve výpisu nenajdeš — třeba paušál O2, který
+  // z účtu odchází schovaný uvnitř jedné faktury za všechna čísla. Zapsat ji
+  // dvanáctkrát ručně je nesmysl, tak se rozpočítá po měsících najednou.
+  const mesicniDatumy=()=>{
+    const out=[]; const d=new Date(f.datum), konec=new Date(doData);
+    if(isNaN(d)||isNaN(konec)||konec<d)return [f.datum];
+    const den=d.getDate();
+    for(let x=new Date(d); x<=konec; x.setMonth(x.getMonth()+1)){
+      // Když měsíc daný den nemá (31. v únoru), vezme se poslední den měsíce.
+      const posl=new Date(x.getFullYear(),x.getMonth()+1,0).getDate();
+      out.push(`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(Math.min(den,posl)).padStart(2,"0")}`);
+      x.setDate(1);
+    }
+    return out;
+  };
+  const pocet=opakovat?mesicniDatumy().length:1;
+
   const uloz=async()=>{
     if(!f.castka)return;
     setSaving(true);
-    const {error}=await sb.from("fin_projekt_platby").insert({projekt_id:f.projekt_id,datum:f.datum,castka:+f.castka,poznamka:f.poznamka||null});
+    const datumy=opakovat?mesicniDatumy():[f.datum];
+    const rows=datumy.map(dt=>({projekt_id:f.projekt_id,datum:dt,castka:+f.castka,poznamka:f.poznamka||null}));
+    const {error}=await sb.from("fin_projekt_platby").insert(rows);
     setSaving(false);
     if(error){alert("Chyba: "+error.message);return;}
     onSaved();
   };
-  return <Modal title="Platba v hotovosti" onClose={onClose} width={420}>
+  return <Modal title="Platba mimo výpisy" onClose={onClose} width={440}>
     <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
-      Platby, které neprošly přes účet. Připočtou se k projektu stejně jako ty z výpisů.
+      Platby, které se ve výpisu nedají najít — hotovost, nebo částka schovaná uvnitř
+      větší faktury. Připočtou se k projektu stejně jako ty z výpisů.
     </div>
     <div style={{display:"flex",gap:10,marginBottom:11}}>
       <div style={{flex:1}}>
@@ -3725,10 +3748,26 @@ function HotovostniPlatbaModal({zaznam,onClose,onSaved}){
     </div>
     <div style={{marginBottom:11}}>
       <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Poznámka</div>
-      <input style={inp} value={f.poznamka||""} onChange={e=>setF(x=>({...x,poznamka:e.target.value}))}/>
+      <input style={inp} value={f.poznamka||""} onChange={e=>setF(x=>({...x,poznamka:e.target.value}))}
+        placeholder="např. paušál O2 v rámci faktury"/>
     </div>
+
+    <label style={{display:"flex",alignItems:"center",gap:7,fontSize:12.5,cursor:"pointer",marginBottom:8}}>
+      <input type="checkbox" checked={opakovat} onChange={e=>setOpakovat(e.target.checked)}/>
+      Opakuje se každý měsíc
+    </label>
+    {opakovat&&<div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px"}}>
+      <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Poslední měsíc</div>
+      <input style={inp} type="date" value={doData} min={f.datum} onChange={e=>setDoData(e.target.value)}/>
+      <div style={{fontSize:11.5,color:C.muted,marginTop:6}}>
+        Zapíše se <strong>{pocet}×</strong> po {kc0(+f.castka||0)}, celkem <strong>{kc0((+f.castka||0)*pocet)}</strong>.
+        Každou z nich pak jde v seznamu plateb smazat zvlášť.
+      </div>
+    </div>}
+
     <div style={{display:"flex",gap:10,marginTop:16}}>
-      <button onClick={uloz} disabled={saving||!f.castka} style={btnC()}>{saving?"Ukládám…":"Uložit"}</button>
+      <button onClick={uloz} disabled={saving||!f.castka} style={btnC()}>
+        {saving?"Ukládám…":opakovat?`Uložit ${pocet} plateb`:"Uložit"}</button>
       <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
     </div>
   </Modal>;
