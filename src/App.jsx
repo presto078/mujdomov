@@ -1907,6 +1907,13 @@ function navrhniZarazeni(radek,pravidla){
     // přiřadit protiúčet u účtů, které vlastní číslo nemají (Portu, penzijko).
     typ_navrh   :sedi.find(p=>p.typ)?.typ||null,
     prevod_navrh:sedi.find(p=>p.prevod_ucet_id)?.prevod_ucet_id||null,
+    // Které pravidlo co doplnilo — bez toho se nedá poznat, proč appka
+    // navrhla nesmysl, a nejde to opravit u zdroje.
+    zdroje:{
+      kategorie:sedi.find(p=>p.kategorie_id)?.vzor||null,
+      projekt  :sedi.find(p=>p.projekt_id)?.vzor||null,
+      subjekt  :subj?.vzor||null,
+    },
   };
 }
 const navrhniKategorii=(radek,pravidla)=>navrhniZarazeni(radek,pravidla).kategorie_id;
@@ -2400,6 +2407,14 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
                       onChange={v=>{const [tp,id]=String(v).split("|");uprav(di,ri,{subjekt_typ:tp||null,subjekt_id:id||null});}}
                       style={{...inp,padding:"2px 5px",fontSize:10.5,width:"auto",maxWidth:120}}/>
                   </div>
+                  {r.zdroje&&(r.zdroje.kategorie||r.zdroje.projekt||r.zdroje.subjekt)&&
+                    <div style={{fontSize:10,color:C.dim,marginTop:3}}>
+                      podle pravidel: {[
+                        r.zdroje.kategorie&&`„${r.zdroje.kategorie}" → kategorie`,
+                        r.zdroje.projekt&&`„${r.zdroje.projekt}" → projekt`,
+                        r.zdroje.subjekt&&`„${r.zdroje.subjekt}" → koho se týká`,
+                      ].filter(Boolean).join(" · ")}
+                    </div>}
                     </>}
                 </td>
                 <td style={{padding:"6px 4px"}}>
