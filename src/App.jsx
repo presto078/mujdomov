@@ -2587,6 +2587,166 @@ const SKUPINY_MAJETEK=[
   {klic:"konicek",  nadpis:"🎲 Koníček",               barva:"#8a8f98", doMajetku:false, likvidni:false},
 ];
 
+// ══════════════════════════════════════════════════════════════════════════════
+// PRAVIDLA — co se doplňuje samo
+// Klíčové číslo u každého pravidla je, na kolik plateb sedí. Pravidlo se
+// vzorem „Odchozí úhrada" vypadá nevinně, dokud u něj nestojí, že zasahuje
+// čtyři sta plateb. Proto se počítá stejnou logikou, jakou používá import.
+// ══════════════════════════════════════════════════════════════════════════════
+function PravidlaTab({ucty,kategorie,projekty,deti,auta}){
+  const {data:pravidla,loading,reload}=useData(()=>sb.from("fin_pravidla").select("*").order("priorita"));
+  const {data:trans,loading:lt}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
+    .select("id,ucet_id,castka,popis,poznamka,protistrana").eq("zdroj","import").order("datum").range(od,do_)));
+  const [razeni,setRazeni]=useState("dopad");   // "dopad" | "abeceda"
+  const [nove,setNove]=useState(null);
+
+  if(loading||lt)return <Spinner/>;
+
+  const uctyMap=Object.fromEntries((ucty||[]).map(u=>[String(u.id),u]));
+  const katMap =Object.fromEntries((kategorie||[]).map(k=>[String(k.id),k]));
+  const projMap=Object.fromEntries((projekty||[]).map(x=>[String(x.id),x]));
+
+  // Stejná podmínka jako v navrhniZarazeni — text, směr, účet.
+  const sedi=(p,t)=>{
+    const text=bezDiakritiky(`${t.popis} ${t.poznamka} ${t.protistrana}`);
+    if(!text.includes(bezDiakritiky(p.vzor)))return false;
+    const c=+t.castka||0;
+    if(p.smer==="prijem"&&c<0)return false;
+    if(p.smer==="vydaj" &&c>0)return false;
+    if(p.ucet_id&&String(p.ucet_id)!==String(t.ucet_id))return false;
+    return true;
+  };
+  const celkemTrans=(trans||[]).length||1;
+  const radky=(pravidla||[]).map(p=>{
+    const zasah=(trans||[]).filter(t=>sedi(p,t));
+    const podil=zasah.length/celkemTrans;
+    const obecny=jeObecny(p.vzor)||String(p.vzor).trim().length<4;
+    return {p,pocet:zasah.length,podil,
+            varovani:obecny?"obecný pojem":(podil>0.15?"zasahuje moc plateb":null)};
+  }).sort((a,b)=>razeni==="abeceda"
+    ? String(a.p.vzor).localeCompare(String(b.p.vzor),"cs")
+    : b.pocet-a.pocet);
+
+  const uloz=async(p,patch)=>{
+    const {error}=await sb.from("fin_pravidla").update(patch).eq("id",p.id);
+    if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+    reload();
+  };
+  const smaz=async(p,pocet)=>{
+    if(!confirm(`Smazat pravidlo „${p.vzor}"?\n\nSedí na ${pocet} plateb. Už zařazené platby zůstanou, jak jsou — pravidlo jen přestane platit pro budoucí importy a pro zpětné uplatnění.`))return;
+    const {error}=await sb.from("fin_pravidla").delete().eq("id",p.id);
+    if(error){alert("Chyba: "+error.message);return;}
+    reload();
+  };
+  const zaloz=async()=>{
+    if(!nove?.vzor.trim())return;
+    const {error}=await sb.from("fin_pravidla").insert({vzor:nove.vzor.trim(),priorita:+nove.priorita||50});
+    if(error){alert("Chyba: "+error.message);return;}
+    setNove(null);reload();
+  };
+
+  const pole={...inp,fontSize:12,padding:"4px 8px"};
+  const rizikovych=radky.filter(r=>r.varovani).length;
+
+  return <div>
+    <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
+      <div style={{fontSize:14,fontWeight:700}}>
+        {radky.length} pravidel
+        {rizikovych>0&&<span style={{color:C.red}}> · {rizikovych} podezřelých</span>}
+      </div>
+      <button onClick={()=>setNove({vzor:"",priorita:50})} style={{...btnC(C.green,true),fontSize:13,padding:"6px 14px"}}>+ Nové pravidlo</button>
+      <div style={{display:"flex",gap:4,alignItems:"center",marginLeft:"auto"}}>
+        <span style={{fontSize:12.5,color:C.muted,marginRight:3}}>Řadit:</span>
+        {[{k:"dopad",l:"podle dopadu"},{k:"abeceda",l:"podle abecedy"}].map(o=>
+          <button key={o.k} onClick={()=>setRazeni(o.k)}
+            style={{...btnC(razeni===o.k?C.accent:C.muted,razeni!==o.k),fontSize:12,padding:"5px 11px"}}>{o.l}</button>)}
+      </div>
+    </div>
+
+    <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:10,padding:"10px 15px",fontSize:12.5,color:"#3066b0",marginBottom:16}}>
+      Pravidlo hledá svůj <strong>vzor</strong> v popisu, poznámce a protiúčtu platby — bez ohledu na diakritiku
+      a velikost písmen. <strong>Směr</strong> a <strong>účet</strong> ho zúží: totéž číslo účtu může znamenat
+      splátku, kterou posíláš, i platbu, kterou dostáváš. <strong>Priorita</strong> rozhoduje při shodě —
+      nižší číslo vyhrává. Změny se ukládají, jakmile z pole odklikneš.
+    </div>
+
+    <div style={{display:"flex",flexDirection:"column",gap:7}}>
+      {radky.map(({p,pocet,podil,varovani})=>
+        <div key={p.id} style={{background:C.surface,border:`1px solid ${varovani?"#e59a9a":C.border}`,borderRadius:10,padding:"10px 12px"}}>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <input style={{...pole,flex:"1 1 190px",minWidth:150,fontWeight:700}} defaultValue={p.vzor}
+              onBlur={e=>e.target.value.trim()&&e.target.value!==p.vzor&&uloz(p,{vzor:e.target.value.trim()})}/>
+            <select style={{...pole,width:110}} defaultValue={p.smer||""} onChange={e=>uloz(p,{smer:e.target.value||null})}>
+              <option value="">oba směry</option>
+              <option value="prijem">jen příjmy</option>
+              <option value="vydaj">jen výdaje</option>
+            </select>
+            <select style={{...pole,maxWidth:180}} defaultValue={p.ucet_id||""} onChange={e=>uloz(p,{ucet_id:e.target.value||null})}>
+              <option value="">všechny účty</option>
+              {(ucty||[]).map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
+            </select>
+            <input style={{...pole,width:64}} type="number" defaultValue={p.priorita??100}
+              title="Priorita — nižší číslo vyhrává" onBlur={e=>uloz(p,{priorita:+e.target.value||100})}/>
+            <div style={{textAlign:"right",minWidth:110}}>
+              <strong style={{fontSize:14,color:varovani?C.red:C.text}}>{pocet}×</strong>
+              <span style={{fontSize:11,color:C.muted}}> · {(podil*100).toFixed(1)} %</span>
+            </div>
+            <button onClick={()=>smaz(p,pocet)} style={{...btnC(C.muted,true),fontSize:11.5,padding:"4px 10px"}}>Smazat</button>
+          </div>
+
+          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginTop:7}}>
+            <span style={{fontSize:11.5,color:C.muted}}>doplní:</span>
+            <VyberKategorie hodnota={p.kategorie_id} kategorie={kategorie} prijem={p.smer==="prijem"}
+              sirka={200} onVyber={id=>uloz(p,{kategorie_id:id||null})}/>
+            <select style={{...pole,maxWidth:150,fontSize:11}} defaultValue={p.projekt_id||""}
+              onChange={e=>uloz(p,{projekt_id:e.target.value?+e.target.value:null})}>
+              <option value="">— projekt —</option>
+              {(projekty||[]).map(x=><option key={x.id} value={x.id}>{x.emoji||"📁"} {x.nazev}</option>)}
+            </select>
+            <SubjektSelect deti={deti} auta={auta}
+              value={p.subjekt_typ?`${p.subjekt_typ}|${p.subjekt_id||""}`:""}
+              onChange={v=>{const [tp,id]=String(v).split("|");uloz(p,{subjekt_typ:tp||null,subjekt_id:id||null});}}
+              style={{...pole,maxWidth:150,fontSize:11}}/>
+            {p.typ==="prevod"&&<span style={{...stitek,background:"#fff3e0",color:"#9a5b00"}}>→ převod</span>}
+            {p.prevod_ucet_id&&uctyMap[String(p.prevod_ucet_id)]&&
+              <span style={{...stitek,background:"#fff3e0",color:"#9a5b00"}}>na {uctyMap[String(p.prevod_ucet_id)].nazev}</span>}
+          </div>
+
+          {varovani&&<div style={{fontSize:11.5,color:"#b03030",marginTop:6,fontWeight:700}}>
+            ⚠ {varovani} — {jeObecny(p.vzor)||String(p.vzor).trim().length<4
+              ? "tohle není jméno obchodníka, ale bankovní fráze; zúži ho, nebo smaž"
+              : `sedí na ${(podil*100).toFixed(0)} % všech plateb, což na jedno pravidlo bývá moc`}
+          </div>}
+        </div>)}
+    </div>
+
+    {nove&&<Modal title="Nové pravidlo" onClose={()=>setNove(null)} width={420}>
+      <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
+        Napiš text, podle kterého se platba pozná — jméno obchodníka nebo číslo účtu.
+        Co má doplňovat, nastavíš pak v seznamu.
+      </div>
+      <div style={{display:"flex",gap:10,marginBottom:11}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Vzor</div>
+          <input style={inp} autoFocus value={nove.vzor} onChange={e=>setNove(n=>({...n,vzor:e.target.value}))}
+            onKeyDown={e=>e.key==="Enter"&&zaloz()}/>
+        </div>
+        <div style={{width:90}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Priorita</div>
+          <input style={inp} type="number" value={nove.priorita} onChange={e=>setNove(n=>({...n,priorita:e.target.value}))}/>
+        </div>
+      </div>
+      {jeObecny(nove.vzor)&&<div style={{fontSize:11.5,color:"#b03030",fontWeight:700,marginBottom:10}}>
+        To je obecný bankovní pojem — sedne na spoustu plateb naráz.
+      </div>}
+      <div style={{display:"flex",gap:10,marginTop:16}}>
+        <button onClick={zaloz} disabled={!nove.vzor.trim()||jeObecny(nove.vzor)} style={btnC()}>Založit</button>
+        <button onClick={()=>setNove(null)} style={btnC(C.muted,true)}>Zrušit</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 function MajetekTab({ucty,reloadUcty}){
   const {data:stavy,loading,reload}=useData(()=>nactiVse((od,do_)=>
     sb.from("fin_stavy").select("*").gte("rok",2024).order("rok").range(od,do_)));
@@ -4435,13 +4595,14 @@ function FinanceNoveTab(){
       <div style={{fontSize:12,color:C.muted}}>{bankovni.length} bankovních účtů · {pocet??0} naimportovaných transakcí</div>
     </div>
     <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
-      {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"},{id:"majetek",l:"💼 Majetek"}].map(t=>
+      {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"},{id:"pravidla",l:"⚙️ Pravidla"},{id:"majetek",l:"💼 Majetek"}].map(t=>
         <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{t.l}</button>)}
     </div>
     {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>}
     {zalozka==="projekty"&&<FinProjektyTab/>}
     {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadProjekty={reloadProjekty} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
     {zalozka==="pokryti"&&<PokrytiImportu ucty={ucty}/>}
+    {zalozka==="pravidla"&&<PravidlaTab ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta}/>}
     {zalozka==="majetek"&&<MajetekTab ucty={ucty} reloadUcty={reloadUcty}/>}
     {zalozka==="kategorie"&&<KategorieTab kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadPocet();}}/>}
     {zalozka==="zarazeni"&&<ZarazeniTransakci kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie} onZmena={()=>{reloadUcty();reloadPocet();reloadProjekty();}}/>}
