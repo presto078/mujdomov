@@ -2443,6 +2443,167 @@ function SubjektSelect({deti,auta,value,onChange,style}){
   </select>;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// SPRÁVA KATEGORIÍ
+// Číselník se během používání zaplevelí — vznikne „Elektřina" vedle
+// „Voda / energie" a půlka věcí má emoji 💰. Než se začne třídit, má smysl si
+// ho srovnat: přejmenovat, sloučit dvě do jedné, smazat nepoužité.
+//
+// Pozor na `fin_pravidla.kategorie_id` — má `on delete cascade`, takže smazání
+// kategorie vezme s sebou i pravidla. Při slučování se proto nejdřív přepíšou
+// všechny odkazy a teprve pak se zdrojová kategorie maže.
+// ══════════════════════════════════════════════════════════════════════════════
+function KategorieTab({kategorie,reloadKategorie,onZmena}){
+  const {data:trans,loading:lt,reload:reloadTrans}=useData(()=>nactiVse((od,do_)=>
+    sb.from("fin_transakce").select("id,castka,datum,kategorie_id,typ").order("datum").range(od,do_)));
+  const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("id,vzor,kategorie_id"));
+  const {data:plan,reload:reloadPlan}=useData(()=>sb.from("fin_cashflow_plan").select("id,kategorie_id").limit(2000));
+  const [edit,setEdit]=useState({});         // id → rozpracované hodnoty
+  const [slucuje,setSlucuje]=useState(null); // {id, cil}
+  const [pracuje,setPracuje]=useState(false);
+  const [novaKat,setNovaKat]=useState(null);
+
+  if(lt)return <Spinner/>;
+
+  const statistiky=id=>{
+    const t=(trans||[]).filter(x=>String(x.kategorie_id)===String(id)&&x.typ!=="prevod");
+    return {
+      plateb:t.length,
+      suma:t.reduce((a,x)=>a+Math.abs(+x.castka||0),0),
+      pravidel:(pravidla||[]).filter(x=>String(x.kategorie_id)===String(id)).length,
+      vPlanu:(plan||[]).filter(x=>String(x.kategorie_id)===String(id)).length,
+    };
+  };
+  const radky=(kategorie||[]).map(k=>({k,s:statistiky(k.id)}))
+    .sort((a,b)=>b.s.suma-a.s.suma||a.k.nazev.localeCompare(b.k.nazev,"cs"));
+  const nepouzite=radky.filter(r=>!r.s.plateb&&!r.s.pravidel&&!r.s.vPlanu).length;
+
+  const ulozPole=async(k,pole,hodnota)=>{
+    if((k[pole]||"")===(hodnota||""))return;
+    const {error}=await sb.from("fin_kategorie").update({[pole]:hodnota||null}).eq("id",k.id);
+    if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+    reloadKategorie&&reloadKategorie();
+  };
+
+  const sluc=async(zdroj,cilId)=>{
+    const cil=(kategorie||[]).find(x=>String(x.id)===String(cilId));
+    if(!cil)return;
+    const s=statistiky(zdroj.id);
+    if(!confirm(`Sloučit „${zdroj.nazev}" do „${cil.nazev}"?\n\nPřepíše se ${s.plateb} plateb, ${s.pravidel} pravidel a ${s.vPlanu} položek plánu. Kategorie „${zdroj.nazev}" se pak smaže.`))return;
+    setPracuje(true);
+    // Nejdřív odkazy, teprve pak mazání — jinak cascade odnese pravidla.
+    for(const tabulka of ["fin_transakce","fin_pravidla","fin_cashflow_plan"]){
+      const {error}=await sb.from(tabulka).update({kategorie_id:cil.id}).eq("kategorie_id",zdroj.id);
+      if(error){setPracuje(false);alert(`Chyba v ${tabulka}: ${error.message}`);return;}
+    }
+    const {error}=await sb.from("fin_kategorie").delete().eq("id",zdroj.id);
+    setPracuje(false);
+    if(error){alert("Odkazy přepsané, ale kategorii se nepodařilo smazat: "+error.message);}
+    setSlucuje(null);
+    reloadKategorie&&reloadKategorie();reloadTrans();reloadPravidla();reloadPlan();onZmena&&onZmena();
+  };
+
+  const smaz=async k=>{
+    const s=statistiky(k.id);
+    if(s.plateb||s.pravidel||s.vPlanu){alert("Tuhle kategorii něco používá — sluč ji do jiné místo mazání.");return;}
+    if(!confirm(`Smazat nepoužitou kategorii „${k.nazev}"?`))return;
+    const {error}=await sb.from("fin_kategorie").delete().eq("id",k.id);
+    if(error){alert("Chyba: "+error.message);return;}
+    reloadKategorie&&reloadKategorie();
+  };
+
+  const zaloz=async()=>{
+    const n=novaKat;
+    if(!n?.nazev.trim())return;
+    const {error}=await sb.from("fin_kategorie").insert({nazev:n.nazev.trim(),emoji:n.emoji||"🏷",typ:n.typ,poradi:900});
+    if(error){alert("Chyba: "+error.message);return;}
+    setNovaKat(null);reloadKategorie&&reloadKategorie();
+  };
+
+  const poleStyl={...inp,fontSize:12,padding:"4px 8px"};
+  return <div>
+    <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
+      <div style={{fontSize:13,fontWeight:700}}>
+        {radky.length} kategorií
+        {nepouzite>0&&<span style={{color:C.orange}}> · {nepouzite} nepoužitých</span>}
+      </div>
+      <button onClick={()=>setNovaKat({nazev:"",typ:"vydaj",emoji:"🏷"})} style={{...btnC(C.green,true),fontSize:12,padding:"5px 12px"}}>+ Nová kategorie</button>
+    </div>
+
+    <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:10,padding:"9px 14px",fontSize:12,color:"#3066b0",marginBottom:14}}>
+      Název i emoji se ukládají, jakmile z pole odklikneš. <strong>Sloučit</strong> přepíše všechny platby,
+      pravidla i položky plánu na cílovou kategorii a tu původní smaže — hodí se, když ti vznikly dvě na totéž.
+      Smazat jde jen kategorie, kterou nic nepoužívá.
+    </div>
+
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      {radky.map(({k,s})=>{
+        const prazdna=!s.plateb&&!s.pravidel&&!s.vPlanu;
+        return <div key={k.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"9px 12px",opacity:prazdna?.62:1}}>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <input style={{...poleStyl,width:52,textAlign:"center"}} defaultValue={k.emoji||""}
+              onBlur={e=>ulozPole(k,"emoji",e.target.value)}/>
+            <input style={{...poleStyl,flex:1,minWidth:170,fontWeight:700}} defaultValue={k.nazev}
+              onBlur={e=>e.target.value.trim()&&ulozPole(k,"nazev",e.target.value.trim())}/>
+            <select style={{...poleStyl,width:100}} defaultValue={k.typ}
+              onChange={e=>ulozPole(k,"typ",e.target.value)}>
+              <option value="vydaj">Výdaj</option><option value="prijem">Příjem</option>
+            </select>
+            <div style={{textAlign:"right",minWidth:150,fontSize:11.5,color:C.muted}}>
+              {prazdna
+                ? <span style={{color:C.orange}}>nic ji nepoužívá</span>
+                : <>
+                    <strong style={{color:C.text,fontSize:13}}>{kc0(s.suma)}</strong>
+                    <div>{s.plateb}× · {s.pravidel} pravidel{s.vPlanu?` · ${s.vPlanu} v plánu`:""}</div>
+                  </>}
+            </div>
+            <button onClick={()=>setSlucuje(slucuje?.id===k.id?null:{id:k.id,cil:""})}
+              style={{...btnC(C.accent,true),fontSize:11,padding:"4px 10px"}}>Sloučit</button>
+            <button onClick={()=>smaz(k)} disabled={!prazdna} title={prazdna?"Smazat":"Nejdřív ji sluč do jiné"}
+              style={{...btnC(C.muted,true),fontSize:11,padding:"4px 10px",opacity:prazdna?1:.4}}>Smazat</button>
+          </div>
+
+          {slucuje?.id===k.id&&<div style={{display:"flex",gap:8,alignItems:"center",marginTop:9,paddingTop:9,borderTop:`1px solid ${C.border}`,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:C.muted}}>Přesunout „{k.nazev}" do:</span>
+            <select style={{...poleStyl,maxWidth:260}} value={slucuje.cil} onChange={e=>setSlucuje({...slucuje,cil:e.target.value})}>
+              <option value="">— vyber kategorii —</option>
+              {radky.filter(r=>String(r.k.id)!==String(k.id)).map(r=>
+                <option key={r.k.id} value={r.k.id}>{r.k.emoji||"🏷"} {r.k.nazev}{r.s.plateb?` (${r.s.plateb}×)`:""}</option>)}
+            </select>
+            <button onClick={()=>sluc(k,slucuje.cil)} disabled={!slucuje.cil||pracuje}
+              style={{...btnC(),fontSize:12,padding:"5px 12px"}}>{pracuje?"Slučuji…":"Sloučit"}</button>
+            <button onClick={()=>setSlucuje(null)} style={{...btnC(C.muted,true),fontSize:12,padding:"5px 12px"}}>Zrušit</button>
+          </div>}
+        </div>;
+      })}
+    </div>
+
+    {novaKat&&<Modal title="Nová kategorie" onClose={()=>setNovaKat(null)} width={380}>
+      <div style={{display:"flex",gap:10,marginBottom:11}}>
+        <div style={{width:70}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Emoji</div>
+          <input style={inp} value={novaKat.emoji} onChange={e=>setNovaKat(k=>({...k,emoji:e.target.value}))}/>
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Název</div>
+          <input style={inp} autoFocus value={novaKat.nazev} onChange={e=>setNovaKat(k=>({...k,nazev:e.target.value}))}
+            onKeyDown={e=>e.key==="Enter"&&zaloz()}/>
+        </div>
+      </div>
+      <div style={{marginBottom:11}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Typ</div>
+        <select style={inp} value={novaKat.typ} onChange={e=>setNovaKat(k=>({...k,typ:e.target.value}))}>
+          <option value="vydaj">Výdaj</option><option value="prijem">Příjem</option>
+        </select>
+      </div>
+      <div style={{display:"flex",gap:10,marginTop:16}}>
+        <button onClick={zaloz} disabled={!novaKat.nazev.trim()} style={btnC()}>Založit</button>
+        <button onClick={()=>setNovaKat(null)} style={btnC(C.muted,true)}>Zrušit</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie}){
   const {data:transakce,loading,reload}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
     .select("id,datum,castka,popis,poznamka,protistrana,kategorie_id,projekt_id,subjekt_typ,subjekt_id,typ,ucet_id")
@@ -3709,13 +3870,14 @@ function FinanceNoveTab(){
       <div style={{fontSize:12,color:C.muted}}>{bankovni.length} bankovních účtů · {pocet??0} naimportovaných transakcí</div>
     </div>
     <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
-      {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"zarazeni",l:"🏷 Zařazení"}].map(t=>
+      {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"}].map(t=>
         <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{t.l}</button>)}
     </div>
     {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>}
     {zalozka==="projekty"&&<FinProjektyTab/>}
     {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
     {zalozka==="pokryti"&&<PokrytiImportu ucty={ucty}/>}
+    {zalozka==="kategorie"&&<KategorieTab kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadPocet();}}/>}
     {zalozka==="zarazeni"&&<ZarazeniTransakci kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie} onZmena={()=>{reloadUcty();reloadPocet();reloadProjekty();}}/>}
   </div>;
 }
