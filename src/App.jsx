@@ -3741,6 +3741,29 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     return {s0,s1,spocteno,rozdil:spocteno-s1,sedi:Math.abs(spocteno-s1)<1.5};
   })();
 
+  // Průměr ze všech dokončených měsíců — slouží jako měřítko, proti kterému se
+  // vybraný měsíc porovnává. Počítá se pro stejný výřez dat (celek nebo účet).
+  const prumerZaklad=(()=>{
+    if(prumer||hotoveMesice.length<2)return null;
+    const zdroj=ucetFiltr
+      ? (trans||[]).filter(t=>String(t.ucet_id)===String(ucetFiltr))
+      : pohyby;
+    const v=zdroj.filter(t=>hotoveMesice.includes(String(t.datum).slice(0,7)));
+    const bp=v.filter(t=>!(t.typ==="prevod"||t.prevod_ucet_id));
+    const nn=hotoveMesice.length;
+    const mer=nMesicu/delitel;          // u rozsahu se průměr natáhne na počet měsíců
+    const S=(xs,f)=>xs.reduce((a,t)=>a+(f(t)?Math.abs(+t.castka):0),0)/nn*mer;
+    const prij=S(bp,t=>+t.castka>0);
+    const zav =S(bp,t=>+t.castka<0&&t.projekt_id);
+    const zbyt=S(bp,t=>+t.castka<0&&!t.projekt_id);
+    const prev=v.filter(t=>t.typ==="prevod"||t.prevod_ucet_id)
+                .reduce((a,t)=>a+(+t.castka||0),0)/nn*mer;
+    return {prijmy:prij,zavazky:zav,zbytek:zbyt,prevody:prev,
+            hotovost:hotovostniPrijem*nMesicu/delitel,
+            zbyvaNaZivot:prij+hotovostniPrijem*nMesicu/delitel-zav,
+            zmena:prij-zav-zbyt+prev, odeslo:zav+zbyt, pocet:nn};
+  })();
+
   const likvidni=(ucty||[]).filter(u=>["finance","hotovost","podnikani"].includes(u.skupina||"finance"));
   const likvidita=likvidni.reduce((a,u)=>a+posledniStav(u),0);
   // Dojezd má smysl počítat, jen když je schodek dost velký na to, aby nebyl
@@ -3793,14 +3816,25 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     return [...m.entries()].map(([k,z])=>({k,nazev:projMap[k]?`${projMap[k].emoji||"📁"} ${projMap[k].nazev}`:"Projekt",mesicne:z.suma/n,polozky:z.polozky})).sort((a,b)=>b.mesicne-a.mesicne);
   })();
 
-  const karta=(l,v,barva,pozn,polozky)=><div
-    onClick={polozky?()=>setRozpad({titulek:`${l} · rozpad`,polozky}):undefined}
-    style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:190,cursor:polozky?"pointer":"default"}}>
-    <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3}}>{l}</div>
-    <div style={{fontSize:23,fontWeight:800,color:barva||C.text,marginTop:5}}>{kc0(v)}</div>
-    {pozn&&<div style={{fontSize:11,color:C.dim,marginTop:3}}>{pozn}</div>}
-    {polozky&&<div style={{fontSize:10,color:C.accent,marginTop:5}}>▸ ukázat {polozky.length} pohybů</div>}
-  </div>;
+  // Srovnání s průměrem: absolutní rozdíl i procenta. U malých základů procenta
+  // nic neříkají (z 200 na 400 je +100 %), proto se pod tisícovkou neukazují.
+  const karta=(l,v,barva,pozn,polozky,prumerV)=>{
+    const rozd=prumerV!=null?v-prumerV:null;
+    const pct=(rozd!=null&&Math.abs(prumerV)>1000)?rozd/Math.abs(prumerV)*100:null;
+    return <div
+      onClick={polozky?()=>setRozpad({titulek:`${l} · rozpad`,polozky}):undefined}
+      style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:190,cursor:polozky?"pointer":"default"}}>
+      <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3}}>{l}</div>
+      <div style={{fontSize:23,fontWeight:800,color:barva||C.text,marginTop:5}}>{kc0(v)}</div>
+      {pozn&&<div style={{fontSize:11,color:C.dim,marginTop:3}}>{pozn}</div>}
+      {rozd!=null&&<div style={{fontSize:11,color:C.muted,marginTop:5}}>
+        průměr {kc0(prumerV)} · <strong style={{color:Math.abs(rozd)<Math.abs(prumerV)*.05?C.dim:C.text}}>
+          {rozd>=0?"▲":"▼"} {kc0(Math.abs(rozd))}{pct!=null?` (${Math.abs(pct).toFixed(0)} %)`:""}
+        </strong>
+      </div>}
+      {polozky&&<div style={{fontSize:10,color:C.accent,marginTop:5}}>▸ ukázat {polozky.length} pohybů</div>}
+    </div>;
+  };
 
   const sloupec=(titulek,radky,barva)=><div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:260}}>
     <div style={{fontSize:12,fontWeight:800,marginBottom:10}}>{titulek}</div>
@@ -3866,7 +3900,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
       </select>
       {ob.rezim!=="prumer"&&hotoveMesice.length>1&&
         <button onClick={()=>setObdobi({rezim:"prumer"})} style={{...btnC(C.muted,true),fontSize:11,padding:"4px 10px"}}>
-          porovnat s průměrem
+          přepnout na průměr
         </button>}
     </div>
     <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
@@ -3898,14 +3932,15 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
 
     {jedenUcet&&<div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
       {karta("Přišlo"+zaObdobi,mPrijmy,C.green,"od cizích, bez přesunů mezi tvými účty",
-        bezPrevodu.filter(t=>+t.castka>0))}
+        bezPrevodu.filter(t=>+t.castka>0),prumerZaklad?.prijmy)}
       {karta("Odešlo"+zaObdobi,mZavazky+mZbytek,C.red,"cizím, bez přesunů mezi tvými účty",
-        bezPrevodu.filter(t=>+t.castka<0))}
+        bezPrevodu.filter(t=>+t.castka<0),prumerZaklad?.odeslo)}
       {karta("Přesuny mezi mými účty",prevodyNetto/n,prevodyNetto>=0?C.accent:C.orange,
-        `${kc0(prevodySem/n)} sem · ${kc0(prevodyPryc/n)} pryč`,prevody.length?prevody:null)}
+        `${kc0(prevodySem/n)} sem · ${kc0(prevodyPryc/n)} pryč`,prevody.length?prevody:null,prumerZaklad?.prevody)}
       {karta("Změna zůstatku"+zaObdobi,(prijmy-zavazky-zbytek+prevodyNetto)/n,
         (prijmy-zavazky-zbytek+prevodyNetto)>=0?C.green:C.red,
-        kontrola&&!kontrola.chybi?`${kc0(kontrola.s0)} → ${kc0(kontrola.s1)}`:"podle pohybů ve výpisu")}
+        kontrola&&!kontrola.chybi?`${kc0(kontrola.s0)} → ${kc0(kontrola.s1)}`:"podle pohybů ve výpisu",
+        null,prumerZaklad?.zmena)}
     </div>}
 
     {jedenUcet&&kontrola&&<div style={{background:kontrola.chybi?C.bg:(kontrola.sedi?"#f0f7ee":"#fdefef"),
@@ -3929,12 +3964,13 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
       {karta("Příjmy"+zaObdobi,mPrijmy+hotovostZaObdobi,C.green,
         [hotovostZaObdobi?`${kc0(hotovostZaObdobi)} hotově mimo účty`:null,
          bizIn?`${kc0(bizIn/n)} z podnikání`:null].filter(Boolean).join(" · ")||"jen to, co přišlo na účty",
-        bezPrevodu.filter(t=>+t.castka>0))}
+        bezPrevodu.filter(t=>+t.castka>0),prumerZaklad?(prumerZaklad.prijmy+prumerZaklad.hotovost):null)}
       {karta("Povinné závazky"+zaObdobi,mZavazky,C.orange,"hypotéka, SJM, insolvence, auta",
-        bezPrevodu.filter(t=>+t.castka<0&&t.projekt_id))}
-      {karta("Zbývá na život"+zaObdobi,kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků")}
+        bezPrevodu.filter(t=>+t.castka<0&&t.projekt_id),prumerZaklad?.zavazky)}
+      {karta("Zbývá na život"+zaObdobi,kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků",
+        null,prumerZaklad?.zbyvaNaZivot)}
       {karta("Skutečně utrácíš"+zaObdobi,mZbytek,C.red,"všechno ostatní",
-        bezPrevodu.filter(t=>+t.castka<0&&!t.projekt_id))}
+        bezPrevodu.filter(t=>+t.castka<0&&!t.projekt_id),prumerZaklad?.zbytek)}
     </div>}
 
     {!jedenUcet&&<div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
