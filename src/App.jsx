@@ -2520,62 +2520,90 @@ function KategorieTab({kategorie,reloadKategorie,onZmena}){
     setNovaKat(null);reloadKategorie&&reloadKategorie();
   };
 
-  const poleStyl={...inp,fontSize:12,padding:"4px 8px"};
+  const poleStyl={...inp,fontSize:13,padding:"5px 9px"};
+
+  // Tři hromádky vedle sebe: čím se peníze berou, čím utrácejí, a co je k úklidu.
+  // Kategorie typu „převod" by byla prázdná — platby označené jako převod
+  // se z přehledu vyřazují a kategorii schválně nedostávají.
+  const prazdnaKat=r=>!r.s.plateb&&!r.s.pravidel&&!r.s.vPlanu;
+  const sloupce=[
+    {klic:"prijem", nadpis:"📥 Příjmové kategorie", barva:C.green,
+     radky:radky.filter(r=>r.k.typ==="prijem"&&!prazdnaKat(r))},
+    {klic:"vydaj",  nadpis:"📤 Výdajové kategorie", barva:C.red,
+     radky:radky.filter(r=>r.k.typ!=="prijem"&&!prazdnaKat(r))},
+    {klic:"prazdne",nadpis:"🧹 Nepoužité — k úklidu", barva:C.orange,
+     radky:radky.filter(prazdnaKat)},
+  ];
+
+  const karta=({k,s})=>{
+    const prazdna=!s.plateb&&!s.pravidel&&!s.vPlanu;
+    return <div key={k.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginBottom:7}}>
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <input style={{...poleStyl,width:50,textAlign:"center",flexShrink:0}} defaultValue={k.emoji||""}
+          onBlur={e=>ulozPole(k,"emoji",e.target.value)}/>
+        <input style={{...poleStyl,flex:1,minWidth:0,fontWeight:700,fontSize:14}} defaultValue={k.nazev}
+          onBlur={e=>e.target.value.trim()&&ulozPole(k,"nazev",e.target.value.trim())}/>
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"space-between",marginTop:7,flexWrap:"wrap"}}>
+        <div style={{fontSize:12.5,color:C.muted,lineHeight:1.4}}>
+          {prazdna
+            ? <span style={{color:C.orange}}>nic ji nepoužívá</span>
+            : <><strong style={{color:C.text,fontSize:15}}>{kc0(s.suma)}</strong>
+                {" · "}{s.plateb}× · {s.pravidel} pravidel{s.vPlanu?` · ${s.vPlanu} v plánu`:""}</>}
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <select style={{...poleStyl,width:88,fontSize:12,padding:"3px 6px"}} defaultValue={k.typ}
+            onChange={e=>ulozPole(k,"typ",e.target.value)}>
+            <option value="vydaj">Výdaj</option><option value="prijem">Příjem</option>
+          </select>
+          <button onClick={()=>setSlucuje(slucuje?.id===k.id?null:{id:k.id,cil:""})}
+            style={{...btnC(C.accent,true),fontSize:12,padding:"4px 10px"}}>Sloučit</button>
+          <button onClick={()=>smaz(k)} disabled={!prazdna} title={prazdna?"Smazat":"Nejdřív ji sluč do jiné"}
+            style={{...btnC(C.muted,true),fontSize:12,padding:"4px 10px",opacity:prazdna?1:.35}}>Smazat</button>
+        </div>
+      </div>
+
+      {slucuje?.id===k.id&&<div style={{marginTop:9,paddingTop:9,borderTop:`1px solid ${C.border}`}}>
+        <div style={{fontSize:12.5,color:C.muted,marginBottom:5}}>Přesunout „{k.nazev}" do:</div>
+        <select style={{...poleStyl,width:"100%"}} value={slucuje.cil} onChange={e=>setSlucuje({...slucuje,cil:e.target.value})}>
+          <option value="">— vyber kategorii —</option>
+          {radky.filter(r=>String(r.k.id)!==String(k.id)).map(r=>
+            <option key={r.k.id} value={r.k.id}>{r.k.emoji||"🏷"} {r.k.nazev}{r.s.plateb?` (${r.s.plateb}×)`:""}</option>)}
+        </select>
+        <div style={{display:"flex",gap:8,marginTop:8}}>
+          <button onClick={()=>sluc(k,slucuje.cil)} disabled={!slucuje.cil||pracuje}
+            style={{...btnC(),fontSize:12.5,padding:"5px 12px"}}>{pracuje?"Slučuji…":"Sloučit"}</button>
+          <button onClick={()=>setSlucuje(null)} style={{...btnC(C.muted,true),fontSize:12.5,padding:"5px 12px"}}>Zrušit</button>
+        </div>
+      </div>}
+    </div>;
+  };
+
   return <div>
     <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
-      <div style={{fontSize:13,fontWeight:700}}>
+      <div style={{fontSize:14,fontWeight:700}}>
         {radky.length} kategorií
         {nepouzite>0&&<span style={{color:C.orange}}> · {nepouzite} nepoužitých</span>}
       </div>
-      <button onClick={()=>setNovaKat({nazev:"",typ:"vydaj",emoji:"🏷"})} style={{...btnC(C.green,true),fontSize:12,padding:"5px 12px"}}>+ Nová kategorie</button>
+      <button onClick={()=>setNovaKat({nazev:"",typ:"vydaj",emoji:"🏷"})} style={{...btnC(C.green,true),fontSize:13,padding:"6px 14px"}}>+ Nová kategorie</button>
     </div>
 
-    <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:10,padding:"9px 14px",fontSize:12,color:"#3066b0",marginBottom:14}}>
-      Název i emoji se ukládají, jakmile z pole odklikneš. <strong>Sloučit</strong> přepíše všechny platby,
-      pravidla i položky plánu na cílovou kategorii a tu původní smaže — hodí se, když ti vznikly dvě na totéž.
+    <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:10,padding:"10px 15px",fontSize:12.5,color:"#3066b0",marginBottom:16}}>
+      Název i emoji se ukládají, jakmile z pole odklikneš; přepnutím typu se kategorie přesune do druhého sloupce.
+      <strong> Sloučit</strong> přepíše všechny platby, pravidla i položky plánu na cílovou kategorii a tu původní smaže.
       Smazat jde jen kategorie, kterou nic nepoužívá.
     </div>
 
-    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-      {radky.map(({k,s})=>{
-        const prazdna=!s.plateb&&!s.pravidel&&!s.vPlanu;
-        return <div key={k.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"9px 12px",opacity:prazdna?.62:1}}>
-          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <input style={{...poleStyl,width:52,textAlign:"center"}} defaultValue={k.emoji||""}
-              onBlur={e=>ulozPole(k,"emoji",e.target.value)}/>
-            <input style={{...poleStyl,flex:1,minWidth:170,fontWeight:700}} defaultValue={k.nazev}
-              onBlur={e=>e.target.value.trim()&&ulozPole(k,"nazev",e.target.value.trim())}/>
-            <select style={{...poleStyl,width:100}} defaultValue={k.typ}
-              onChange={e=>ulozPole(k,"typ",e.target.value)}>
-              <option value="vydaj">Výdaj</option><option value="prijem">Příjem</option>
-            </select>
-            <div style={{textAlign:"right",minWidth:150,fontSize:11.5,color:C.muted}}>
-              {prazdna
-                ? <span style={{color:C.orange}}>nic ji nepoužívá</span>
-                : <>
-                    <strong style={{color:C.text,fontSize:13}}>{kc0(s.suma)}</strong>
-                    <div>{s.plateb}× · {s.pravidel} pravidel{s.vPlanu?` · ${s.vPlanu} v plánu`:""}</div>
-                  </>}
-            </div>
-            <button onClick={()=>setSlucuje(slucuje?.id===k.id?null:{id:k.id,cil:""})}
-              style={{...btnC(C.accent,true),fontSize:11,padding:"4px 10px"}}>Sloučit</button>
-            <button onClick={()=>smaz(k)} disabled={!prazdna} title={prazdna?"Smazat":"Nejdřív ji sluč do jiné"}
-              style={{...btnC(C.muted,true),fontSize:11,padding:"4px 10px",opacity:prazdna?1:.4}}>Smazat</button>
-          </div>
-
-          {slucuje?.id===k.id&&<div style={{display:"flex",gap:8,alignItems:"center",marginTop:9,paddingTop:9,borderTop:`1px solid ${C.border}`,flexWrap:"wrap"}}>
-            <span style={{fontSize:12,color:C.muted}}>Přesunout „{k.nazev}" do:</span>
-            <select style={{...poleStyl,maxWidth:260}} value={slucuje.cil} onChange={e=>setSlucuje({...slucuje,cil:e.target.value})}>
-              <option value="">— vyber kategorii —</option>
-              {radky.filter(r=>String(r.k.id)!==String(k.id)).map(r=>
-                <option key={r.k.id} value={r.k.id}>{r.k.emoji||"🏷"} {r.k.nazev}{r.s.plateb?` (${r.s.plateb}×)`:""}</option>)}
-            </select>
-            <button onClick={()=>sluc(k,slucuje.cil)} disabled={!slucuje.cil||pracuje}
-              style={{...btnC(),fontSize:12,padding:"5px 12px"}}>{pracuje?"Slučuji…":"Sloučit"}</button>
-            <button onClick={()=>setSlucuje(null)} style={{...btnC(C.muted,true),fontSize:12,padding:"5px 12px"}}>Zrušit</button>
-          </div>}
-        </div>;
-      })}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(330px,1fr))",gap:16,alignItems:"start"}}>
+      {sloupce.map(sl=><div key={sl.klic}>
+        <div style={{fontSize:13,fontWeight:800,color:sl.barva,marginBottom:9,paddingBottom:6,borderBottom:`2px solid ${sl.barva}33`}}>
+          {sl.nadpis} <span style={{color:C.dim,fontWeight:600}}>({sl.radky.length})</span>
+        </div>
+        {sl.radky.length===0&&<div style={{fontSize:12.5,color:C.dim,padding:"6px 2px"}}>
+          {sl.klic==="prazdne"?"Všechny kategorie se používají.":"Zatím žádná."}
+        </div>}
+        {sl.radky.map(karta)}
+      </div>)}
     </div>
 
     {novaKat&&<Modal title="Nová kategorie" onClose={()=>setNovaKat(null)} width={380}>
@@ -3511,7 +3539,10 @@ function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,upr
   const prijem=+t.castka>0;
   return <div style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"6px 0",borderTop:`1px solid ${C.bg}`,opacity:prevod?.55:1}}>
     <div style={{flex:1,minWidth:0}}>
-      <div>{new Date(t.datum).toLocaleDateString("cs-CZ")} · <span style={{color:C.muted}}>{uctyMap[t.ucet_id]||"?"}</span></div>
+      <div>{new Date(t.datum).toLocaleDateString("cs-CZ")} · <span style={{color:C.muted}}>{uctyMap[t.ucet_id]||"?"}</span>
+        {t.prevod_ucet_id&&uctyMap[t.prevod_ucet_id]&&
+          <span style={{color:C.accent,fontWeight:700}}> {+t.castka<0?"→":"←"} {uctyMap[t.prevod_ucet_id]}</span>}
+      </div>
       <div style={{fontSize:11,color:C.dim}}>
         {t.vs?<span style={{color:C.accent,fontWeight:700}}>VS {t.vs} · </span>:null}
         {(t.popis||"").slice(0,110)}
@@ -3556,10 +3587,11 @@ function Radek({t,uctyMap,katMap,projMap,kategorie,projekty,deti,auta,uklada,upr
 
 function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   const {data:trans,loading,reload:reloadTrans}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
-    .select("id,datum,castka,typ,popis,poznamka,protistrana,vs,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id")
+    .select("id,datum,castka,typ,popis,poznamka,protistrana,vs,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id,prevod_ucet_id")
     .eq("zdroj","import").order("datum").range(od,do_)));
   const [rozpad,setRozpad]=useState(null);   // {titulek, polozky}
   const [obdobi,setObdobi]=useState(null);   // null = výchozí (poslední dokončený měsíc)
+  const [ucetFiltr,setUcetFiltr]=useState("");  // "" = všechny účty dohromady
   const {data:stavy,loading:ls}=useData(()=>nactiVse((od,do_)=>sb.from("fin_stavy").select("*").gte("rok",2025).order("rok").range(od,do_)));
   const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("app_nastaveni").select("*").eq("klic","fin_hotovostni_prijem"));
   const [hotEdit,setHotEdit]=useState(null);
@@ -3621,33 +3653,53 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     const a=new Date(od), b=new Date(do_);
     return Math.max(1,(b.getFullYear()-a.getFullYear())*12+(b.getMonth()-a.getMonth())+1);
   };
-  let vybrane, delitel, nMesicu, popisObdobi, prumer=false;
+  let vybrane, vybraneVse, delitel, nMesicu, popisObdobi, prumer=false;
+  // vsePohyby drží i převody — potřebné, jakmile se kouká na jeden účet.
   if(ob.rezim==="prumer"){
     prumer=true;
-    vybrane=pohyby.filter(t=>hotoveMesice.includes(String(t.datum).slice(0,7)));
+    const vObdobi=m=>hotoveMesice.includes(m);
+    vybrane   =pohyby.filter(t=>vObdobi(String(t.datum).slice(0,7)));
+    vybraneVse=(trans||[]).filter(t=>vObdobi(String(t.datum).slice(0,7)));
     nMesicu=delitel=hotoveMesice.length||1;
     popisObdobi=hotoveMesice.length
       ? `Průměr z ${nMesicu} dokončených měsíců (${nazevMesice(hotoveMesice[0])} – ${nazevMesice(hotoveMesice[hotoveMesice.length-1])}). Rozdělaný měsíc se nepočítá, aby průměr nelhal.`
       : "Zatím není dokončený žádný měsíc.";
   }else if(ob.rezim==="rozsah"){
-    vybrane=pohyby.filter(t=>String(t.datum)>=ob.od&&String(t.datum)<=ob.do);
+    const vObdobi=t=>String(t.datum)>=ob.od&&String(t.datum)<=ob.do;
+    vybrane   =pohyby.filter(vObdobi);
+    vybraneVse=(trans||[]).filter(vObdobi);
     nMesicu=pocetMesicuMezi(ob.od,ob.do); delitel=1;
     popisObdobi=`Součet za ${new Date(ob.od).toLocaleDateString("cs-CZ")} – ${new Date(ob.do).toLocaleDateString("cs-CZ")} (${nMesicu} ${nMesicu===1?"měsíc":nMesicu<5?"měsíce":"měsíců"}).`;
   }else{
-    vybrane=pohyby.filter(t=>String(t.datum).slice(0,7)===ob.mesic);
+    const vObdobi=t=>String(t.datum).slice(0,7)===ob.mesic;
+    vybrane   =pohyby.filter(vObdobi);
+    vybraneVse=(trans||[]).filter(vObdobi);
     nMesicu=delitel=1;
     popisObdobi=`${nazevMesice(ob.mesic)}${hotoveMesice.includes(ob.mesic)?"":" — pozor, za tenhle měsíc nemáš výpisy ze všech účtů"}.`;
   }
   const n=delitel;                       // dělitel pro průměry ve sloupcích níž
-  const vHotovych=vybrane;
+  const vHotovych=ucetFiltr
+    ? vybraneVse.filter(t=>String(t.ucet_id)===String(ucetFiltr))
+    : vybrane;
   const naMesic=x=>x*delitel/nMesicu;    // převod na měsíční tempo (kvůli dojezdu)
   const zaObdobi=prumer?" měsíčně":"";
 
-  const firemni =vHotovych.filter(t=>podnik.has(t.ucet_id));
+  // U jednoho účtu je převod skutečný pohyb — Airbanka o ty peníze přijde,
+  // KB je dostane. V součtu za všechny účty se ale musí vyhodit, jinak by
+  // narostl příjem i výdaj o částku, která nikdy nepřišla ani neodešla.
+  const jedenUcet=ucetFiltr?uctyMap[ucetFiltr]:null;
+  const prevody =jedenUcet?vHotovych.filter(t=>t.typ==="prevod"||t.prevod_ucet_id):[];
+  const prevodyNetto=prevody.reduce((a,t)=>a+(+t.castka||0),0);
+  const prevodySem  =prevody.reduce((a,t)=>a+(+t.castka>0?+t.castka:0),0);
+  const prevodyPryc =prevody.reduce((a,t)=>a+(+t.castka<0?-+t.castka:0),0);
+
+  // Do příjmů a výdajů jdou jen skutečné toky ven a dovnitř — nikdy převody.
+  const bezPrevodu=vHotovych.filter(t=>!(t.typ==="prevod"||t.prevod_ucet_id));
+  const firemni =bezPrevodu.filter(t=>podnik.has(t.ucet_id));
   const soucet=(xs,f)=>xs.reduce((a,t)=>a+(f(t)?Math.abs(+t.castka):0),0);
-  const prijmy  =soucet(vHotovych,t=>+t.castka>0);
-  const zavazky =soucet(vHotovych,t=>+t.castka<0&&t.projekt_id);
-  const zbytek  =soucet(vHotovych,t=>+t.castka<0&&!t.projekt_id);
+  const prijmy  =soucet(bezPrevodu,t=>+t.castka>0);
+  const zavazky =soucet(bezPrevodu,t=>+t.castka<0&&t.projekt_id);
+  const zbytek  =soucet(bezPrevodu,t=>+t.castka<0&&!t.projekt_id);
   const bizIn   =soucet(firemni,  t=>+t.castka>0);     // jen pro informaci
   // Hotovostní příjem je zadaný jako měsíční, takže se natáhne na délku období.
   const hotovostZaObdobi=hotovostniPrijem*nMesicu/delitel;
@@ -3661,6 +3713,22 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     const s=(stavy||[]).filter(x=>x.ucet_id===u.id).sort((a,b)=>b.rok-a.rok||b.mesic-a.mesic)[0];
     return s?+s.stav:0;
   };
+  // Kontrola u jednoho účtu: počáteční zůstatek plus všechno, co se za měsíc
+  // stalo, se musí rovnat konečnému zůstatku z výpisu. Když ne, něco chybí.
+  const stavUctu=(uid,rok,mesic)=>{
+    const x=(stavy||[]).find(y=>String(y.ucet_id)===String(uid)&&y.rok===rok&&y.mesic===mesic);
+    return x?+x.stav:null;
+  };
+  const kontrola=(()=>{
+    if(!jedenUcet||ob.rezim!=="mesic")return null;
+    const [r,m]=ob.mesic.split("-").map(Number);
+    const pred=m===1?[r-1,12]:[r,m-1];
+    const s0=stavUctu(ucetFiltr,pred[0],pred[1]), s1=stavUctu(ucetFiltr,r,m);
+    if(s0==null||s1==null)return {chybi:true,s0,s1};
+    const spocteno=s0+prijmy-zavazky-zbytek+prevodyNetto;
+    return {s0,s1,spocteno,rozdil:spocteno-s1,sedi:Math.abs(spocteno-s1)<1.5};
+  })();
+
   const likvidni=(ucty||[]).filter(u=>["finance","hotovost","podnikani"].includes(u.skupina||"finance"));
   const likvidita=likvidni.reduce((a,u)=>a+posledniStav(u),0);
   // Dojezd má smysl počítat, jen když je schodek dost velký na to, aby nebyl
@@ -3681,13 +3749,13 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     }
     return out;
   })();
-  const bezKategorie=soucet(vHotovych,t=>+t.castka<0&&!t.projekt_id&&!t.kategorie_id);
+  const bezKategorie=soucet(bezPrevodu,t=>+t.castka<0&&!t.projekt_id&&!t.kategorie_id);
   const podilNezarazenych=zbytek?bezKategorie/zbytek:0;
 
   // Kam to teče — průměr na měsíc podle kategorie a podle toho, koho se to týká.
   const podle=(klic,nazev)=>{
     const m=new Map();
-    for(const t of vHotovych){
+    for(const t of bezPrevodu){
       if(+t.castka>=0||t.projekt_id)continue;
       const k=klic(t);
       if(!m.has(k))m.set(k,{suma:0,polozky:[]});
@@ -3704,7 +3772,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   const projMap=Object.fromEntries((projekty||[]).map(p=>[String(p.id),p]));
   const dleProjektu=(()=>{
     const m=new Map();
-    for(const t of vHotovych){
+    for(const t of bezPrevodu){
       if(+t.castka>=0||!t.projekt_id)continue;
       const k=String(t.projekt_id);
       if(!m.has(k))m.set(k,{suma:0,polozky:[]});
@@ -3777,12 +3845,23 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
         <input type="date" value={ob.do} min={ob.od} onChange={e=>setObdobi({...ob,do:e.target.value})}
           style={{...inp,width:"auto",fontSize:12,padding:"5px 8px"}}/>
       </>}
+      <span style={{fontSize:12,fontWeight:700,color:C.muted,marginLeft:6}}>Účet:</span>
+      <select style={{...inp,width:"auto",fontSize:12,padding:"5px 10px"}}
+        value={ucetFiltr} onChange={e=>setUcetFiltr(e.target.value)}>
+        <option value="">Všechny účty dohromady</option>
+        {(ucty||[]).filter(u=>mesiceUctu.has(u.id)).map(u=>
+          <option key={u.id} value={u.id}>{u.nazev}</option>)}
+      </select>
       {ob.rezim!=="prumer"&&hotoveMesice.length>1&&
         <button onClick={()=>setObdobi({rezim:"prumer"})} style={{...btnC(C.muted,true),fontSize:11,padding:"4px 10px"}}>
           porovnat s průměrem
         </button>}
     </div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:12}}>{popisObdobi}</div>
+    <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
+      {jedenUcet?<><strong style={{color:C.text}}>{jedenUcet.nazev}</strong> · </>:null}
+      {popisObdobi}
+      {jedenUcet?" U jednoho účtu se přesuny mezi tvými účty počítají — na zůstatek mají vliv.":null}
+    </div>
 
     {(chybejiciMesice.length>0||neuplneMesice.length>0||podilNezarazenych>0.3||!hotovostniPrijem)&&
       <div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:12,color:"#9a5b00"}}>
@@ -3805,19 +3884,48 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
         </div>}
       </div>}
 
-    <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
+    {jedenUcet&&<div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
+      {karta("Přišlo"+zaObdobi,mPrijmy,C.green,"od cizích, bez přesunů mezi tvými účty",
+        bezPrevodu.filter(t=>+t.castka>0))}
+      {karta("Odešlo"+zaObdobi,mZavazky+mZbytek,C.red,"cizím, bez přesunů mezi tvými účty",
+        bezPrevodu.filter(t=>+t.castka<0))}
+      {karta("Přesuny mezi mými účty",prevodyNetto/n,prevodyNetto>=0?C.accent:C.orange,
+        `${kc0(prevodySem/n)} sem · ${kc0(prevodyPryc/n)} pryč`,prevody.length?prevody:null)}
+      {karta("Změna zůstatku"+zaObdobi,(prijmy-zavazky-zbytek+prevodyNetto)/n,
+        (prijmy-zavazky-zbytek+prevodyNetto)>=0?C.green:C.red,
+        kontrola&&!kontrola.chybi?`${kc0(kontrola.s0)} → ${kc0(kontrola.s1)}`:"podle pohybů ve výpisu")}
+    </div>}
+
+    {jedenUcet&&kontrola&&<div style={{background:kontrola.chybi?C.bg:(kontrola.sedi?"#f0f7ee":"#fdefef"),
+      border:`1px solid ${kontrola.chybi?C.border:(kontrola.sedi?"#8fc07f":"#e59a9a")}`,
+      borderRadius:12,padding:"12px 16px",marginBottom:16,fontSize:12.5}}>
+      {kontrola.chybi
+        ? <span style={{color:C.muted}}>Kontrolu proti zůstatku nejde spočítat — za tenhle nebo předchozí měsíc není u účtu zapsaný stav.</span>
+        : <>
+            <div style={{fontWeight:800,color:kontrola.sedi?"#3f7d33":"#b03030"}}>
+              {kc0(kontrola.s0)} + {kc0(prijmy)} − {kc0(zavazky+zbytek)} {prevodyNetto>=0?"+":"−"} {kc0(Math.abs(prevodyNetto))} = <strong>{kc0(kontrola.spocteno)}</strong>
+              {kontrola.sedi?" ✓ sedí se zůstatkem z výpisu":` ✗ výpis říká ${kc0(kontrola.s1)}`}
+            </div>
+            {!kontrola.sedi&&<div style={{fontSize:12,color:C.muted,marginTop:5}}>
+              Rozdíl {kc0(kontrola.rozdil)}. Buď v tomhle měsíci chybí část výpisu, nebo je špatně zapsaný
+              některý ze dvou zůstatků — u kreditní karty je to normální, ta jde od 14. do 14.
+            </div>}
+          </>}
+    </div>}
+
+    {!jedenUcet&&<div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
       {karta("Příjmy"+zaObdobi,mPrijmy+hotovostZaObdobi,C.green,
         [hotovostZaObdobi?`${kc0(hotovostZaObdobi)} hotově mimo účty`:null,
          bizIn?`${kc0(bizIn/n)} z podnikání`:null].filter(Boolean).join(" · ")||"jen to, co přišlo na účty",
-        vHotovych.filter(t=>+t.castka>0))}
+        bezPrevodu.filter(t=>+t.castka>0))}
       {karta("Povinné závazky"+zaObdobi,mZavazky,C.orange,"hypotéka, SJM, insolvence, auta",
-        vHotovych.filter(t=>+t.castka<0&&t.projekt_id))}
+        bezPrevodu.filter(t=>+t.castka<0&&t.projekt_id))}
       {karta("Zbývá na život"+zaObdobi,kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků")}
       {karta("Skutečně utrácíš"+zaObdobi,mZbytek,C.red,"všechno ostatní",
-        vHotovych.filter(t=>+t.castka<0&&!t.projekt_id))}
-    </div>
+        bezPrevodu.filter(t=>+t.castka<0&&!t.projekt_id))}
+    </div>}
 
-    <div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
+    {!jedenUcet&&<div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:800,color:rozdil>=0?"#3f7d33":"#b03030"}}>
         {!schodekVyrazny
           ? `Vycházíš zhruba na nulu — rozdíl ${kc0(rozdil)}${zaObdobi} je v šumu.`
@@ -3839,7 +3947,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
               {" "}<button onClick={()=>ulozHotovost(+hotEdit||0)} style={{...btnC(),fontSize:11,padding:"3px 10px"}}>Uložit</button>
               {" "}<button onClick={()=>setHotEdit(null)} style={{...btnC(C.muted,true),fontSize:11,padding:"3px 10px"}}>Zrušit</button></>}
       </div>
-    </div>
+    </div>}
 
     <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
       {sloupec("📁 Závazky a projekty"+zaObdobi,dleProjektu,C.orange)}
