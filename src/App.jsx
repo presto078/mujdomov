@@ -1979,7 +1979,7 @@ function NapovedaFormatu(){
   </div>;
 }
 
-function ImportVypisu({ucty,kategorie,projekty,deti,auta,onHotovo}){
+function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo}){
   const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*").order("priorita"));
   const {data:importy,reload:reloadImporty}=useData(()=>sb.from("fin_importy").select("*").order("created_at",{ascending:false}).limit(15));
   const [davky,setDavky]=useState([]);      // načtené výpisy čekající na uložení
@@ -2243,6 +2243,18 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,onHotovo}){
 
   const katNazev=id=>(kategorie||[]).find(k=>k.id===id)?.nazev||"";
 
+  // Projekt, který ještě neexistuje, se dá založit rovnou od platby — jinak by
+  // se kvůli němu musel opustit rozdělaný import a výpis nahrát znovu.
+  const novyProjekt=async(di,ri)=>{
+    const nazev=window.prompt("Název nového projektu:","");
+    if(!nazev||!nazev.trim())return;
+    const {data,error}=await sb.from("fin_projekty")
+      .insert({nazev:nazev.trim(),emoji:"📁",typ:"provoz",poradi:50}).select().single();
+    if(error){alert("Nepodařilo se založit: "+error.message);return;}
+    uprav(di,ri,{projekt_id:data.id});
+    reloadProjekty&&reloadProjekty();
+  };
+
   return <div>
     <div style={{display:"flex",gap:14,marginBottom:18,flexWrap:"wrap",alignItems:"flex-start"}}>
       <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"14px 18px",flex:"1 1 340px",textAlign:"left"}}>
@@ -2356,9 +2368,11 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,onHotovo}){
                   <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
                     {(projekty||[]).length>0&&
                       <select style={{...inp,padding:"2px 5px",fontSize:10.5,width:"auto",maxWidth:120}}
-                        value={r.projekt_id||""} onChange={e=>uprav(di,ri,{projekt_id:e.target.value?+e.target.value:null})}>
+                        value={r.projekt_id||""}
+                        onChange={e=>e.target.value==="__novy"?novyProjekt(di,ri):uprav(di,ri,{projekt_id:e.target.value?+e.target.value:null})}>
                         <option value="">— projekt —</option>
                         {(projekty||[]).map(x=><option key={x.id} value={x.id}>{x.emoji||"📁"} {x.nazev}</option>)}
+                        <option value="__novy">➕ nový projekt…</option>
                       </select>}
                     <SubjektSelect deti={deti} auta={auta}
                       value={r.subjekt_typ?`${r.subjekt_typ}|${r.subjekt_id||""}`:""}
@@ -4330,7 +4344,7 @@ function FinanceNoveTab(){
     </div>
     {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>}
     {zalozka==="projekty"&&<FinProjektyTab/>}
-    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
+    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadProjekty={reloadProjekty} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
     {zalozka==="pokryti"&&<PokrytiImportu ucty={ucty}/>}
     {zalozka==="majetek"&&<MajetekTab ucty={ucty} reloadUcty={reloadUcty}/>}
     {zalozka==="kategorie"&&<KategorieTab kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadPocet();}}/>}
