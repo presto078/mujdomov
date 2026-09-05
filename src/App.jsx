@@ -1903,8 +1903,10 @@ function navrhniZarazeni(radek,pravidla){
     subjekt_id  :subj?.subjekt_id||null,
     // Pravidlo může platbu rovnou přeznačit na převod — pro peníze, které
     // vypadají jako příjem, ale příjem nejsou (matka posílá zpátky hotovost,
-    // proplacení nákladu, který jsme za někoho zaplatili).
+    // proplacení nákladu, který jsme za někoho zaplatili) — a rovnou k němu
+    // přiřadit protiúčet u účtů, které vlastní číslo nemají (Portu, penzijko).
     typ_navrh   :sedi.find(p=>p.typ)?.typ||null,
+    prevod_navrh:sedi.find(p=>p.prevod_ucet_id)?.prevod_ucet_id||null,
   };
 }
 const navrhniKategorii=(radek,pravidla)=>navrhniZarazeni(radek,pravidla).kategorie_id;
@@ -2150,7 +2152,8 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
     }
     const rows=kVlozeni.map(r=>{
       const cizi=r.protiucet?ucetPodleCisla(r.protiucet):null;   // převod mezi vlastními účty
-      const interni=!!cizi||jeVlastniPresun(r)||r.typ_navrh==="prevod";
+      const protiucetZPravidla=!cizi&&r.prevod_navrh?r.prevod_navrh:null;
+      const interni=!!cizi||!!protiucetZPravidla||jeVlastniPresun(r)||r.typ_navrh==="prevod";
       return {
         ucet_id:davka.ucet_id,datum:r.datum,castka:r.castka,
         kategorie_id:r.kategorie_id||null,
@@ -2160,7 +2163,7 @@ function ImportVypisu({ucty,kategorie,onHotovo}){
         popis:[r.popis,r.poznamka].filter(Boolean).join(" · ").slice(0,300),
         protistrana:r.protiucet||null,
         typ:interni?"prevod":(r.castka>=0?"prijem":"vydaj"),
-        prevod_ucet_id:cizi?cizi.id:null,
+        prevod_ucet_id:cizi?cizi.id:protiucetZPravidla,
         banka_ref:r.klic,vs:r.vs||null,poznamka:r.poznamka||null,zdroj:"import",
       };
     });
