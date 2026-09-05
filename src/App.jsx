@@ -2462,6 +2462,7 @@ function KategorieTab({kategorie,reloadKategorie,onZmena}){
   const [slucuje,setSlucuje]=useState(null); // {id, cil}
   const [pracuje,setPracuje]=useState(false);
   const [novaKat,setNovaKat]=useState(null);
+  const [razeni,setRazeni]=useState("abeceda");   // "abeceda" | "objem"
 
   if(lt)return <Spinner/>;
 
@@ -2475,7 +2476,9 @@ function KategorieTab({kategorie,reloadKategorie,onZmena}){
     };
   };
   const radky=(kategorie||[]).map(k=>({k,s:statistiky(k.id)}))
-    .sort((a,b)=>b.s.suma-a.s.suma||a.k.nazev.localeCompare(b.k.nazev,"cs"));
+    .sort((a,b)=>razeni==="abeceda"
+      ? a.k.nazev.localeCompare(b.k.nazev,"cs")
+      : b.s.suma-a.s.suma||a.k.nazev.localeCompare(b.k.nazev,"cs"));
   const nepouzite=radky.filter(r=>!r.s.plateb&&!r.s.pravidel&&!r.s.vPlanu).length;
 
   const ulozPole=async(k,pole,hodnota)=>{
@@ -2586,6 +2589,12 @@ function KategorieTab({kategorie,reloadKategorie,onZmena}){
         {nepouzite>0&&<span style={{color:C.orange}}> · {nepouzite} nepoužitých</span>}
       </div>
       <button onClick={()=>setNovaKat({nazev:"",typ:"vydaj",emoji:"🏷"})} style={{...btnC(C.green,true),fontSize:13,padding:"6px 14px"}}>+ Nová kategorie</button>
+      <div style={{display:"flex",gap:4,alignItems:"center",marginLeft:"auto"}}>
+        <span style={{fontSize:12.5,color:C.muted,marginRight:3}}>Řadit:</span>
+        {[{k:"abeceda",l:"podle abecedy"},{k:"objem",l:"podle objemu"}].map(o=>
+          <button key={o.k} onClick={()=>setRazeni(o.k)}
+            style={{...btnC(razeni===o.k?C.accent:C.muted,razeni!==o.k),fontSize:12,padding:"5px 11px"}}>{o.l}</button>)}
+      </div>
     </div>
 
     <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:10,padding:"10px 15px",fontSize:12.5,color:"#3066b0",marginBottom:16}}>
