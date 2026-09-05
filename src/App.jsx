@@ -1025,6 +1025,20 @@ function ObleceniTab(){
   const [vybratM,setVybratM]=useState(false);
   const [newVelId,setNewVelId]=useState("");
   const [fixRunning,setFixRunning]=useState(false);
+  const [stitekKontejner,setStitekKontejner]=useState(null);
+
+  useEffect(()=>{
+    if(!stitekKontejner)return;
+    const t=setTimeout(()=>window.print(),50);
+    return ()=>clearTimeout(t);
+  },[stitekKontejner]);
+
+  useEffect(()=>{
+    const onAfterPrint=()=>setStitekKontejner(null);
+    window.addEventListener("afterprint",onAfterPrint);
+    return ()=>window.removeEventListener("afterprint",onAfterPrint);
+  },[]);
+
   const reloadAll=()=>{reloadVel();reloadKonts();reloadPol();};
   const spustFix=async()=>{setFixRunning(true);await fixDuplicatePolozky();reloadAll();setFixRunning(false);};
 
@@ -1103,7 +1117,21 @@ function ObleceniTab(){
   if(loading)return <Spinner/>;
 
   return <div>
-    <style>{`.oblcell:hover{background:#e8eeff!important}`}</style>
+    <style>{`.oblcell:hover{background:#e8eeff!important}
+@media print{
+  body *{visibility:hidden}
+  .tisk-stitek,.tisk-stitek *{visibility:visible}
+  .tisk-stitek{position:absolute;top:0;left:0;width:100%}
+}`}</style>
+
+    {stitekKontejner&&<div className="tisk-stitek" style={{padding:"40px 30px",background:"#fff"}}>
+      <div style={{fontSize:72,fontWeight:800,textAlign:"center",marginBottom:40}}>{stitekKontejner.velikost}</div>
+      <div style={{fontSize:18}}>
+        {stitekKontejner.polozky.map(p=>(
+          <div key={p.id||p.nazev} style={{padding:"4px 0",borderBottom:"1px solid #ddd"}}>{p.nazev}{p.pocet>1?` × ${p.pocet}`:""}</div>
+        ))}
+      </div>
+    </div>}
 
     {/* Hlavička */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
@@ -1211,6 +1239,7 @@ function ObleceniTab(){
                 <div style={{color:C.dim,fontSize:12}}>{[k.umisteni,st.label].filter(Boolean).join(" · ")} · {pocetKs} ks</div>
               </div>
               <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
+                <button onClick={()=>setStitekKontejner({velikost:k.velikost_id,polozky:(vsechnyPolDedup||[]).filter(p=>p.kontejner_id===k.id&&p.pocet>0).sort((a,b)=>a.nazev.localeCompare(b.nazev,"cs"))})} style={{...btnC(C.blue,true),padding:"4px 9px",fontSize:12}}>🖨 Tisk štítku</button>
                 <button onClick={()=>setEditKont(k)} style={{...btnC(C.muted,true),padding:"4px 9px",fontSize:12}}>✎</button>
                 <button onClick={async()=>{if(!confirm(`Smazat "${k.nazev}"?`))return;await sb.from("vel_kontejnery").delete().eq("id",k.id);reloadAll();}} style={{...btnC(C.red,true),padding:"4px 9px",fontSize:12}}>✕</button>
               </div>
