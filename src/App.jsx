@@ -2002,6 +2002,9 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   const {data:importy,reload:reloadImporty}=useData(()=>sb.from("fin_importy").select("*").order("created_at",{ascending:false}).limit(400));
   const [fUcet,setFUcet]=useState("");     // filtr historie importů
   const [fMesic,setFMesic]=useState("");
+  // Jen datumy a účty — na zjištění, co chybí, víc netřeba.
+  const {data:pokryti}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
+    .select("ucet_id,datum").eq("zdroj","import").order("datum").range(od,do_)));
   const [davky,setDavky]=useState([]);      // načtené výpisy čekající na uložení
   const [stav,setStav]=useState("");
   const [uklada,setUklada]=useState(false);
@@ -2492,6 +2495,62 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
         </div>}
       </>}
     </div>)}
+
+    {(()=>{
+      // Co chybí doimportovat. Měsíc se považuje za nahraný, když v něm účet
+      // má aspoň jednu transakci. Účty, které se nehýbou, tím pádem vyjdou
+      // jako chybějící — proto se počítá až od prvního měsíce, kdy účet žije,
+      // a rozdělaný měsíc se nepočítá vůbec.
+      if(!pokryti||!pokryti.length)return null;
+      const ted=new Date();
+      const posledniHotovy=`${ted.getFullYear()}-${String(ted.getMonth()+1).padStart(2,"0")}`;
+      const predchozi=(()=>{const d=new Date(ted.getFullYear(),ted.getMonth()-1,1);
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;})();
+      const konec=new Date(ted.getFullYear(),ted.getMonth()+1,0).getDate()===ted.getDate()?posledniHotovy:predchozi;
+
+      const mesiceUctu=new Map();
+      for(const t of pokryti){
+        const k=String(t.ucet_id), m=String(t.datum).slice(0,7);
+        if(!mesiceUctu.has(k))mesiceUctu.set(k,new Set());
+        mesiceUctu.get(k).add(m);
+      }
+      const dalsiM=m=>{const [r,x]=m.split("-").map(Number);
+        return x===12?`${r+1}-01`:`${r}-${String(x+1).padStart(2,"0")}`;};
+
+      const chybi=[];
+      for(const u of (ucty||[])){
+        const s2=mesiceUctu.get(String(u.id));
+        if(!s2||!s2.size)continue;                 // účet se neimportuje vůbec
+        const ms=[...s2].sort();
+        const out=[];
+        for(let m=ms[0]; m<=konec; m=dalsiM(m)) if(!s2.has(m))out.push(m);
+        if(out.length)chybi.push({u,mesice:out,posledni:ms[ms.length-1]});
+      }
+      const vporadku=[...mesiceUctu.keys()].length-chybi.length;
+      if(!chybi.length)return <div style={{background:"#f0f7ee",border:"1px solid #8fc07f",borderRadius:12,
+        padding:"12px 16px",marginTop:18,fontSize:12.5,color:"#3f7d33",fontWeight:700}}>
+        ✓ Všechny sledované účty mají nahráno až do {konec}.
+      </div>;
+      return <div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"13px 16px",marginTop:18}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#9a5b00",marginBottom:8}}>
+          📋 Chybí doimportovat — {chybi.length} {chybi.length===1?"účet":chybi.length<5?"účty":"účtů"}
+          {vporadku>0&&<span style={{fontWeight:400,color:"#a8763a"}}> · {vporadku} má nahráno vše</span>}
+        </div>
+        {chybi.sort((a,b)=>b.mesice.length-a.mesice.length).map(({u,mesice,posledni})=>
+          <div key={u.id} style={{display:"flex",gap:8,alignItems:"baseline",flexWrap:"wrap",padding:"4px 0",fontSize:12.5}}>
+            <strong style={{minWidth:170,color:"#7a4a00"}}>{u.nazev}</strong>
+            <span style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+              {mesice.map(m=><span key={m} style={{background:"#fff",border:"1px solid #f0c98a",
+                borderRadius:6,padding:"1px 7px",color:"#9a5b00",fontWeight:700,fontSize:11.5}}>{m}</span>)}
+            </span>
+            <span style={{fontSize:11,color:"#a8763a"}}>naposled {posledni}</span>
+          </div>)}
+        <div style={{fontSize:11.5,color:"#a8763a",marginTop:8}}>
+          Měsíc se počítá jako nahraný, když v něm účet má aspoň jednu transakci. Když se účet
+          v tom měsíci opravdu nehýbal, klidně to ignoruj. Rozdělaný měsíc se nezapočítává.
+        </div>
+      </div>;
+    })()}
 
     {(importy||[]).length>0&&<>
       {(()=>{
