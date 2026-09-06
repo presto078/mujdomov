@@ -3443,14 +3443,9 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
               })()}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-              <select style={{...inp,fontSize:12,padding:"5px 8px",minWidth:170}} value={volba[s.klic]||""} onChange={e=>{
-                if(e.target.value==="__nova"){setNovaKat({nazev:s.klic,typ:prijmy?"prijem":"vydaj",emoji:"🏷",proSkupinu:s.klic});return;}
-                setVolba(v=>({...v,[s.klic]:e.target.value}));
-              }}>
-                <option value="">— vyber kategorii —</option>
-                {(kategorie||[]).filter(k=>prijmy?k.typ==="prijem":true).map(k=><option key={k.id} value={k.id}>{k.emoji||""} {k.nazev}</option>)}
-                <option value="__nova">➕ nová kategorie…</option>
-              </select>
+              <VyberKategorie hodnota={volba[s.klic]} kategorie={kategorie} prijem={prijmy} sirka={220}
+                onVyber={id=>setVolba(v=>({...v,[s.klic]:id||""}))}
+                onNova={nazev=>setNovaKat({nazev,typ:prijmy?"prijem":"vydaj",emoji:"🏷",proSkupinu:s.klic})}/>
               <select style={{...inp,fontSize:12,padding:"5px 8px",minWidth:150}} value={volbaProj[s.klic]||""} onChange={e=>setVolbaProj(v=>({...v,[s.klic]:e.target.value}))}>
                 <option value="">— projekt —</option>
                 {(projekty||[]).map(p=><option key={p.id} value={p.id}>{p.emoji||"📁"} {p.nazev}</option>)}
