@@ -2033,6 +2033,64 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
     }catch(e){/* přeplněné úložiště — jede se dál bez odkládání */}
   },[davky]);
 
+  // Panel „co chybí doimportovat" — patří vedle nápovědy, ne až pod výpisy;
+  // je to první věc, kterou chce člověk vědět, když otevře Import.
+  const panelChybi=(()=>{
+      // Co chybí doimportovat. Měsíc se považuje za nahraný, když v něm účet
+      // má aspoň jednu transakci. Účty, které se nehýbou, tím pádem vyjdou
+      // jako chybějící — proto se počítá až od prvního měsíce, kdy účet žije,
+      // a rozdělaný měsíc se nepočítá vůbec.
+      if(!pokryti||!pokryti.length)return null;
+      const ted=new Date();
+      const posledniHotovy=`${ted.getFullYear()}-${String(ted.getMonth()+1).padStart(2,"0")}`;
+      const predchozi=(()=>{const d=new Date(ted.getFullYear(),ted.getMonth()-1,1);
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;})();
+      const konec=new Date(ted.getFullYear(),ted.getMonth()+1,0).getDate()===ted.getDate()?posledniHotovy:predchozi;
+
+      const mesiceUctu=new Map();
+      for(const t of pokryti){
+        const k=String(t.ucet_id), m=String(t.datum).slice(0,7);
+        if(!mesiceUctu.has(k))mesiceUctu.set(k,new Set());
+        mesiceUctu.get(k).add(m);
+      }
+      const dalsiM=m=>{const [r,x]=m.split("-").map(Number);
+        return x===12?`${r+1}-01`:`${r}-${String(x+1).padStart(2,"0")}`;};
+
+      const chybi=[];
+      for(const u of (ucty||[])){
+        const s2=mesiceUctu.get(String(u.id));
+        if(!s2||!s2.size)continue;                 // účet se neimportuje vůbec
+        const ms=[...s2].sort();
+        const out=[];
+        for(let m=ms[0]; m<=konec; m=dalsiM(m)) if(!s2.has(m))out.push(m);
+        if(out.length)chybi.push({u,mesice:out,posledni:ms[ms.length-1]});
+      }
+      const vporadku=[...mesiceUctu.keys()].length-chybi.length;
+      if(!chybi.length)return <div style={{background:"#f0f7ee",border:"1px solid #8fc07f",borderRadius:12,
+        padding:"12px 16px",marginTop:18,fontSize:12.5,color:"#3f7d33",fontWeight:700}}>
+        ✓ Všechny sledované účty mají nahráno až do {konec}.
+      </div>;
+      return <div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"13px 16px"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#9a5b00",marginBottom:8}}>
+          📋 Chybí doimportovat — {chybi.length} {chybi.length===1?"účet":chybi.length<5?"účty":"účtů"}
+          {vporadku>0&&<span style={{fontWeight:400,color:"#a8763a"}}> · {vporadku} má nahráno vše</span>}
+        </div>
+        {chybi.sort((a,b)=>b.mesice.length-a.mesice.length).map(({u,mesice,posledni})=>
+          <div key={u.id} style={{display:"flex",gap:8,alignItems:"baseline",flexWrap:"wrap",padding:"3px 0",fontSize:12.5}}>
+            <strong style={{flex:"1 1 140px",color:"#7a4a00"}}>{u.nazev}</strong>
+            <span style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+              {mesice.map(m=><span key={m} style={{background:"#fff",border:"1px solid #f0c98a",
+                borderRadius:6,padding:"1px 7px",color:"#9a5b00",fontWeight:700,fontSize:11.5}}>{m}</span>)}
+            </span>
+            <span style={{fontSize:11,color:"#a8763a"}}>naposled {posledni}</span>
+          </div>)}
+        <div style={{fontSize:11.5,color:"#a8763a",marginTop:8}}>
+          Měsíc se počítá jako nahraný, když v něm účet má aspoň jednu transakci. Když se účet
+          v tom měsíci opravdu nehýbal, klidně to ignoruj. Rozdělaný měsíc se nezapočítává.
+        </div>
+      </div>;
+    })();
+
   const zahodVse=()=>{
     if(!confirm(`Zahodit ${davky.length} rozdělaných výpisů? Nic se neuloží do databáze, budeš je muset nahrát znovu.`))return;
     setDavky([]);setObnoveno(null);
@@ -2363,7 +2421,8 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
       onHotovo={(pocet,vzor)=>{setPravidloModal(null);reloadPravidla();
         alert(`Pravidlo „${vzor}" uloženo — sedí na ${pocet} plateb v databázi a příští importy zařadí samo.`);}}/>}
     <div style={{display:"flex",gap:14,marginBottom:18,flexWrap:"wrap",alignItems:"flex-start"}}>
-      <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"14px 18px",flex:"1 1 340px",textAlign:"left"}}>
+      <div style={{flex:"1 1 340px",display:"flex",flexDirection:"column",gap:14,minWidth:0}}>
+      <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"14px 18px",textAlign:"left"}}>
         <div style={{fontSize:13,fontWeight:800,color:"#1a4fa8",marginBottom:6}}>📥 Načíst výpis z banky</div>
         <div style={{fontSize:12,color:"#3066b0",marginBottom:12,lineHeight:1.5}}>
           Můžeš vybrat víc souborů najednou, klidně z různých bank.
@@ -2376,6 +2435,8 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
           </label>
           {stav&&<span style={{marginLeft:12,fontSize:12,fontWeight:700,color:"#1a4fa8"}}>{stav}</span>}
         </div>
+      </div>
+      {panelChybi}
       </div>
       <NapovedaFormatu/>
     </div>
@@ -2562,62 +2623,6 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
         </div>}
       </>}
     </div>)}
-
-    {(()=>{
-      // Co chybí doimportovat. Měsíc se považuje za nahraný, když v něm účet
-      // má aspoň jednu transakci. Účty, které se nehýbou, tím pádem vyjdou
-      // jako chybějící — proto se počítá až od prvního měsíce, kdy účet žije,
-      // a rozdělaný měsíc se nepočítá vůbec.
-      if(!pokryti||!pokryti.length)return null;
-      const ted=new Date();
-      const posledniHotovy=`${ted.getFullYear()}-${String(ted.getMonth()+1).padStart(2,"0")}`;
-      const predchozi=(()=>{const d=new Date(ted.getFullYear(),ted.getMonth()-1,1);
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;})();
-      const konec=new Date(ted.getFullYear(),ted.getMonth()+1,0).getDate()===ted.getDate()?posledniHotovy:predchozi;
-
-      const mesiceUctu=new Map();
-      for(const t of pokryti){
-        const k=String(t.ucet_id), m=String(t.datum).slice(0,7);
-        if(!mesiceUctu.has(k))mesiceUctu.set(k,new Set());
-        mesiceUctu.get(k).add(m);
-      }
-      const dalsiM=m=>{const [r,x]=m.split("-").map(Number);
-        return x===12?`${r+1}-01`:`${r}-${String(x+1).padStart(2,"0")}`;};
-
-      const chybi=[];
-      for(const u of (ucty||[])){
-        const s2=mesiceUctu.get(String(u.id));
-        if(!s2||!s2.size)continue;                 // účet se neimportuje vůbec
-        const ms=[...s2].sort();
-        const out=[];
-        for(let m=ms[0]; m<=konec; m=dalsiM(m)) if(!s2.has(m))out.push(m);
-        if(out.length)chybi.push({u,mesice:out,posledni:ms[ms.length-1]});
-      }
-      const vporadku=[...mesiceUctu.keys()].length-chybi.length;
-      if(!chybi.length)return <div style={{background:"#f0f7ee",border:"1px solid #8fc07f",borderRadius:12,
-        padding:"12px 16px",marginTop:18,fontSize:12.5,color:"#3f7d33",fontWeight:700}}>
-        ✓ Všechny sledované účty mají nahráno až do {konec}.
-      </div>;
-      return <div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"13px 16px",marginTop:18}}>
-        <div style={{fontSize:13,fontWeight:800,color:"#9a5b00",marginBottom:8}}>
-          📋 Chybí doimportovat — {chybi.length} {chybi.length===1?"účet":chybi.length<5?"účty":"účtů"}
-          {vporadku>0&&<span style={{fontWeight:400,color:"#a8763a"}}> · {vporadku} má nahráno vše</span>}
-        </div>
-        {chybi.sort((a,b)=>b.mesice.length-a.mesice.length).map(({u,mesice,posledni})=>
-          <div key={u.id} style={{display:"flex",gap:8,alignItems:"baseline",flexWrap:"wrap",padding:"4px 0",fontSize:12.5}}>
-            <strong style={{minWidth:170,color:"#7a4a00"}}>{u.nazev}</strong>
-            <span style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-              {mesice.map(m=><span key={m} style={{background:"#fff",border:"1px solid #f0c98a",
-                borderRadius:6,padding:"1px 7px",color:"#9a5b00",fontWeight:700,fontSize:11.5}}>{m}</span>)}
-            </span>
-            <span style={{fontSize:11,color:"#a8763a"}}>naposled {posledni}</span>
-          </div>)}
-        <div style={{fontSize:11.5,color:"#a8763a",marginTop:8}}>
-          Měsíc se počítá jako nahraný, když v něm účet má aspoň jednu transakci. Když se účet
-          v tom měsíci opravdu nehýbal, klidně to ignoruj. Rozdělaný měsíc se nezapočítává.
-        </div>
-      </div>;
-    })()}
 
     {(importy||[]).length>0&&<>
       {(()=>{
