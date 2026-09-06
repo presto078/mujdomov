@@ -1886,6 +1886,8 @@ async function nactiVypis(file){
   return parseGpc(new TextDecoder("windows-1250").decode(buf));
 }
 
+const KLIC_ROZDELANY_IMPORT="domov.finance.rozdelanyImport";
+
 // ── Kategorizace podle pravidel ──────────────────────────────────────────────
 const bezDiakritiky=s=>String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase();
 // Pravidlo může nést kategorii, projekt i to, koho se platba týká. Každý rozměr
@@ -2008,6 +2010,33 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   const [davky,setDavky]=useState([]);      // načtené výpisy čekající na uložení
   const [stav,setStav]=useState("");
   const [uklada,setUklada]=useState(false);
+  const [obnoveno,setObnoveno]=useState(null);   // kdy byl rozdělaný import odložen
+
+  // ── Rozdělaný import přežije zavření okna ────────────────────────────────
+  // Načtený výpis jsou obyčejná data, takže se průběžně odkládají do
+  // prohlížeče. Zůstávají jen v tomhle počítači a jen do uložení do databáze;
+  // když je úložiště plné, draft se prostě neuloží a nic se nerozbije.
+  useEffect(()=>{
+    try{
+      const raw=localStorage.getItem(KLIC_ROZDELANY_IMPORT);
+      if(!raw)return;
+      const ulozene=JSON.parse(raw);
+      if(ulozene?.davky?.length){setDavky(ulozene.davky);setObnoveno(ulozene.kdy||null);}
+    }catch(e){/* poškozený nebo nedostupný draft se ignoruje */}
+  },[]);
+
+  useEffect(()=>{
+    try{
+      if(!davky.length){localStorage.removeItem(KLIC_ROZDELANY_IMPORT);return;}
+      localStorage.setItem(KLIC_ROZDELANY_IMPORT,
+        JSON.stringify({kdy:new Date().toISOString(),davky}));
+    }catch(e){/* přeplněné úložiště — jede se dál bez odkládání */}
+  },[davky]);
+
+  const zahodVse=()=>{
+    if(!confirm(`Zahodit ${davky.length} rozdělaných výpisů? Nic se neuloží do databáze, budeš je muset nahrát znovu.`))return;
+    setDavky([]);setObnoveno(null);
+  };
 
   // Čísla účtů chodí v různých tvarech: „4522946002/5500", „115-2728360227"
   // i „000000-0592521001/2010". Porovnává se tedy základ bez předčíslí a bez
@@ -2211,7 +2240,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
       pocet_novych:vlozeno,pocet_duplicit:davka.radky.filter(r=>r.duplicita).length,
       zustatek_konecny:v.zustatek_konecny??null});
     setDavky(d=>d.filter(x=>x!==davka));
-    setUklada(false);reloadImporty();onHotovo&&onHotovo();
+    setUklada(false);setJenChybi(false);setPustitBezKat(false);reloadImporty();onHotovo&&onHotovo();
     if(!tise)alert(`Uloženo ${vlozeno} transakcí.`);
     return vlozeno;
   };
@@ -2250,6 +2279,8 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   // i koho se platba týká. Prázdné se do pravidla nedává, ať nepřepíše
   // to, co určuje jiné, přesnější pravidlo.
   const [pravidloModal,setPravidloModal]=useState(null);
+  const [jenChybi,setJenChybi]=useState(false);   // v náhledu ukázat jen platby bez kategorie
+  const [pustitBezKat,setPustitBezKat]=useState(false);
   const otevriPravidlo=r=>{
     const cely=[r.popis,r.poznamka].filter(Boolean).join(" · ");
     const kandidati=[...new Set(cely.split(/\s·\s|\s—\s/).map(x=>x.trim())
@@ -2314,6 +2345,18 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   };
 
   return <div>
+    {obnoveno&&davky.length>0&&<div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,
+      padding:"11px 16px",marginBottom:14,fontSize:12.5,color:"#3066b0",display:"flex",
+      gap:12,alignItems:"center",flexWrap:"wrap"}}>
+      <span>
+        📌 Pokračuješ v rozdělaném importu — <strong>{davky.length} {davky.length===1?"výpis":davky.length<5?"výpisy":"výpisů"}</strong>,
+        naposled otevřený {new Date(obnoveno).toLocaleString("cs-CZ")}. Do databáze se zatím nic neuložilo.
+      </span>
+      <button onClick={zahodVse} style={{...btnC(C.muted,true),fontSize:11.5,padding:"4px 11px",marginLeft:"auto"}}>
+        Zahodit a začít znovu
+      </button>
+    </div>}
+
     {pravidloModal&&<PravidloModal {...pravidloModal} jenPravidlo
       onClose={()=>setPravidloModal(null)}
       onHotovo={(pocet,vzor)=>{setPravidloModal(null);reloadPravidla();
@@ -2401,7 +2444,9 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
               {["","Datum","Popis","Částka","Zařazení",""].map(h=><th key={h} style={{padding:"7px 8px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {b.radky.map((r,ri)=><tr key={ri} style={{borderBottom:`1px solid ${C.border}`,opacity:r.duplicita?.45:1,background:ri%2?"#fafbff":C.surface}}>
+              {b.radky.map((r,ri)=>({r,ri}))
+                .filter(({r})=>!jenChybi||(r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.kategorie_id))
+                .map(({r,ri})=><tr key={ri} style={{borderBottom:`1px solid ${C.border}`,opacity:r.duplicita?.45:1,background:ri%2?"#fafbff":C.surface}}>
                 <td style={{padding:"6px 8px"}}>
                   <input type="checkbox" checked={r.vybrano&&!r.duplicita} disabled={r.duplicita} onChange={e=>uprav(di,ri,{vybrano:e.target.checked})}/>
                 </td>
@@ -2478,6 +2523,11 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
             převodů <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&prevodNahled(r)).length}</strong> ·
             bez kategorie <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.kategorie_id).length}</strong> ·
             bez určení koho se týká <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.subjekt_typ).length}</strong>
+            {b.radky.some(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.kategorie_id)&&
+              <> · <label style={{cursor:"pointer",color:C.accent,fontWeight:700}}>
+                <input type="checkbox" checked={jenChybi} onChange={e=>setJenChybi(e.target.checked)}
+                  style={{marginRight:4,verticalAlign:"-1px"}}/>ukázat jen ty bez kategorie
+              </label></>}
             {b.radky.some(r=>r.kolize&&!r.duplicita)&&<> · nahradí ručních <strong style={{color:"#c87000"}}>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&r.kolize&&r.smazatKolizi).length}</strong></>}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -2485,7 +2535,23 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
               <button onClick={()=>doplnUdaje(b)} disabled={uklada} style={btnC("#7a5af5",true)}>
                 Doplnit údaje u {b.radky.filter(r=>r.doplnit).length} už uložených
               </button>}
-            <button onClick={()=>uloz(b)} disabled={uklada||!b.ucet_id} style={btnC()}>{uklada?"Ukládám…":"Uložit do databáze"}</button>
+            {(()=>{
+              // Uložit se dá, až když má každá platba kategorii. Doplnit ji
+              // teď je otázka minuty; dohledávat ji za půl roku zpětně je práce.
+              const chybi=b.radky.filter(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.kategorie_id).length;
+              const blokovano=chybi>0&&!pustitBezKat;
+              return <>
+                <button onClick={()=>uloz(b)} disabled={uklada||!b.ucet_id||blokovano}
+                  title={blokovano?`${chybi} plateb nemá kategorii`:""}
+                  style={{...btnC(),opacity:blokovano?.45:1,cursor:blokovano?"not-allowed":"pointer"}}>
+                  {uklada?"Ukládám…":blokovano?`Chybí kategorie u ${chybi} plateb`:"Uložit do databáze"}
+                </button>
+                {chybi>0&&!pustitBezKat&&
+                  <button onClick={()=>setPustitBezKat(true)}
+                    title="Když se u některé platby opravdu nedá rozhodnout"
+                    style={{...btnC(C.muted,true),fontSize:11.5,padding:"6px 11px"}}>uložit i tak</button>}
+              </>;
+            })()}
           </div>
         </div>
         {b.radky.some(r=>r.doplnit)&&<div style={{fontSize:11,color:"#5b3fd0",background:"#f2effe",border:"1px solid #cfc4f8",borderRadius:8,padding:"8px 12px",marginTop:8}}>
