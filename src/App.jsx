@@ -3271,12 +3271,13 @@ function KategorieTab({kategorie,reloadKategorie,onZmena}){
   </div>;
 }
 
-function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie}){
+function ZarazeniTransakci({ucty,kategorie,projekty,deti,auta,onZmena,reloadKategorie}){
   const {data:transakce,loading,reload}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
     .select("id,datum,castka,popis,poznamka,protistrana,kategorie_id,projekt_id,subjekt_typ,subjekt_id,typ,ucet_id")
     .eq("zdroj","import").order("datum",{ascending:false}).range(od,do_)));
   const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*"));
   const [filtr,setFiltr]=useState("bezKat");   // bezKat | bezSubj | nedodelane | vse
+  const [rozbalene,setRozbalene]=useState({});  // klíč skupiny → rozbalený seznam plateb
   const [volba,setVolba]=useState({});        // klíč skupiny → kategorie_id
   const [volbaProj,setVolbaProj]=useState({}); // klíč skupiny → projekt_id
   const [volbaSubj,setVolbaSubj]=useState({}); // klíč skupiny → "typ|id"
@@ -3448,6 +3449,8 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
               })()}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              {/* Skupina je jen souhrn — u neznámého obchodníka je potřeba vidět
+                  jednotlivé platby a hlavně účet, ze kterého to šlo. */}
               <VyberKategorie hodnota={volba[s.klic]} kategorie={kategorie} prijem={prijmy} sirka={220}
                 onVyber={id=>setVolba(v=>({...v,[s.klic]:id||""}))}
                 onNova={nazev=>setNovaKat({nazev,typ:prijmy?"prijem":"vydaj",emoji:"🏷",proSkupinu:s.klic})}/>
@@ -3461,11 +3464,31 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
               <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.muted,cursor:"pointer"}}>
                 <input type="checkbox" checked={ulozPravidlo[s.klic]!==false} onChange={e=>setUlozPravidlo(p=>({...p,[s.klic]:e.target.checked}))}/> zapamatovat
               </label>
+              <button onClick={()=>setRozbalene(r=>({...r,[s.klic]:!r[s.klic]}))}
+                style={{...btnC(C.muted,true),fontSize:11.5,padding:"6px 11px"}}>
+                {rozbalene[s.klic]?"▾ skrýt platby":`▸ ukázat ${s.polozky.length} plateb`}
+              </button>
               <button onClick={()=>zarad(s)} disabled={(!volba[s.klic]&&!volbaProj[s.klic]&&!volbaSubj[s.klic])||pracuje===s.klic} style={{...btnC(),fontSize:12,padding:"6px 14px"}}>
                 {pracuje===s.klic?"…":`Zařadit ${s.polozky.length}×`}
               </button>
             </div>
           </div>
+
+          {rozbalene[s.klic]&&<div style={{marginTop:10,paddingTop:9,borderTop:`1px solid ${C.border}`,maxHeight:300,overflowY:"auto"}}>
+            {s.polozky.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>{
+              const u=(ucty||[]).find(x=>String(x.id)===String(t.ucet_id));
+              return <div key={t.id||i} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"4px 0",borderTop:i?`1px solid ${C.bg}`:"none"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div>{new Date(t.datum).toLocaleDateString("cs-CZ")} · <strong style={{color:C.accent}}>{u?u.nazev:"neznámý účet"}</strong></div>
+                  <div style={{fontSize:11,color:C.dim,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {t.protistrana?<span>➜ {t.protistrana} · </span>:null}
+                    {(t.popis||"")}{t.poznamka?` · ${t.poznamka}`:""}
+                  </div>
+                </div>
+                <strong style={{whiteSpace:"nowrap",color:+t.castka<0?C.red:C.green}}>{fmtKc(t.castka)}</strong>
+              </div>;
+            })}
+          </div>}
         </div>;
       })}
       {skupiny.length>150&&<div style={{textAlign:"center",color:C.muted,fontSize:12,padding:8}}>…a dalších {skupiny.length-150} skupin. Zařaď ty velké a zbytek se pročistí.</div>}
@@ -4742,7 +4765,7 @@ function FinanceNoveTab(){
     {zalozka==="pravidla"&&<PravidlaTab ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta}/>}
     {zalozka==="majetek"&&<MajetekTab ucty={ucty} reloadUcty={reloadUcty}/>}
     {zalozka==="kategorie"&&<KategorieTab kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadPocet();}}/>}
-    {zalozka==="zarazeni"&&<ZarazeniTransakci kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie} onZmena={()=>{reloadUcty();reloadPocet();reloadProjekty();}}/>}
+    {zalozka==="zarazeni"&&<ZarazeniTransakci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie} onZmena={()=>{reloadUcty();reloadPocet();reloadProjekty();}}/>}
   </div>;
 }
 
