@@ -3276,7 +3276,7 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
     .select("id,datum,castka,popis,poznamka,protistrana,kategorie_id,projekt_id,subjekt_typ,subjekt_id,typ,ucet_id")
     .eq("zdroj","import").order("datum",{ascending:false}).range(od,do_)));
   const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*"));
-  const [jenNezarazene,setJenNezarazene]=useState(true);
+  const [filtr,setFiltr]=useState("bezKat");   // bezKat | bezSubj | nedodelane | vse
   const [volba,setVolba]=useState({});        // klíč skupiny → kategorie_id
   const [volbaProj,setVolbaProj]=useState({}); // klíč skupiny → projekt_id
   const [volbaSubj,setVolbaSubj]=useState({}); // klíč skupiny → "typ|id"
@@ -3289,7 +3289,9 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
     const m=new Map();
     for(const t of (transakce||[])){
       if(t.typ==="prevod")continue;                       // převody mezi vlastními účty neřešíme
-      if(jenNezarazene&&t.kategorie_id&&t.subjekt_typ)continue;
+      if(filtr==="bezKat"    &&t.kategorie_id)continue;
+      if(filtr==="bezSubj"   &&t.subjekt_typ)continue;
+      if(filtr==="nedodelane"&&t.kategorie_id&&t.subjekt_typ)continue;
       const k=klicObchodnika(t);
       if(!m.has(k))m.set(k,{klic:k,polozky:[],suma:0});
       const s=m.get(k); s.polozky.push(t); s.suma+=+t.castka;
@@ -3394,9 +3396,12 @@ function ZarazeniTransakci({kategorie,projekty,deti,auta,onZmena,reloadKategorie
           : <span style={{color:C.green}}>✓ Všechno zařazeno</span>}
       </div>
       <input style={{...inp,maxWidth:220,fontSize:12,padding:"5px 10px"}} placeholder="Hledat obchodníka…" value={hledat} onChange={e=>setHledat(e.target.value)}/>
-      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer"}}>
-        <input type="checkbox" checked={jenNezarazene} onChange={e=>setJenNezarazene(e.target.checked)}/> jen nedodělané
-      </label>
+      <select style={{...inp,width:"auto",fontSize:12,padding:"5px 10px"}} value={filtr} onChange={e=>setFiltr(e.target.value)}>
+        <option value="bezKat">jen bez kategorie</option>
+        <option value="bezSubj">jen bez určení koho se týká</option>
+        <option value="nedodelane">nedodělané (chybí jedno nebo druhé)</option>
+        <option value="vse">všechno</option>
+      </select>
       <button onClick={()=>setNovaKat({nazev:"",typ:"vydaj",emoji:"🏷"})} style={{...btnC(C.green,true),fontSize:12,padding:"5px 12px"}}>+ Nová kategorie</button>
       <button onClick={pustPravidlaZpetne} disabled={!!zpetne}
         title="Projde staré platby a doplní jim zařazení podle pravidel, která vznikla až po importu"
@@ -4715,7 +4720,9 @@ function FinanceNoveTab(){
   const {data:auta}=useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
   const [zalozka,setZalozka]=useState("prehled");
   const {data:pocet,reload:reloadPocet}=useData(()=>sb.from("fin_transakce").select("id",{count:"exact",head:true}).eq("zdroj","import").then(({count,error})=>({data:count??0,error})));
-  if(lu||lk)return <Spinner/>;
+  // Spinner jen při prvním načtení. Při přenačtení po uložení se komponenta
+  // nesmí odmountovat — přišel by o rozdělané hledání i o rozbalené řádky.
+  if((lu&&!ucty)||(lk&&!kategorie))return <Spinner/>;
   // Podnikatelské účty se v přehledu počítají zvlášť, ale výpisy se do nich
   // nahrávají stejně jako do rodinných — v Pokrytí a Importu patří mezi ostatní.
   const bankovni=(ucty||[]).filter(u=>["finance","podnikani"].includes(u.skupina||"finance"));
