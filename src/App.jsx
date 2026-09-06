@@ -1999,7 +1999,9 @@ function NapovedaFormatu(){
 
 function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo}){
   const {data:pravidla,reload:reloadPravidla}=useData(()=>sb.from("fin_pravidla").select("*").order("priorita"));
-  const {data:importy,reload:reloadImporty}=useData(()=>sb.from("fin_importy").select("*").order("created_at",{ascending:false}).limit(15));
+  const {data:importy,reload:reloadImporty}=useData(()=>sb.from("fin_importy").select("*").order("created_at",{ascending:false}).limit(400));
+  const [fUcet,setFUcet]=useState("");     // filtr historie importů
+  const [fMesic,setFMesic]=useState("");
   const [davky,setDavky]=useState([]);      // načtené výpisy čekající na uložení
   const [stav,setStav]=useState("");
   const [uklada,setUklada]=useState(false);
@@ -2492,15 +2494,48 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
     </div>)}
 
     {(importy||[]).length>0&&<>
-      <div style={{fontWeight:700,fontSize:14,margin:"20px 0 8px"}}>🕘 Poslední importy</div>
+      {(()=>{
+        // Filtr podle účtu a měsíce — historie importů je jinak nepřehledná
+        // hromada souborů s nic neříkajícími jmény.
+        const uctyMapa=Object.fromEntries((ucty||[]).map(u=>[String(u.id),u]));
+        // Měsíc se bere z období výpisu, ne z data nahrání.
+        const mesicImportu=i=>String(i.obdobi_do||i.obdobi_od||i.created_at).slice(0,7);
+        const vsechnyMesice=[...new Set((importy||[]).map(mesicImportu))].sort().reverse();
+        const vidicelne=(importy||[]).filter(i=>
+          (!fUcet||String(i.ucet_id)===fUcet)&&(!fMesic||mesicImportu(i)===fMesic));
+        const celkemNovych=vidicelne.reduce((a,i)=>a+(i.pocet_novych||0),0);
+        return <>
+      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",margin:"20px 0 8px"}}>
+        <span style={{fontWeight:700,fontSize:14}}>🕘 Historie importů</span>
+        <select style={{...inp,width:"auto",fontSize:12,padding:"4px 9px"}} value={fUcet} onChange={e=>setFUcet(e.target.value)}>
+          <option value="">Všechny účty</option>
+          {(ucty||[]).filter(u=>(importy||[]).some(i=>String(i.ucet_id)===String(u.id)))
+            .map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
+        </select>
+        <select style={{...inp,width:"auto",fontSize:12,padding:"4px 9px"}} value={fMesic} onChange={e=>setFMesic(e.target.value)}>
+          <option value="">Všechny měsíce</option>
+          {vsechnyMesice.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
+        {(fUcet||fMesic)&&<button onClick={()=>{setFUcet("");setFMesic("");}}
+          style={{...btnC(C.muted,true),fontSize:11.5,padding:"4px 10px"}}>zrušit filtr</button>}
+        <span style={{fontSize:12,color:C.muted,marginLeft:"auto"}}>
+          {vidicelne.length} výpisů · {celkemNovych} transakcí
+        </span>
+      </div>
       <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
           <thead><tr style={{background:C.bg}}>
-            {["Kdy","Soubor","Období","Nových","Duplicit","Konečný zůstatek"].map(h=><th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
+            {["Kdy","Účet","Soubor","Období","Nových","Duplicit","Konečný zůstatek"].map(h=><th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {(importy||[]).map(i=><tr key={i.id} style={{borderBottom:`1px solid ${C.border}`}}>
+            {vidicelne.length===0&&<tr><td colSpan={7} style={{padding:"14px 10px",color:C.dim,textAlign:"center"}}>
+              Pro tenhle filtr tu nic není.</td></tr>}
+            {vidicelne.map(i=><tr key={i.id} style={{borderBottom:`1px solid ${C.border}`}}>
               <td style={{padding:"6px 10px",whiteSpace:"nowrap"}}>{new Date(i.created_at).toLocaleString("cs-CZ")}</td>
+              <td style={{padding:"6px 10px",whiteSpace:"nowrap",fontWeight:600}}>
+                {uctyMapa[String(i.ucet_id)]?.nazev||"—"}
+                {i.banka&&<div style={{fontSize:10.5,color:C.dim,fontWeight:400}}>{i.banka}</div>}
+              </td>
               <td style={{padding:"6px 10px"}}>{i.soubor}</td>
               <td style={{padding:"6px 10px",whiteSpace:"nowrap"}}>{i.obdobi_od?`${new Date(i.obdobi_od).toLocaleDateString("cs-CZ")} – ${new Date(i.obdobi_do).toLocaleDateString("cs-CZ")}`:"—"}</td>
               <td style={{padding:"6px 10px",fontWeight:700,color:C.green}}>{i.pocet_novych}</td>
@@ -2510,6 +2545,8 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
           </tbody>
         </table>
       </div>
+        </>;
+      })()}
     </>}
   </div>;
 }
