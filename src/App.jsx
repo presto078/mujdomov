@@ -2005,7 +2005,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   const [fUcet,setFUcet]=useState("");     // filtr historie importů
   const [fMesic,setFMesic]=useState("");
   // Jen datumy a účty — na zjištění, co chybí, víc netřeba.
-  const {data:pokryti}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
+  const {data:pokryti,reload:reloadPokryti}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
     .select("ucet_id,datum").eq("zdroj","import").order("datum").range(od,do_)));
   const [davky,setDavky]=useState([]);      // načtené výpisy čekající na uložení
   const [stav,setStav]=useState("");
@@ -2240,7 +2240,8 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
       pocet_novych:vlozeno,pocet_duplicit:davka.radky.filter(r=>r.duplicita).length,
       zustatek_konecny:v.zustatek_konecny??null});
     setDavky(d=>d.filter(x=>x!==davka));
-    setUklada(false);setJenChybi(false);setPustitBezKat(false);reloadImporty();onHotovo&&onHotovo();
+    setUklada(false);setJenChybi(false);setPustitBezKat(false);
+    reloadImporty();reloadPokryti();onHotovo&&onHotovo();
     if(!tise)alert(`Uloženo ${vlozeno} transakcí.`);
     return vlozeno;
   };
