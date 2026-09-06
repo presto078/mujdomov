@@ -2298,7 +2298,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
       pocet_novych:vlozeno,pocet_duplicit:davka.radky.filter(r=>r.duplicita).length,
       zustatek_konecny:v.zustatek_konecny??null});
     setDavky(d=>d.filter(x=>x!==davka));
-    setUklada(false);setJenChybi(false);setPustitBezKat(false);
+    setUklada(false);setJenChybi("");setPustitBezKat(false);
     reloadImporty();reloadPokryti();onHotovo&&onHotovo();
     if(!tise)alert(`Uloženo ${vlozeno} transakcí.`);
     return vlozeno;
@@ -2338,7 +2338,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   // i koho se platba týká. Prázdné se do pravidla nedává, ať nepřepíše
   // to, co určuje jiné, přesnější pravidlo.
   const [pravidloModal,setPravidloModal]=useState(null);
-  const [jenChybi,setJenChybi]=useState(false);   // v náhledu ukázat jen platby bez kategorie
+  const [jenChybi,setJenChybi]=useState("");      // "" | kat | subj — filtr náhledu
   const [pustitBezKat,setPustitBezKat]=useState(false);
   const otevriPravidlo=r=>{
     const cely=[r.popis,r.poznamka].filter(Boolean).join(" · ");
@@ -2507,7 +2507,11 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
             </tr></thead>
             <tbody>
               {b.radky.map((r,ri)=>({r,ri}))
-                .filter(({r})=>!jenChybi||(r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.kategorie_id))
+                .filter(({r})=>{
+                  if(!jenChybi)return true;
+                  if(!r.vybrano||r.duplicita||prevodNahled(r))return false;
+                  return jenChybi==="kat"?!r.kategorie_id:!r.subjekt_typ;
+                })
                 .map(({r,ri})=><tr key={ri} style={{borderBottom:`1px solid ${C.border}`,opacity:r.duplicita?.45:1,background:ri%2?"#fafbff":C.surface}}>
                 <td style={{padding:"6px 8px"}}>
                   <input type="checkbox" checked={r.vybrano&&!r.duplicita} disabled={r.duplicita} onChange={e=>uprav(di,ri,{vybrano:e.target.checked})}/>
@@ -2580,16 +2584,27 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
 
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12,flexWrap:"wrap",gap:8}}>
           <div style={{fontSize:12,color:C.muted}}>
-            k uložení <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita).length}</strong> ·
-            duplicit <strong>{b.radky.filter(r=>r.duplicita).length}</strong> ·
-            převodů <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&prevodNahled(r)).length}</strong> ·
-            bez kategorie <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.kategorie_id).length}</strong> ·
-            bez určení koho se týká <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.subjekt_typ).length}</strong>
-            {b.radky.some(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.kategorie_id)&&
-              <> · <label style={{cursor:"pointer",color:C.accent,fontWeight:700}}>
-                <input type="checkbox" checked={jenChybi} onChange={e=>setJenChybi(e.target.checked)}
-                  style={{marginRight:4,verticalAlign:"-1px"}}/>ukázat jen ty bez kategorie
-              </label></>}
+            {(()=>{
+              // Čísla v souhrnu jsou zároveň filtr — člověk na ně stejně klikne.
+              const bezKat =b.radky.filter(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.kategorie_id).length;
+              const bezSubj=b.radky.filter(r=>r.vybrano&&!r.duplicita&&!prevodNahled(r)&&!r.subjekt_typ).length;
+              const odkaz=(rezim,pocet,text)=>pocet===0
+                ? <>{text} <strong>0</strong></>
+                : <button onClick={()=>setJenChybi(jenChybi===rezim?"":rezim)}
+                    style={{background:"none",border:"none",padding:0,font:"inherit",cursor:"pointer",
+                            color:jenChybi===rezim?C.accent:"inherit",
+                            textDecoration:jenChybi===rezim?"none":"underline dotted",fontWeight:jenChybi===rezim?700:400}}>
+                    {text} <strong>{pocet}</strong>{jenChybi===rezim?" ✕":""}
+                  </button>;
+              return <>
+                k uložení <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita).length}</strong> ·
+                duplicit <strong>{b.radky.filter(r=>r.duplicita).length}</strong> ·
+                převodů <strong>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&prevodNahled(r)).length}</strong> ·
+                {" "}{odkaz("kat",bezKat,"bez kategorie")} ·
+                {" "}{odkaz("subj",bezSubj,"bez určení koho se týká")}
+                {jenChybi&&<span style={{color:C.accent,fontWeight:700}}> — filtrováno</span>}
+              </>;
+            })()}
             {b.radky.some(r=>r.kolize&&!r.duplicita)&&<> · nahradí ručních <strong style={{color:"#c87000"}}>{b.radky.filter(r=>r.vybrano&&!r.duplicita&&r.kolize&&r.smazatKolizi).length}</strong></>}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -3465,7 +3480,18 @@ function ZarazeniTransakci({ucty,kategorie,projekty,deti,auta,onZmena,reloadKate
     <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
       <div style={{fontSize:13,fontWeight:700}}>
         {celkemNezarazenych>0||celkemBezSubjektu>0
-          ? <>Bez kategorie <span style={{color:C.orange}}>{celkemNezarazenych}</span> · bez určení koho se týká <span style={{color:C.orange}}>{celkemBezSubjektu}</span> · <span style={{color:C.accent}}>{skupiny.length}</span> skupin</>
+          ? <>
+              <button onClick={()=>setFiltr("bezKat")} style={{background:"none",border:"none",padding:0,font:"inherit",
+                cursor:"pointer",textDecoration:filtr==="bezKat"?"none":"underline dotted"}}>
+                Bez kategorie <span style={{color:C.orange,fontWeight:800}}>{celkemNezarazenych}</span>
+              </button>
+              {" · "}
+              <button onClick={()=>setFiltr("bezSubj")} style={{background:"none",border:"none",padding:0,font:"inherit",
+                cursor:"pointer",textDecoration:filtr==="bezSubj"?"none":"underline dotted"}}>
+                bez určení koho se týká <span style={{color:C.orange,fontWeight:800}}>{celkemBezSubjektu}</span>
+              </button>
+              {" · "}<span style={{color:C.accent}}>{skupiny.length}</span> skupin
+            </>
           : <span style={{color:C.green}}>✓ Všechno zařazeno</span>}
       </div>
       <input style={{...inp,maxWidth:220,fontSize:12,padding:"5px 10px"}} placeholder="Hledat obchodníka…" value={hledat} onChange={e=>setHledat(e.target.value)}/>
