@@ -2963,6 +2963,223 @@ function PravidlaTab({ucty,kategorie,projekty,deti,auta}){
   </div>;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// LIKVIDITA — kolik musí být na kterém účtu a kdy
+//
+// Průměr za měsíc neřekne nic o tom, jestli 14. bude na Komerčce na trvalé
+// příkazy. Tenhle pohled vezme pravidelné platby z posledních dokončených
+// měsíců, u každé zjistí obvyklou částku a obvyklý den, a pak od dnešního
+// zůstatku projde zbytek měsíce. Zajímá ho jediné číslo: nejnižší bod, na
+// který zůstatek klesne, a den, kdy k tomu dojde.
+//
+// Částka i den jsou medián, ne průměr — jeden dvojitý odvod nebo jedna škola
+// v přírodě jinak vyženou obvyklou splátku o polovinu nahoru.
+//
+// Platba, která v tomhle měsíci na výpise už je, se znovu neodečítá. Dokud
+// výpis za aktuální měsíc naimportovaný není, počítá se všechno od dneška dál.
+// ══════════════════════════════════════════════════════════════════════════════
+const LIK_MIN_MESICU = 5;   // v kolika měsících se platba musí objevit, aby platila za pravidelnou
+const LIK_ROZPTYL    = 7;   // rozdíl mezi nejdřívějším a nejpozdějším dnem, od kterého je termín nejistý
+
+const median = pole => { const s=[...pole].sort((a,b)=>a-b); return s.length?s[Math.floor(s.length/2)]:0; };
+const likKlic = t => {
+  const p = String(t.protistrana||"").split("/")[0].trim();
+  if(p) return p;
+  return bezDiakritiky(String(t.popis||"").replace(/·.*/,"").replace(/[0-9]/g,""))
+    .replace(/\s+/g," ").trim().slice(0,24) || "?";
+};
+const likSmer = t => ((+t.castka||0) < 0 ? "-" : "+");
+
+function LikviditaTab({ucty}){
+  const {data:trans,loading}=useData(()=>nactiVse((od,do_)=>
+    sb.from("fin_transakce").select("ucet_id,datum,castka,popis,protistrana,typ")
+      .eq("zdroj","import").order("datum").range(od,do_)));
+  const {data:stavy,loading:ls}=useData(()=>nactiVse((od,do_)=>
+    sb.from("fin_stavy").select("ucet_id,rok,mesic,stav").gte("rok",2024).order("rok").range(od,do_)));
+  const {data:protistrany}=useData(()=>sb.from("fin_protistrany").select("cislo,nazev"));
+  const [okno,setOkno]=useState(8);
+  const [rozbaleno,setRozbaleno]=useState({});
+
+  if(loading||ls) return <Spinner/>;
+
+  const dnes=new Date();
+  const rok=dnes.getFullYear(), mes=dnes.getMonth()+1, den=dnes.getDate();
+  const aktualni=`${rok}-${String(mes).padStart(2,"0")}`;
+  const dniVMesici=new Date(rok,mes,0).getDate();
+  const jmenoProti=new Map((protistrany||[]).map(p=>[String(p.cislo),p.nazev]));
+
+  const vsechny=[...new Set((trans||[]).map(t=>String(t.datum).slice(0,7)))].sort().filter(m=>m<aktualni);
+  const hotove=vsechny.slice(-okno);
+  const minMesicu=Math.max(2,Math.min(LIK_MIN_MESICU,hotove.length-1));
+
+  // ── Pravidelné položky jednoho účtu ─────────────────────────────────────
+  const polozkyUctu=u=>{
+    const tx=(trans||[]).filter(t=>String(t.ucet_id)===String(u.id)&&hotove.includes(String(t.datum).slice(0,7)));
+    const skup=new Map();
+    for(const t of tx){
+      const k=likSmer(t)+likKlic(t);
+      if(!skup.has(k))skup.set(k,{k,ven:(+t.castka||0)<0,cislo:String(t.protistrana||"").split("/")[0],
+                                 stem:String(t.popis||"").split("·")[0].replace(/\s+/g," ").trim(),
+                                 mesice:new Map(),dny:[],popisy:new Map(),pocet:0});
+      const g=skup.get(k), m=String(t.datum).slice(0,7);
+      g.mesice.set(m,(g.mesice.get(m)||0)+Math.abs(+t.castka||0));
+      g.dny.push(+String(t.datum).slice(8,10));
+      g.pocet++;
+      const popis=String(t.popis||"").replace(/\s+/g," ").trim()||"(bez popisu)";
+      g.popisy.set(popis,(g.popisy.get(popis)||0)+1);
+    }
+    return [...skup.values()].filter(g=>g.mesice.size>=minMesicu).map(g=>{
+      const dny=[...g.dny].sort((a,b)=>a-b);
+      const nejcastejsi=[...g.popisy.entries()].sort((a,b)=>b[1]-a[1])[0][0];
+      return {...g,
+        castka:median([...g.mesice.values()]),
+        den:median(dny), odDne:dny[0], doDne:dny[dny.length-1],
+        rozptyl:dny[dny.length-1]-dny[0], mesicu:g.mesice.size,
+        naMesic:g.pocet/g.mesice.size,
+        // Bez protiúčtu je skupina sběrná (typicky všechny platby kartou z jednoho účtu).
+        // Nejčastější popis by ji pojmenoval podle náhodného obchodníka, proto se bere
+        // společný začátek popisu — to, co mají všechny platby ve skupině stejné.
+        nazev:jmenoProti.get(g.cislo)||(g.cislo?nejcastejsi:(g.stem||nejcastejsi)).slice(0,52)};
+    }).sort((a,b)=>a.den-b.den||b.castka-a.castka);
+  };
+
+  // ── Zůstatek k dnešku: poslední zapsaný plus pohyby, které po něm přišly ──
+  const zustatek=u=>{
+    const h=(stavy||[]).filter(x=>String(x.ucet_id)===String(u.id)).sort((a,b)=>a.rok-b.rok||a.mesic-b.mesic);
+    if(!h.length)return null;
+    const p=h[h.length-1];
+    const hranice=`${p.rok}-${String(p.mesic).padStart(2,"0")}`;
+    const po=(trans||[]).filter(t=>String(t.ucet_id)===String(u.id)&&String(t.datum).slice(0,7)>hranice);
+    return {stav:+p.stav+po.reduce((s,t)=>s+(+t.castka||0),0),kDatu:hranice,pohybu:po.length};
+  };
+
+  // ── Průchod zbytkem měsíce ───────────────────────────────────────────────
+  const vypocet=u=>{
+    const p=polozkyUctu(u);
+    const z=zustatek(u);
+    const maAktualni=(trans||[]).some(t=>String(t.ucet_id)===String(u.id)&&String(t.datum).slice(0,7)===aktualni);
+    const uzProslo=g=>maAktualni&&(trans||[]).some(t=>
+      String(t.ucet_id)===String(u.id)&&String(t.datum).slice(0,7)===aktualni&&(likSmer(t)+likKlic(t))===g.k);
+    const cekaji=p.filter(g=>!uzProslo(g))
+      .map(g=>({...g,kdy:Math.min(dniVMesici,Math.max(g.den,den))}))
+      .sort((a,b)=>a.kdy-b.kdy||(a.ven===b.ven?0:(a.ven?-1:1)));   // ve stejný den nejdřív odchozí, to je ta horší varianta
+    let bezne=z?z.stav:0;
+    const kroky=[];
+    let dno={stav:bezne,den};
+    for(const g of cekaji){
+      bezne+=g.ven?-g.castka:g.castka;
+      kroky.push({...g,po:bezne});
+      if(bezne<dno.stav)dno={stav:bezne,den:g.kdy};
+    }
+    return {u,p,cekaji:kroky,z,dno,maAktualni,
+      venCelkem:p.filter(x=>x.ven).reduce((s,x)=>s+x.castka,0),
+      dovnitrCelkem:p.filter(x=>!x.ven).reduce((s,x)=>s+x.castka,0)};
+  };
+
+  const sledovane=(ucty||[]).filter(u=>u.aktivni!==false&&["finance","podnikani"].includes(u.skupina||"finance"));
+  const karty=sledovane.map(vypocet).filter(x=>x.p.length>=2).sort((a,b)=>a.dno.stav-b.dno.stav);
+  const chybiCelkem=karty.reduce((s,x)=>s+(x.dno.stav<0?-x.dno.stav:0),0);
+  const nejtesnejsi=karty[0];
+
+  const karta=(l,v,barva,pozn)=><div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:190}}>
+    <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3}}>{l}</div>
+    <div style={{fontSize:23,fontWeight:800,color:barva||C.text,marginTop:5}}>{v}</div>
+    {pozn&&<div style={{fontSize:11,color:C.dim,marginTop:3}}>{pozn}</div>}
+  </div>;
+
+  return <div>
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+      {karta("Chybí doplnit do konce měsíce",kc0(chybiCelkem),chybiCelkem?C.red:C.green,
+             chybiCelkem?"součet propadů pod nulu":"všechny účty zatím vycházejí")}
+      {nejtesnejsi&&karta("Nejtěsnější účet",nejtesnejsi.u.nazev,nejtesnejsi.dno.stav<0?C.red:C.text,
+             `klesne na ${kc0(nejtesnejsi.dno.stav)} kolem ${nejtesnejsi.dno.den}. dne`)}
+      {karta("Dnes je",`${den}. ${mes}.`,C.text,`do konce měsíce zbývá ${dniVMesici-den} dní`)}
+    </div>
+
+    <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
+      <span style={{fontSize:12.5,color:C.muted}}>Pravidelné platby počítám z posledních</span>
+      <select value={okno} onChange={e=>setOkno(+e.target.value)} style={{...inp,width:"auto",padding:"5px 9px",fontSize:12.5}}>
+        {[4,6,8,12].map(n=><option key={n} value={n}>{n} měsíců</option>)}
+      </select>
+      <span style={{fontSize:12,color:C.dim}}>
+        Pravidelná je platba, která se objevila aspoň v {minMesicu} z {hotove.length} dokončených měsíců. Částka i den jsou medián, ne průměr.
+      </span>
+    </div>
+
+    {!karty.length&&<div style={{color:C.dim,fontSize:13,padding:20}}>Zatím není z čeho počítat — chybí dokončené měsíce s výpisy.</div>}
+
+    {karty.map(({u,p,cekaji,z,dno,maAktualni,venCelkem,dovnitrCelkem})=>{
+      const chybi=dno.stav<0?-dno.stav:0;
+      const barva=chybi?C.red:(dno.stav<5000?C.orange:C.green);
+      const otevreno=!!rozbaleno[u.id];
+      return <div key={u.id} style={{background:C.surface,border:`1px solid ${chybi?C.red:C.border}`,borderRadius:12,marginBottom:11,overflow:"hidden"}}>
+        <div onClick={()=>setRozbaleno(r=>({...r,[u.id]:!r[u.id]}))}
+             style={{padding:"13px 16px",cursor:"pointer",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap"}}>
+          <div style={{flex:"1 1 220px",minWidth:0}}>
+            <div style={{fontWeight:800,fontSize:14.5,color:C.text}}>{u.nazev}</div>
+            <div style={{fontSize:11.5,color:C.dim,marginTop:2}}>
+              {p.length} pravidelných položek · ven {kc0(venCelkem)} · dovnitř {kc0(dovnitrCelkem)}
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:10.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3}}>Teď na účtu</div>
+            <div style={{fontSize:17,fontWeight:800,color:C.text}}>{z?kc0(z.stav):"—"}</div>
+          </div>
+          <div style={{textAlign:"right",minWidth:180}}>
+            <div style={{fontSize:10.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3}}>Nejníž do konce měsíce</div>
+            <div style={{fontSize:17,fontWeight:800,color:barva}}>{kc0(dno.stav)}</div>
+            <div style={{fontSize:11.5,color:barva,fontWeight:600}}>
+              {chybi?`chybí ${kc0(chybi)} k ${dno.den}. dni`:`nejníž ${dno.den}. den`}
+            </div>
+          </div>
+          <div style={{fontSize:15,color:C.dim}}>{otevreno?"▾":"▸"}</div>
+        </div>
+
+        {otevreno&&<div style={{borderTop:`1px solid ${C.border}`,padding:"10px 16px 14px"}}>
+          {!maAktualni&&<div style={{fontSize:11.5,color:C.orange,marginBottom:7}}>
+            Výpis za tenhle měsíc ještě není naimportovaný — počítám všechny obvyklé platby od dneška dál.
+          </div>}
+          {z&&z.pohybu>0&&<div style={{fontSize:11.5,color:C.dim,marginBottom:7}}>
+            Zůstatek = poslední zapsaný k {z.kDatu} plus {z.pohybu} pohybů z výpisů.
+          </div>}
+          {!z&&<div style={{fontSize:11.5,color:C.orange,marginBottom:7}}>
+            Tenhle účet nemá zapsaný žádný zůstatek — počítá se od nuly, takže dno je jen součet plateb.
+          </div>}
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+            <thead><tr style={{color:C.muted,fontSize:10.5,textTransform:"uppercase",letterSpacing:.3}}>
+              <th style={{textAlign:"left",padding:"4px 6px",width:48}}>Den</th>
+              <th style={{textAlign:"left",padding:"4px 6px"}}>Co</th>
+              <th style={{textAlign:"right",padding:"4px 6px",width:110}}>Částka</th>
+              <th style={{textAlign:"right",padding:"4px 6px",width:120}}>Zůstatek po</th>
+            </tr></thead>
+            <tbody>
+              {cekaji.map((g,i)=><tr key={g.k+"|"+i} style={{borderTop:`1px solid ${C.border}`}}>
+                <td style={{padding:"6px",fontWeight:700,color:C.muted,verticalAlign:"top"}}>{g.kdy}.</td>
+                <td style={{padding:"6px"}}>
+                  <div style={{color:C.text}}>{g.nazev}</div>
+                  <div style={{fontSize:10.5,color:C.dim}}>
+                    {g.mesicu}/{hotove.length} měsíců
+                    {g.naMesic>=1.6&&<span> · souhrn {Math.round(g.naMesic)} plateb za měsíc</span>}
+                    {g.rozptyl>LIK_ROZPTYL&&<span style={{color:C.orange,fontWeight:700}}> · nejistý termín ({g.odDne}.–{g.doDne}.)</span>}
+                  </div>
+                </td>
+                <td style={{padding:"6px",textAlign:"right",fontWeight:700,color:g.ven?C.red:C.green,verticalAlign:"top"}}>
+                  {g.ven?"−":"+"}{kc0(g.castka)}
+                </td>
+                <td style={{padding:"6px",textAlign:"right",fontWeight:700,color:g.po<0?C.red:C.text,verticalAlign:"top"}}>{kc0(g.po)}</td>
+              </tr>)}
+              {!cekaji.length&&<tr><td colSpan={4} style={{padding:"10px 6px",color:C.dim}}>Do konce měsíce už nic pravidelného nečeká.</td></tr>}
+            </tbody>
+          </table>
+          {p.some(g=>g.rozptyl>LIK_ROZPTYL)&&<div style={{fontSize:11.5,color:C.muted,marginTop:9}}>
+            Položky s nejistým termínem jsou to nebezpečné — u nich se den mezi měsíci hodně liší, takže dno může přijít dřív, než tabulka ukazuje.
+          </div>}
+        </div>}
+      </div>;
+    })}
+  </div>;
+}
+
 function MajetekTab({ucty,reloadUcty}){
   const {data:stavy,loading,reload}=useData(()=>nactiVse((od,do_)=>
     sb.from("fin_stavy").select("*").gte("rok",2024).order("rok").range(od,do_)));
@@ -4906,13 +5123,14 @@ function FinanceNoveTab(){
       <div style={{fontSize:12,color:C.muted}}>{bankovni.length} bankovních účtů · {pocet??0} naimportovaných transakcí</div>
     </div>
     <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
-      {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"},{id:"pravidla",l:"⚙️ Pravidla"},{id:"majetek",l:"💼 Majetek"}].map(t=>
+      {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"likvidita",l:"💧 Likvidita"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"},{id:"pravidla",l:"⚙️ Pravidla"},{id:"majetek",l:"💼 Majetek"}].map(t=>
         <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{t.l}</button>)}
     </div>
     {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>}
     {zalozka==="projekty"&&<FinProjektyTab/>}
     {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadProjekty={reloadProjekty} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
     {zalozka==="pokryti"&&<PokrytiImportu ucty={ucty}/>}
+    {zalozka==="likvidita"&&<LikviditaTab ucty={ucty}/>}
     {zalozka==="pravidla"&&<PravidlaTab ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta}/>}
     {zalozka==="majetek"&&<MajetekTab ucty={ucty} reloadUcty={reloadUcty}/>}
     {zalozka==="kategorie"&&<KategorieTab kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadPocet();}}/>}
