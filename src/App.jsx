@@ -1571,15 +1571,36 @@ function parseAirBankPdf(radky) {
     if ((m = t.match(/Číslo výpisu:\s*(\d+)/))) hlav.cislo_vypisu = m[1];
     if ((m = t.match(/Měna:\s*([A-Z]{3})/))) hlav.mena = m[1];
   }
+  // Částka je normálně ve svém sloupci. Jenže když poznámka končí číslicí,
+  // slepí se v PDF s částkou do jednoho kusu („Platba domény active24 204,49",
+  // „VS101828235 900,00") a do okna s částkou nespadne nic — transakce se pak
+  // ztratila úplně. Záloha proto vezme poslední samostatná čísla z řádku;
+  // samostatné znamená, že jim nepředchází písmeno ani číslice, jinak by se
+  // z „active24 204,49" stalo 24 204,49.
+  const SAMOSTATNE_CISLO = /(?:^|[^0-9A-Za-zÀ-ž])(-?\d{1,3}(?: \d{3})*,\d{2})/g;
+  const castkaARadku = l => {
+    const primo = cisloCZ(vOkne(l.kusy, 440, 520));
+    const poplatekPrimo = cisloCZ(vOkne(l.kusy, 520, 640));
+    if (primo !== null) return { castka: primo, poplatek: poplatekPrimo || 0 };
+    const cely = l.kusy.map(k => k.s).join(" ");
+    const cisla = [...cely.matchAll(SAMOSTATNE_CISLO)].map(m => cisloCZ(m[1]));
+    if (cisla.length < 2) return { castka: null, poplatek: 0 };
+    return { castka: cisla[cisla.length - 2], poplatek: cisla[cisla.length - 1] || 0 };
+  };
+
   const out = []; let akt = null;
   for (const l of radky) {
     const datum = prvni(l.kusy, 0, 80);
-    const castka = cisloCZ(vOkne(l.kusy, 440, 520));
+    const { castka, poplatek } = castkaARadku(l);
     if (jeDatum(datum) && castka !== null) {                       // první řádek transakce
       akt = { datum: naIso(datum), castka, protiucet: "", vs: "", ks: "", ss: "",
               popis: [prvni(l.kusy, 100, 180), prvni(l.kusy, 180, 320)].filter(Boolean).join(" — "),
               poznamka: vOkne(l.kusy, 320, 440), ref: "" };
       out.push(akt);
+      // Poplatek je vlastní pohyb peněz ve vlastním sloupci — bez něj nesedí
+      // zůstatek. Ukládá se jako samostatná platba, ať je v přehledu vidět.
+      if (poplatek) out.push({ datum: naIso(datum), castka: poplatek, protiucet: "", vs: "", ks: "", ss: "",
+                               popis: "Poplatek — " + (akt.popis || "banka"), poznamka: "", ref: "" });
     } else if (akt && jeDatum(datum)) {                            // druhý řádek transakce
       akt.ref = prvni(l.kusy, 100, 180);
       const proti = prvni(l.kusy, 180, 320);
@@ -2263,7 +2284,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
     const rows=kVlozeni.map(r=>{
       const cizi=r.protiucet?ucetPodleCisla(r.protiucet):null;   // převod mezi vlastními účty
       const protiucetZPravidla=!cizi&&r.prevod_navrh?r.prevod_navrh:null;
-      const interni=!!cizi||!!protiucetZPravidla||jeVlastniPresun(r)||r.typ_navrh==="prevod";
+      const interni=!!cizi||!!protiucetZPravidla||jeVlastniPresun(r)||r.typ_navrh==="prevod"||!!r.rucniPrevod;
       return {
         ucet_id:davka.ucet_id,datum:r.datum,castka:r.castka,
         kategorie_id:r.kategorie_id||null,
@@ -2382,6 +2403,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   // Pozná se to samé, co při ukládání — ať je v náhledu vidět, že řádek
   // skončí jako převod a zařazovat ho nemá smysl.
   const prevodNahled=r=>{
+    if(r.rucniPrevod)return {ucet:null,rucni:true};   // označeno ručně jako průtok
     const cizi=r.protiucet?ucetPodleCisla(r.protiucet):null;
     if(cizi)return {ucet:cizi.nazev};
     if(r.prevod_navrh){
@@ -2540,6 +2562,10 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
                                    borderRadius:8,padding:"4px 9px",display:"inline-block",fontWeight:700}}>
                         🔄 převod{prevodNahled(r).ucet?` ${+r.castka<0?"→":"←"} ${prevodNahled(r).ucet}`:""}
                         <div style={{fontWeight:400,color:"#a8763a",fontSize:10.5}}>nepočítá se do příjmů ani výdajů</div>
+                        {prevodNahled(r).rucni&&<button onClick={()=>uprav(di,ri,{rucniPrevod:false})}
+                          style={{background:"none",border:"none",padding:0,marginTop:3,color:"#9a5b00",
+                                  textDecoration:"underline",cursor:"pointer",fontSize:10.5,fontWeight:400}}>
+                          zrušit — je to normální platba</button>}
                       </div>
                     : <>
                   {/* Všechny tři rozměry rovnou při importu — za co, na čem, pro koho. */}
@@ -2559,6 +2585,13 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
                       onChange={v=>{const [tp,id]=String(v).split("|");uprav(di,ri,{subjekt_typ:tp||null,subjekt_id:id||null});}}
                       style={{...inp,padding:"2px 5px",fontSize:10.5,width:"auto",maxWidth:120}}/>
                   </div>
+                  {/* Průtok: zaplatíš něco za někoho a on ti to vrátí. Ani jedna
+                      strana není tvůj příjem ani výdaj, jen peníze prošly. */}
+                  <button onClick={()=>uprav(di,ri,{rucniPrevod:true,kategorie_id:null,projekt_id:null})}
+                    title="Peníze jen protekly — zaplatil jsi to za někoho, kdo ti to vrací (nebo naopak)"
+                    style={{...btnC(C.muted,true),fontSize:10.5,padding:"2px 8px",marginTop:4}}>
+                    🔄 jen průtok, nepočítat
+                  </button>
                   {r.zdroje&&(r.zdroje.kategorie||r.zdroje.projekt||r.zdroje.subjekt)&&
                     <div style={{fontSize:10,color:C.dim,marginTop:3}}>
                       podle pravidel: {[
