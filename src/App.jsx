@@ -2978,10 +2978,16 @@ function MajetekTab({ucty,reloadUcty}){
     .sort((a,b)=>a.rok-b.rok||a.mesic-b.mesic);
   const posledni=u=>{const h=historie(u);return h.length?h[h.length-1]:null;};
 
-  // Nejnovější měsíc napříč všemi účty — podle něj se pozná zastaralý zůstatek.
-  const nejnovejsi=(stavy||[]).reduce((a,x)=>{
-    const k=x.rok*12+x.mesic; return k>a?k:a;
-  },0);
+  // Zastaralost se měří proti poslednímu DOKONČENÉMU měsíci, ne proti tomu,
+  // co má nejnovější jiný účet — jinak stačí u jednoho účtu zapsat rozdělaný
+  // měsíc a všechny ostatní se rázem tváří jako staré.
+  const dnes=new Date();
+  const posledniDenMesice=new Date(dnes.getFullYear(),dnes.getMonth()+1,0).getDate()===dnes.getDate();
+  const hotovyMesic=(()=>{
+    const d=posledniDenMesice?dnes:new Date(dnes.getFullYear(),dnes.getMonth()-1,1);
+    return {rok:d.getFullYear(),mesic:d.getMonth()+1};
+  })();
+  const nejnovejsi=hotovyMesic.rok*12+hotovyMesic.mesic;
 
   const aktivni=(ucty||[]).filter(u=>u.aktivni!==false);
   const skupiny=SKUPINY_MAJETEK.map(sk=>{
@@ -3102,9 +3108,21 @@ function MajetekTab({ucty,reloadUcty}){
       </span>
     </div>
 
-    {stareUcty.length>0&&<div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:12,color:"#9a5b00"}}>
-      <strong>Zastaralé zůstatky:</strong> {stareUcty.map(x=>`${x.u.nazev} (${x.p.mesic}/${x.p.rok})`).join(", ")}.
-      U účtů bez bankovních výpisů je to normální — dopiš hodnotu tlačítkem u účtu.
+    {stareUcty.length>0&&<div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:12.5,color:"#9a5b00"}}>
+      <div style={{fontWeight:800,marginBottom:6}}>
+        Zastaralé zůstatky — {stareUcty.length} {stareUcty.length===1?"účet":stareUcty.length<5?"účty":"účtů"}
+        <span style={{fontWeight:400}}> · poslední dokončený měsíc je {hotovyMesic.mesic}/{hotovyMesic.rok}</span>
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {stareUcty.map(x=><span key={x.u.id} style={{background:"#fff",border:"1px solid #f0c98a",
+          borderRadius:6,padding:"2px 8px",fontSize:11.5}}>
+          {x.u.nazev} <strong>{x.p.mesic}/{x.p.rok}</strong>
+        </span>)}
+      </div>
+      <div style={{marginTop:7,color:"#a8763a"}}>
+        U účtů bez bankovních výpisů (Portu, penzijko, stavebko, hotovost, kreditka) je to normální —
+        dopiš hodnotu tlačítkem u účtu. U ostatních to znamená, že chybí výpis.
+      </div>
     </div>}
 
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -3132,8 +3150,10 @@ function MajetekTab({ucty,reloadUcty}){
             </div>}
           </div>
           <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setZapis({ucet:u,rok:new Date().getFullYear(),
-              mesic:new Date().getMonth()+1,stav:p?String(p.stav):""})}
+            {/* Nabízí se poslední dokončený měsíc — zůstatek k prvnímu dni
+                rozdělaného měsíce nikdo nezná a jen by rozbil srovnání. */}
+            <button onClick={()=>setZapis({ucet:u,rok:hotovyMesic.rok,
+              mesic:hotovyMesic.mesic,stav:p?String(p.stav):""})}
               style={{...btnC(C.accent,true),fontSize:11,padding:"4px 10px"}}>Zapsat hodnotu</button>
             {p&&<button onClick={()=>smazStav(u,p)} title="Smazat tenhle zapsaný zůstatek"
               style={{...btnC(C.muted,true),fontSize:11,padding:"4px 9px"}}>✕</button>}
