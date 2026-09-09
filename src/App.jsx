@@ -7933,6 +7933,9 @@ function AlimentyTab(){
   const alimentyKatId=(kategorieFin||[]).find(k=>/aliment/i.test(k.nazev||""))?.id||null;
   const detiKatId=(kategorieFin||[]).find(k=>/^děti$|^deti$/i.test(k.nazev||""))?.id||null;
 
+  const nast=Object.fromEntries((nastaveni||[]).map(r=>[r.klic,r.hodnota]));
+  const zrcadlitDoFinanci = nast.zrcadlit_do_financi === "true";
+
   // Najde (nebo založí) kategorii dle názvu a vrátí její id.
   const ensureKat=async(nazev,emoji,typ,barva)=>{
     const {data:ex}=await sb.from("fin_kategorie").select("id").ilike("nazev",nazev).limit(1);
@@ -7945,7 +7948,10 @@ function AlimentyTab(){
   // Promítne se jen platba s reálným datem a nenulovou částkou. Drží se 1:1 přes alimenty_platby.fin_transakce_id.
   const syncPlatbaDoCashflow=async(p)=>{
     if(!p) return;
-    const aktivni = p.typ==="alimenty" && p.datum && Number(p.castka)>0 && (p.ucet_id||monetaId);
+    // Dokud se výpisy nedovážely ručně, mělo zrcadlení smysl. Teď obě strany
+    // alimentů chodí přes banku a import je nabere sám, takže by tu každá
+    // platba byla dvakrát. Přepínač je v Nastavení a ve výchozím stavu vypnutý.
+    const aktivni = zrcadlitDoFinanci && p.typ==="alimenty" && p.datum && Number(p.castka)>0 && (p.ucet_id||monetaId);
     if(aktivni){
       const prijem = p.kdo_plati==="otec"; // otec platí matce = příjem; matka platí otci = výdaj
       const katId = alimentyKatId || await ensureKat("Alimenty","⚖️","prijem","#c0392b");
@@ -7980,7 +7986,8 @@ function AlimentyTab(){
   const syncMimoradneDoCashflow=async(m)=>{
     if(!m) return;
     const ucetId=m.ucet_id||monetaId;
-    const vydaj = m.matka_zaplatila_za_otce ? Number(m.castka_celkem) : (m.matka_zaplatila_skolce ? Number(m.podil_matky) : 0);
+    const vydaj = !zrcadlitDoFinanci ? 0
+      : (m.matka_zaplatila_za_otce ? Number(m.castka_celkem) : (m.matka_zaplatila_skolce ? Number(m.podil_matky) : 0));
     const dluhOtce = m.matka_zaplatila_za_otce ? Number(m.podil_otce) : 0;
 
     // 1) Realita – výdaj na děti
@@ -8026,7 +8033,6 @@ function AlimentyTab(){
     }
   },[platby]);
 
-  const nast=Object.fromEntries((nastaveni||[]).map(r=>[r.klic,r.hodnota]));
   const dluhCelkem=parseInt(nast.dluh_celkem||"53250");
   const dluhSplaceno=parseInt(nast.dluh_splaceno||"0");
   const dluhZbyva=Math.max(0,dluhCelkem-dluhSplaceno);
@@ -8696,6 +8702,10 @@ function AlimentyTab(){
       await sb.from("alimenty_nastaveni").update({hodnota:dluhForm.splatka}).eq("klic","dluh_splatka_mesicni");
       reloadNast();
     };
+    const ulozZrcadleni=async(zapnuto)=>{
+      await sb.from("alimenty_nastaveni").upsert({klic:"zrcadlit_do_financi",hodnota:zapnuto?"true":"false"},{onConflict:"klic"});
+      reloadNast();
+    };
     const aktivovatSplaceni=async()=>{
       if(!aktivaceForm){alert("Zadejte datum právní moci");return;}
       await sb.from("alimenty_nastaveni").update({hodnota:"true"}).eq("klic","dluh_splatky_aktivni");
@@ -8745,6 +8755,23 @@ function AlimentyTab(){
         </div>
         <button onClick={ulozDluh} style={{...btnC(C.green),marginBottom:16}}>Uložit</button>
         <div style={{background:C.greenS,border:`1px solid ${C.green}`,borderRadius:10,padding:"12px 16px",fontSize:13,fontWeight:700,color:C.green}}>✓ Splácení aktivní od června 2026 — {splatkaM.toLocaleString("cs")} Kč/měsíc (dle rozsudku ze dne 18. 3. 2026)</div>
+        <div style={{background:C.orangeS,border:`1px solid ${C.orange}`,borderRadius:10,padding:"12px 16px",fontSize:12.5,color:C.text,marginTop:12}}>
+          Splátka dluhu {splatkaM.toLocaleString("cs")} Kč/měs neodchází zvlášť — je součástí insolvenční splátky, která se proto od června zvedla z 5 500 na 8 000 Kč.
+        </div>
+      </div>
+
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:20,marginTop:20}}>
+        <h3 style={{margin:"0 0 10px",fontSize:15,fontWeight:800}}>Zápis do Financí</h3>
+        <label style={{display:"flex",gap:10,alignItems:"flex-start",cursor:"pointer"}}>
+          <input type="checkbox" checked={zrcadlitDoFinanci} onChange={e=>ulozZrcadleni(e.target.checked)} style={{marginTop:3}}/>
+          <span>
+            <span style={{fontWeight:700,fontSize:13}}>Zapisovat platby alimentů i do Financí</span>
+            <span style={{display:"block",fontSize:12,color:C.muted,marginTop:4,lineHeight:1.5}}>
+              Nech vypnuté, dokud platby chodí přes banku — import je nabere sám a se zapnutým zrcadlením by v rozpočtu byly dvakrát.
+              Zapni jen tehdy, když se alimenty platí v hotovosti a ve výpisech nejsou.
+            </span>
+          </span>
+        </label>
       </div>
 
       {editModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
