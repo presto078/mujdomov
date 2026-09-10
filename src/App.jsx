@@ -11859,7 +11859,7 @@ function pomAktSkolniRok(){const d=new Date();const y=d.getMonth()>=6?d.getFullY
 // zásobou se koncové písmeno odřízne. Jiné názvy se berou celé.
 function pomZakladKodu(nazev){
   const n=String(nazev||"").trim().toLowerCase();
-  const m=n.match(/^(\d+)[rle]$/);
+  const m=n.match(/^(\d+)\s*(pl|[rle])$/);
   return m?m[1]:n;
 }
 function pomKlic(kategorie_id,nazev,provedeni){
@@ -11874,25 +11874,45 @@ function pomIkona(ikona){
   if(/\p{Extended_Pictographic}/u.test(s))return s;
   return POM_IKONY_SLOVA[s.toLowerCase()]||"";
 }
-// Číslo sešitu: 1. číslice formát, 2. počet listů (× 10), 3. druh linkování.
-// 544 = A5, 40 listů, linkovaný. Písmeno za číslem (544R, 560e) se nepopisuje.
+// Číslo sešitu je u českých výrobců jednotné (zdroj: Papírny Brno):
+// 1. číslice formát, 2. počet listů v desítkách, zbytek linkování.
+// 544 = A5, 40 listů, linky 8 mm; 5110 = A5, 10 listů, čtverečky 10 mm.
+// Písmena za číslem jsou varianty téhož sešitu (papír, lenoch, pomocné linky).
 const POM_FORMAT={"4":"A4","5":"A5","6":"A6"};
-const POM_LINKOVANI={"0":"čistý","1":"linkovaný pro 1. třídu s pomocnou linkou","2":"linkovaný pro 2. třídu","3":"linkovaný pro 3. třídu","4":"linkovaný","5":"čtverečkovaný"};
+const POM_LINKOVANI={
+  "0":"čistý",
+  "1":"linky 20 mm (první psaní)",
+  "2":"linky 16 mm",
+  "3":"linky 12 mm (3. třída)",
+  "4":"linky 8 mm (od 4. třídy)",
+  "5":"čtverečky 5 × 5 mm",
+  "8":"tečky 8 × 8 mm",
+  "10":"čtverečky 10 × 10 mm",
+};
+const POM_PISMENA={e:"ekologický (recyklovaný) papír",r:"recyklovaný papír",l:"s integrovaným lenochem",pl:"s pomocnými linkami"};
+const POM_PISMENO_ZOBRAZ={e:"e",r:"R",l:"L",pl:"PL"};
+const POM_ZVLASTNI={"534":"slovníček se 3 sloupci"};
 function pomPopisSesitu(nazev){
-  const m=String(nazev||"").trim().match(/^([456])([1-9])(\d)\s*[a-z]?$/i);
+  const m=String(nazev||"").trim().toLowerCase().match(/^([456])([1-8])(10|\d)\s*(pl|[elr])?$/);
   if(!m)return "";
-  return [POM_FORMAT[m[1]],`${+m[2]*10} listů`,POM_LINKOVANI[m[3]]].filter(Boolean).join(" · ");
+  return [POM_FORMAT[m[1]],`${+m[2]*10} listů`,POM_LINKOVANI[m[3]],POM_ZVLASTNI[m[1]+m[2]+m[3]],POM_PISMENA[m[4]]].filter(Boolean).join(" · ");
 }
 function PomLegendaSesitu(){
-  const radek=(cislo,co)=><div style={{display:"flex",gap:8}}><b style={{minWidth:16,color:C.text}}>{cislo}</b><span>{co}</span></div>;
+  const radek=(cislo,co)=><div key={cislo} style={{display:"flex",gap:8}}><b style={{minWidth:24,color:C.text}}>{cislo}</b><span>{co}</span></div>;
+  const sloupec=(titul,obsah)=><div><div style={{fontWeight:700,color:C.text}}>{titul}</div>{obsah}</div>;
+  const priklad=(kod,text)=><><b style={{color:C.text}}>{kod}</b> = {text}</>;
   return <div style={{background:C.accentS,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14,fontSize:12,color:C.muted,lineHeight:1.6}}>
     <div style={{fontWeight:800,color:C.text,marginBottom:6}}>Jak číst číslo sešitu</div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:"8px 20px"}}>
-      <div><div style={{fontWeight:700,color:C.text}}>1. číslice — formát</div>{radek(4,"A4")}{radek(5,"A5")}{radek(6,"A6")}</div>
-      <div><div style={{fontWeight:700,color:C.text}}>2. číslice — počet listů</div>{radek(1,"10 listů")}{radek(2,"20 listů")}{radek(4,"40 listů")}{radek(6,"60 listů")}</div>
-      <div><div style={{fontWeight:700,color:C.text}}>3. číslice — linkování</div>{Object.entries(POM_LINKOVANI).map(([c,t])=><div key={c}>{radek(c,t)}</div>)}</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:"8px 20px"}}>
+      {sloupec("1. číslice — formát",Object.entries(POM_FORMAT).map(([c,t])=>radek(c,t)))}
+      {sloupec("2. číslice — počet listů",["1","2","3","4","6","8"].map(c=>radek(c,`${+c*10} listů`)))}
+      {sloupec("Na konci — linkování",Object.entries(POM_LINKOVANI).map(([c,t])=>radek(c,t)))}
+      {sloupec("Písmeno za číslem",Object.entries(POM_PISMENA).map(([c,t])=>radek(POM_PISMENO_ZOBRAZ[c],t)))}
     </div>
-    <div style={{marginTop:8}}>Příklad: <b style={{color:C.text}}>544</b> = A5, 40 listů, linkovaný · <b style={{color:C.text}}>420</b> = A4, 20 listů, čistý. Písmeno na konci (544R, 560e) je varianta téhož sešitu — v Nákupu se zásoba sčítá dohromady.</div>
+    <div style={{marginTop:8}}>
+      Příklady: {priklad("544","A5, 40 listů, linky 8 mm")} · {priklad("440L","A4, 40 listů, čistý, s lenochem")} · {priklad("425e","A4, 20 listů, čtverečky, ekologický papír")} · {priklad("5110","A5, 10 listů, čtverečky 10 mm")} · {priklad("534","A5 slovníček se 3 sloupci")}.
+    </div>
+    <div style={{marginTop:4}}>Varianty s písmenem (440, 440L, 440R, 440e) jsou stejný sešit — v Nákupu se zásoba sčítá dohromady.</div>
   </div>;
 }
 const pomSeradKat=kategorie=>[...kategorie].sort((a,b)=>(+a.poradi||0)-(+b.poradi||0)||pomAbc(a.nazev,b.nazev));
