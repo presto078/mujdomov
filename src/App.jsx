@@ -11865,6 +11865,15 @@ function pomZakladKodu(nazev){
 function pomKlic(kategorie_id,nazev,provedeni){
   return `${kategorie_id==null||kategorie_id===""?"":String(kategorie_id)}|${pomZakladKodu(nazev)}|${String(provedeni||"").trim().toLowerCase()}`;
 }
+// Ikona kategorie má být emoji. Migrace ale naplnila anglické názvy ikon
+// (notebook, pencil…) — ty se převedou, jiný text se nezobrazí vůbec.
+const POM_IKONY_SLOVA={notebook:"📓",book:"📘",books:"📚",pencil:"✏️",pen:"🖊️",palette:"🎨",brush:"🖌️",file:"📁",folder:"📁",ruler:"📐",scissors:"✂️",backpack:"🎒",calculator:"🧮",paperclip:"📎",glue:"🧴"};
+function pomIkona(ikona){
+  const s=String(ikona||"").trim();
+  if(!s)return "";
+  if(/\p{Extended_Pictographic}/u.test(s))return s;
+  return POM_IKONY_SLOVA[s.toLowerCase()]||"";
+}
 const pomSeradKat=kategorie=>[...kategorie].sort((a,b)=>(+a.poradi||0)-(+b.poradi||0)||pomAbc(a.nazev,b.nazev));
 // Výdej = odečíst ze zásoby + zapsat do pomucky_vydej. Když zápis výdeje selže,
 // počet se vrátí, aby zásoba a historie nejely každá jinak.
@@ -11937,7 +11946,8 @@ function PomuckyTab(){
   const reloadCiselniky=()=>{kat.reload();um.reload();pol.reload();poz.reload();};
   const hlavicka={zalozka,setZalozka,uzky};
 
-  return <div>
+  // #root v index.css centruje text — modul chce zarovnání vlevo.
+  return <div style={{textAlign:"left"}}>
     {chyby.length>0&&<div style={{background:C.redS,border:`1px solid ${C.red}`,borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:C.red}}>
       ⚠ Nepodařilo se načíst: {chyby.map(([co,e])=>`${co} (${e})`).join(", ")}
     </div>}
@@ -12052,7 +12062,7 @@ function PomZasoba({hlavicka,uzky,polozky,setPolozky,reloadPolozky,kategorie,umi
           <div onClick={()=>prepniKartu(k)} role="button" aria-expanded={otevreno} title={q?undefined:otevreno?"Sbalit":"Rozbalit"}
             style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",cursor:q?"default":"pointer",userSelect:"none"}}>
             <span style={{color:C.muted,fontSize:10,width:12,textAlign:"center",transform:otevreno?"rotate(90deg)":"none",transition:"transform .15s"}}>▶</span>
-            {k?.ikona&&<span style={{fontSize:16}}>{k.ikona}</span>}
+            {pomIkona(k?.ikona)&&<span style={{fontSize:16}}>{pomIkona(k.ikona)}</span>}
             <div style={{fontWeight:800,fontSize:13,flex:1,minWidth:0}}>{k?k.nazev:"Bez kategorie"}</div>
             {dosloKat>0&&<span style={{fontSize:11,fontWeight:700,color:C.red,whiteSpace:"nowrap"}}>{dosloKat} došlo</span>}
             <span style={{fontSize:11,fontWeight:700,color:C.muted,background:C.bg,padding:"2px 8px",borderRadius:20,whiteSpace:"nowrap"}}>{rady.length} pol · {kusu} ks</span>
@@ -12140,7 +12150,7 @@ function PomPolozkaModal({polozka,kategorie,umisteni,deti,provedeniVolby,default
       <Field label="Kategorie">
         <select style={inp} value={f.kategorie_id} onChange={e=>set("kategorie_id",e.target.value)}>
           <option value="">— bez kategorie —</option>
-          {kategorie.map(k=><option key={k.id} value={String(k.id)}>{k.ikona?k.ikona+" ":""}{k.nazev}</option>)}
+          {kategorie.map(k=><option key={k.id} value={String(k.id)}>{pomIkona(k.ikona)?pomIkona(k.ikona)+" ":""}{k.nazev}</option>)}
         </select>
       </Field>
       <Field label="Počet kusů"><input style={inp} type="number" min="0" value={f.pocet} onChange={e=>set("pocet",e.target.value)}/></Field>
@@ -12354,7 +12364,7 @@ function PomNakup({pozadavky,reloadPozadavky,polozky,kategorie,deti}){
       const pol=[...m.values()].filter(z=>k?pomEq(z.kat,k.id):!katSerazene.some(x=>pomEq(x.id,z.kat)))
         .sort((a,b)=>pomAbc([...a.nazvy][0],[...b.nazvy][0]));
       if(pol.length===0)continue;
-      radkyTxt.push(k?`${k.ikona?k.ikona+" ":""}${k.nazev}`:"Ostatní");
+      radkyTxt.push(k?`${pomIkona(k.ikona)?pomIkona(k.ikona)+" ":""}${k.nazev}`:"Ostatní");
       for(const z of pol)radkyTxt.push(`- ${[...z.nazvy].sort(pomAbc).join(" / ")}${z.prov?`, ${z.prov}`:""} — ${z.ks} ks`);
       radkyTxt.push("");
     }
@@ -12394,7 +12404,7 @@ function PomNakup({pozadavky,reloadPozadavky,polozky,kategorie,deti}){
           return <div key={p.id} onClick={()=>setEdit(p)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderTop:i?`1px solid ${C.border}`:"none",cursor:"pointer",opacity:p.vyrizeno?.55:1}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:13,fontWeight:600}}>
-                {k?.ikona?k.ikona+" ":""}{p.nazev}
+                {pomIkona(k?.ikona)?pomIkona(k.ikona)+" ":""}{p.nazev}
                 {prov&&<span style={{color:C.dim,fontSize:11,fontWeight:500,marginLeft:6}}>{prov}</span>}
                 {!dite&&d&&<span style={{marginLeft:8,fontSize:11,fontWeight:700,color:d.barva||C.muted}}>{d.emoji?d.emoji+" ":""}{d.jmeno}</span>}
               </div>
@@ -12467,7 +12477,7 @@ function PomPozadavekModal({pozadavek,kategorie,deti,roky,defaultRok,defaultDite
       <Field label="Kategorie">
         <select style={inp} value={f.kategorie_id} onChange={e=>set("kategorie_id",e.target.value)}>
           <option value="">— bez kategorie —</option>
-          {kategorie.map(k=><option key={k.id} value={String(k.id)}>{k.ikona?k.ikona+" ":""}{k.nazev}</option>)}
+          {kategorie.map(k=><option key={k.id} value={String(k.id)}>{pomIkona(k.ikona)?pomIkona(k.ikona)+" ":""}{k.nazev}</option>)}
         </select>
       </Field>
       <Field label="Název" hint={skladem!=null?`skladem ${skladem} ks`:undefined}>
