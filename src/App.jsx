@@ -11858,6 +11858,47 @@ async function pomVydej(p,kusu,dite_id=null,poznamka=null){
   return {novy};
 }
 
+// Od kolika kusů níž se položka hlásí oranžově jako docházející.
+const POM_DOCHAZI=2;
+const POM_UZKY_DOTAZ="(max-width: 640px)";
+function usePomUzky(){
+  const [uzky,setUzky]=useState(()=>window.matchMedia(POM_UZKY_DOTAZ).matches);
+  useEffect(()=>{
+    const m=window.matchMedia(POM_UZKY_DOTAZ);
+    const f=()=>setUzky(m.matches);
+    m.addEventListener("change",f);
+    return ()=>m.removeEventListener("change",f);
+  },[]);
+  return uzky;
+}
+// Sbalené kategorie si pamatuje každé zařízení zvlášť.
+const POM_SBALENE_KLIC="pomucky_zasoba_sbalene";
+function pomNactiSbalene(){
+  try{const v=JSON.parse(localStorage.getItem(POM_SBALENE_KLIC)||"[]");return new Set(Array.isArray(v)?v.map(String):[]);}
+  catch{return new Set();}
+}
+function pomUlozSbalene(s){
+  try{localStorage.setItem(POM_SBALENE_KLIC,JSON.stringify([...s]));}
+  catch{/* zakázané úložiště — sbalení jen nepřežije obnovení stránky */}
+}
+
+function PomHlavicka({zalozka,setZalozka,uzky,children}){
+  return <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+    <h2 style={{margin:"0 4px 0 0",fontSize:uzky?18:20,fontWeight:800}}>📚 Učební pomůcky</h2>
+    <div style={{display:"inline-flex",background:C.border,borderRadius:9,padding:3}}>
+      {[{id:"zasoba",l:"📦 Zásoba"},{id:"nakup",l:"🛒 Nákup"}].map(t=>
+        <button key={t.id} onClick={()=>setZalozka(t.id)} style={{border:"none",padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",background:zalozka===t.id?C.surface:"transparent",color:zalozka===t.id?C.text:C.muted}}>{t.l}</button>)}
+    </div>
+    <div style={{flex:1}}/>
+    {children}
+  </div>;
+}
+
+function PomPlusMinus({znak,barva,disabled,slabe,popis,onClick}){
+  return <button disabled={disabled} title={popis} aria-label={popis} onClick={e=>{e.stopPropagation();onClick();}}
+    style={{width:32,height:32,flexShrink:0,borderRadius:"50%",border:`1px solid ${C.borderL}`,background:C.surface,color:barva,fontSize:17,fontWeight:800,lineHeight:1,padding:0,cursor:slabe?"default":"pointer",opacity:slabe?.3:1}}>{znak}</button>;
+}
+
 function PomuckyTab(){
   const pol=useData(()=>sb.from("pomucky_polozky").select("*"));
   const kat=useData(()=>sb.from("pomucky_kategorie").select("*").order("poradi"));
@@ -11865,30 +11906,29 @@ function PomuckyTab(){
   const poz=useData(()=>sb.from("pomucky_pozadavky").select("*"));
   const det=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
   const [zalozka,setZalozka]=useState("zasoba");
+  const uzky=usePomUzky();
 
   if([pol,kat,um,poz,det].some(d=>d.loading&&d.data==null))return <Spinner/>;
   const chyby=[["položky",pol.error],["kategorie",kat.error],["úložná místa",um.error],["požadavky",poz.error],["děti",det.error]].filter(x=>x[1]);
   const reloadCiselniky=()=>{kat.reload();um.reload();pol.reload();poz.reload();};
+  const hlavicka={zalozka,setZalozka,uzky};
 
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-      <h2 style={{margin:0,fontSize:22,fontWeight:800}}>📚 Učební pomůcky</h2>
-    </div>
     {chyby.length>0&&<div style={{background:C.redS,border:`1px solid ${C.red}`,borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:C.red}}>
       ⚠ Nepodařilo se načíst: {chyby.map(([co,e])=>`${co} (${e})`).join(", ")}
     </div>}
-    <div style={{display:"flex",gap:2,marginBottom:24,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
-      {[{id:"zasoba",l:"📦 Zásoba"},{id:"nakup",l:"🛒 Nákup"}].map(t=>
-        <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{t.l}</button>)}
-    </div>
-    {zalozka==="zasoba"&&<PomZasoba polozky={pol.data||[]} setPolozky={pol.setData} reloadPolozky={pol.reload}
+    {zalozka==="zasoba"&&<PomZasoba hlavicka={hlavicka} uzky={uzky} polozky={pol.data||[]} setPolozky={pol.setData} reloadPolozky={pol.reload}
       kategorie={kat.data||[]} umisteni={um.data||[]} pozadavky={poz.data||[]} deti={det.data||[]} reloadCiselniky={reloadCiselniky}/>}
-    {zalozka==="nakup"&&<PomNakup pozadavky={poz.data||[]} reloadPozadavky={poz.reload}
-      polozky={pol.data||[]} kategorie={kat.data||[]} deti={det.data||[]}/>}
+    {zalozka==="nakup"&&<>
+      <PomHlavicka {...hlavicka}/>
+      <PomNakup pozadavky={poz.data||[]} reloadPozadavky={poz.reload}
+        polozky={pol.data||[]} kategorie={kat.data||[]} deti={det.data||[]}/>
+    </>}
   </div>;
 }
 
-function PomZasoba({polozky,setPolozky,reloadPolozky,kategorie,umisteni,pozadavky,deti,reloadCiselniky}){
+function PomZasoba({hlavicka,uzky,polozky,setPolozky,reloadPolozky,kategorie,umisteni,pozadavky,deti,reloadCiselniky}){
+  const [sbalene,setSbalene]=useState(pomNactiSbalene);
   const [fMisto,setFMisto]=useState("");
   const [fProv,setFProv]=useState("");
   const [hledat,setHledat]=useState("");
@@ -11937,18 +11977,24 @@ function PomZasoba({polozky,setPolozky,reloadPolozky,kategorie,umisteni,pozadavk
   };
   const nastavPocetLokalne=(id,novy)=>setPolozky(prev=>(prev||[]).map(x=>pomEq(x.id,id)?{...x,pocet:novy}:x));
 
+  const doslo=filtr.filter(p=>pomNum(p.pocet)===0).length;
+  const dochazi=filtr.filter(p=>{const n=pomNum(p.pocet);return n>0&&n<=POM_DOCHAZI;}).length;
+  const klicKarty=k=>k?String(k.id):"bez";
+  // Při hledání se všechno rozbalí, jinak by nalezené řádky zůstaly schované.
+  const otevrena=k=>!!q||!sbalene.has(klicKarty(k));
+  const ulozSbalene=n=>{setSbalene(n);pomUlozSbalene(n);};
+  const prepniKartu=k=>{const n=new Set(sbalene),id=klicKarty(k);if(n.has(id))n.delete(id);else n.add(id);ulozSbalene(n);};
+  const vseSbalene=karty.length>0&&karty.every(({k})=>sbalene.has(klicKarty(k)));
+  const sbalVse=()=>{const n=new Set(sbalene);karty.forEach(({k})=>vseSbalene?n.delete(klicKarty(k)):n.add(klicKarty(k)));ulozSbalene(n);};
+  const sloupce=uzky?"minmax(0,1fr) auto auto":fMisto?"minmax(0,1fr) 64px auto":"minmax(0,1.4fr) minmax(0,1fr) 64px auto";
+
   return <div>
-    <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginBottom:14,flexWrap:"wrap"}}>
-      <button onClick={()=>setCiselniky(true)} style={{...btnC(C.muted,true),fontSize:12,padding:"6px 12px"}}>⚙️ Místa a kategorie</button>
-      <button onClick={()=>setEdit("nova")} style={{...btnC(),fontSize:12,padding:"6px 12px"}}>+ Nová položka</button>
-    </div>
+    <PomHlavicka {...hlavicka}>
+      <button onClick={()=>setCiselniky(true)} title="Místa a kategorie" style={{...btnC(C.muted,true),fontSize:12,padding:"6px 10px"}}>⚙️{uzky?"":" Místa a kategorie"}</button>
+      <button onClick={()=>setEdit("nova")} style={{...btnC(),fontSize:12,padding:"6px 12px"}}>+ {uzky?"":"Nová "}položka</button>
+    </PomHlavicka>
 
-    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12,marginBottom:16}}>
-      <StatCard label="Položek" val={filtr.length} color={C.accent}/>
-      <StatCard label="Kusů celkem" val={kusuCelkem} color={C.green}/>
-    </div>
-
-    <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr) minmax(0,2fr)",gap:10,marginBottom:18}}>
+    <div style={{display:"grid",gridTemplateColumns:uzky?"minmax(0,1fr) minmax(0,1fr)":"minmax(0,1fr) minmax(0,1fr) minmax(0,2fr)",gap:8,marginBottom:10}}>
       <select style={inp} value={fMisto} onChange={e=>setFMisto(e.target.value)}>
         <option value="">Všechna místa</option>
         {[...umisteni].sort((a,b)=>(+a.poradi||0)-(+b.poradi||0)||pomAbc(a.nazev,b.nazev)).map(u=><option key={u.id} value={String(u.id)}>{u.nazev}</option>)}
@@ -11958,35 +12004,57 @@ function PomZasoba({polozky,setPolozky,reloadPolozky,kategorie,umisteni,pozadavk
         {provedeniVDatech.map(p=><option key={p} value={p}>{p}</option>)}
         {maNeurcene&&<option value={POM_PRAZDNE}>neurčeno</option>}
       </select>
-      <input style={inp} placeholder="🔍 Hledat v názvu…" value={hledat} onChange={e=>setHledat(e.target.value)}/>
+      <input style={uzky?{...inp,gridColumn:"1/-1"}:inp} placeholder="🔍 Hledat v názvu…" value={hledat} onChange={e=>setHledat(e.target.value)}/>
     </div>
+
+    {polozky.length>0&&<div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",fontSize:12,color:C.muted,marginBottom:14}}>
+      <div>
+        <b style={{color:C.text}}>{filtr.length}</b> položek · <b style={{color:C.text}}>{kusuCelkem}</b> ks
+        {doslo>0&&<span style={{color:C.red}}> · {doslo} došlo</span>}
+        {dochazi>0&&<span style={{color:C.orange}}> · {dochazi} dochází</span>}
+      </div>
+      <div style={{flex:1}}/>
+      {!q&&karty.length>1&&<button onClick={sbalVse} style={{border:"none",background:"none",padding:0,color:C.accent,fontSize:12,fontWeight:700,cursor:"pointer"}}>{vseSbalene?"▾ Rozbalit vše":"▸ Sbalit vše"}</button>}
+    </div>}
 
     {polozky.length===0&&<EmptyState emoji="📚" text="Zatím žádné pomůcky. Pokud tu data mají být, zkontroluj přihlášení — bez něj tabulky nic nevrátí." action="+ Přidat položku" onAction={()=>setEdit("nova")}/>}
     {polozky.length>0&&karty.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.dim,fontSize:13}}>Filtrům nic neodpovídá</div>}
 
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {karty.map(({k,rady,kusu})=><div key={k?k.id:"bez"} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",background:C.bg}}>
-          <div style={{fontWeight:800,fontSize:14}}>{k?`${k.ikona?k.ikona+" ":""}${k.nazev}`:"Bez kategorie"}</div>
-          <div style={{fontSize:12,fontWeight:700,color:C.muted}}>{kusu} ks</div>
-        </div>
-        {rady.map(p=>{
-          const pocet=pomNum(p.pocet);
-          const prov=String(p.provedeni||"").trim();
-          const u=p.umisteni_id!=null?umMap.get(String(p.umisteni_id)):null;
-          return <div key={p.id} onClick={()=>setEdit(p)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 16px",borderTop:`1px solid ${C.border}`,cursor:"pointer"}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600}}>{p.nazev}{prov&&<span style={{color:C.dim,fontSize:11,fontWeight:500,marginLeft:6}}>{prov}</span>}</div>
-              {!fMisto&&<div style={{fontSize:11,color:u?C.muted:C.dim,marginTop:2}}>{u?`📍 ${u.nazev}`:"bez umístění"}</div>}
-            </div>
-            <div style={{fontSize:15,fontWeight:800,minWidth:52,textAlign:"right",color:pocet===0?C.dim:C.text}}>{pocet} <span style={{fontSize:11,fontWeight:600,color:C.muted}}>ks</span></div>
-            <button disabled={pocet<=0||busy} onClick={e=>{e.stopPropagation();zmenPocet(p,-1);}}
-              style={{...btnC(C.red,true),padding:"3px 10px",fontSize:12,opacity:pocet<=0?.35:1,cursor:pocet<=0?"default":"pointer"}}>−1</button>
-            <button disabled={busy} onClick={e=>{e.stopPropagation();zmenPocet(p,1);}}
-              style={{...btnC(C.green,true),padding:"3px 10px",fontSize:12}}>+1</button>
-          </div>;
-        })}
-      </div>)}
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      {karty.map(({k,rady,kusu})=>{
+        const otevreno=otevrena(k);
+        const dosloKat=rady.filter(p=>pomNum(p.pocet)===0).length;
+        return <div key={klicKarty(k)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+          <div onClick={()=>prepniKartu(k)} role="button" aria-expanded={otevreno} title={q?undefined:otevreno?"Sbalit":"Rozbalit"}
+            style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",cursor:q?"default":"pointer",userSelect:"none"}}>
+            <span style={{color:C.muted,fontSize:10,width:12,textAlign:"center",transform:otevreno?"rotate(90deg)":"none",transition:"transform .15s"}}>▶</span>
+            {k?.ikona&&<span style={{fontSize:16}}>{k.ikona}</span>}
+            <div style={{fontWeight:800,fontSize:13,flex:1,minWidth:0}}>{k?k.nazev:"Bez kategorie"}</div>
+            {dosloKat>0&&<span style={{fontSize:11,fontWeight:700,color:C.red,whiteSpace:"nowrap"}}>{dosloKat} došlo</span>}
+            <span style={{fontSize:11,fontWeight:700,color:C.muted,background:C.bg,padding:"2px 8px",borderRadius:20,whiteSpace:"nowrap"}}>{rady.length} pol · {kusu} ks</span>
+          </div>
+          {otevreno&&rady.map(p=>{
+            const pocet=pomNum(p.pocet);
+            const prov=String(p.provedeni||"").trim();
+            const u=p.umisteni_id!=null?umMap.get(String(p.umisteni_id)):null;
+            const misto=u?u.nazev:"bez umístění";
+            return <div key={p.id} onClick={()=>setEdit(p)} style={{display:"grid",gridTemplateColumns:sloupce,alignItems:"center",gap:10,padding:"8px 14px",borderTop:`1px solid ${C.border}`,background:pocet===0?`${C.redS}99`:C.surface,cursor:"pointer"}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:14,fontWeight:700}}>{p.nazev}{prov&&<span style={{fontSize:11,fontWeight:600,color:C.muted,background:C.bg,padding:"1px 7px",borderRadius:20,marginLeft:7,whiteSpace:"nowrap"}}>{prov}</span>}</div>
+                {uzky&&!fMisto&&<div style={{fontSize:11,color:u?C.muted:C.dim,marginTop:2}}>{misto}</div>}
+              </div>
+              {!uzky&&!fMisto&&<div style={{fontSize:12,color:u?C.muted:C.dim,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u?`📍 ${misto}`:misto}</div>}
+              <div style={{textAlign:"right",fontSize:18,fontWeight:800,lineHeight:1.1,color:pocet===0?C.red:pocet<=POM_DOCHAZI?C.orange:C.text}}>
+                {pocet}{pocet===0&&<div style={{fontSize:10,fontWeight:700}}>došlo</div>}
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <PomPlusMinus znak="−" barva={C.red} popis="Vydat 1 kus" disabled={pocet<=0||busy} slabe={pocet<=0} onClick={()=>zmenPocet(p,-1)}/>
+                <PomPlusMinus znak="+" barva={C.green} popis="Přidat 1 kus" disabled={busy} onClick={()=>zmenPocet(p,1)}/>
+              </div>
+            </div>;
+          })}
+        </div>;
+      })}
     </div>
 
     {edit&&<PomPolozkaModal polozka={edit==="nova"?null:edit} kategorie={katSerazene} umisteni={umisteni} deti={deti}
