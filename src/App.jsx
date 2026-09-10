@@ -12293,6 +12293,7 @@ function PomCiselnikSloupec({titul,tabulka,radky,sIkonou,vazby,onZmena}){
   const [novy,setNovy]=useState("");
   const [novaIkona,setNovaIkona]=useState("");
   const [draft,setDraft]=useState({}); // id → {nazev,ikona}
+  const [presouva,setPresouva]=useState(false);
   const serazene=[...radky].sort((a,b)=>(+a.poradi||0)-(+b.poradi||0)||pomAbc(a.nazev,b.nazev));
   const zahodDraft=id=>setDraft(d=>{const n={...d};delete n[String(id)];return n;});
   const upravDraft=(r,k,v)=>setDraft(d=>{const id=String(r.id);return {...d,[id]:{nazev:r.nazev||"",ikona:r.ikona||"",...d[id],[k]:v}};});
@@ -12328,18 +12329,35 @@ function PomCiselnikSloupec({titul,tabulka,radky,sIkonou,vazby,onZmena}){
     if(error){alert("Smazání selhalo: "+error.message);return;}
     zahodDraft(r.id);onZmena();
   };
+  const presun=async(i,smer)=>{
+    const j=i+smer;
+    if(presouva||j<0||j>=serazene.length)return;
+    const nove=[...serazene];
+    [nove[i],nove[j]]=[nove[j],nove[i]];
+    // Přečísluje se celý seznam — v datech můžou být v pořadí díry i duplicity.
+    const zmeny=nove.map((r,k)=>({r,poradi:k+1})).filter(x=>(+x.r.poradi||0)!==x.poradi);
+    setPresouva(true);
+    const vysledky=await Promise.all(zmeny.map(x=>sb.from(tabulka).update({poradi:x.poradi}).eq("id",x.r.id)));
+    setPresouva(false);
+    const chyba=vysledky.find(v=>v.error);
+    if(chyba)alert("Pořadí se nepodařilo uložit: "+chyba.error.message);
+    onZmena();
+  };
+  const sipka={...btnC(C.muted,true),padding:"5px 7px",fontSize:11,lineHeight:1};
 
   return <div>
     <div style={{fontWeight:800,fontSize:14,marginBottom:10}}>{titul}</div>
     <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
       {serazene.length===0&&<div style={{color:C.dim,fontSize:12}}>Zatím nic</div>}
-      {serazene.map(r=>{
+      {serazene.map((r,i)=>{
         const d=draft[String(r.id)];
         return <div key={r.id} style={{display:"flex",gap:6,alignItems:"center"}}>
           {sIkonou&&<input style={{...inp,width:48,textAlign:"center",padding:"6px 4px"}} value={d?d.ikona:(r.ikona||"")} onChange={e=>upravDraft(r,"ikona",e.target.value)}/>}
           <input style={{...inp,padding:"6px 10px"}} value={d?d.nazev:(r.nazev||"")} onChange={e=>upravDraft(r,"nazev",e.target.value)}
             onKeyDown={e=>{if(e.key==="Enter")ulozRadek(r);if(e.key==="Escape")zahodDraft(r.id);}}/>
           {d&&<button onClick={()=>ulozRadek(r)} title="Uložit" style={{...btnC(C.green),padding:"5px 9px",fontSize:12}}>✓</button>}
+          <button onClick={()=>presun(i,-1)} disabled={presouva||i===0} title="Posunout nahoru" aria-label="Posunout nahoru" style={{...sipka,opacity:i===0?.3:1}}>▲</button>
+          <button onClick={()=>presun(i,1)} disabled={presouva||i===serazene.length-1} title="Posunout dolů" aria-label="Posunout dolů" style={{...sipka,opacity:i===serazene.length-1?.3:1}}>▼</button>
           <button onClick={()=>smaz(r)} title="Smazat" style={{...btnC(C.red,true),padding:"5px 9px",fontSize:12}}>✕</button>
         </div>;
       })}
