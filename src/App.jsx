@@ -3020,9 +3020,10 @@ function LikviditaTab({ucty}){
       const k=likSmer(t)+likKlic(t);
       if(!skup.has(k))skup.set(k,{k,ven:(+t.castka||0)<0,cislo:String(t.protistrana||"").split("/")[0],
                                  stem:String(t.popis||"").split("·")[0].replace(/\s+/g," ").trim(),
-                                 mesice:new Map(),dny:[],popisy:new Map(),pocet:0});
+                                 mesice:new Map(),dny:[],popisy:new Map(),castky:[],pocet:0});
       const g=skup.get(k), m=String(t.datum).slice(0,7);
       g.mesice.set(m,(g.mesice.get(m)||0)+Math.abs(+t.castka||0));
+      g.castky.push(Math.abs(+t.castka||0));
       g.dny.push(+String(t.datum).slice(8,10));
       g.pocet++;
       const popis=String(t.popis||"").replace(/\s+/g," ").trim()||"(bez popisu)";
@@ -3031,7 +3032,19 @@ function LikviditaTab({ucty}){
     return [...skup.values()].filter(g=>g.mesice.size>=minMesicu).map(g=>{
       const dny=[...g.dny].sort((a,b)=>a-b);
       const nejcastejsi=[...g.popisy.entries()].sort((a,b)=>b[1]-a[1])[0][0];
-      return {...g,
+      // Pevná platba je ta, kde má každá jednotlivá platba stejnou částku —
+      // splátka, odvod, inkaso. U nákupů se částka mění, takže chybějící měsíc
+      // nic neznamená. Porovnávají se jednotlivé platby, ne měsíční součty:
+      // když se vynechaná splátka dožene v dalším měsíci, je ten měsíc dvojitý
+      // a součet by test rozbil — přitom je to přesně ten případ, který hledáme.
+      const zaklad = median(g.castky);
+      const pevna = zaklad>=500 && g.castky.every(c=>Math.abs(c-zaklad)<=zaklad*0.02);
+      // Měsíce před první platbou se nepočítají — splátka, která začala až
+      // uprostřed okna, by jinak hlásila vynechání ještě než vůbec existovala.
+      const prvni = [...g.mesice.keys()].sort()[0];
+      const chybiV = pevna ? hotove.filter(m=>m>prvni&&!g.mesice.has(m)) : [];
+      const dvojiteV = pevna ? hotove.filter(m=>Math.round((g.mesice.get(m)||0)/zaklad)>1) : [];
+      return {...g, pevna, chybiV, dvojiteV, zaklad,
         castka:median([...g.mesice.values()]),
         den:median(dny), odDne:dny[0], doDne:dny[dny.length-1],
         rozptyl:dny[dny.length-1]-dny[0], mesicu:g.mesice.size,
@@ -3072,6 +3085,7 @@ function LikviditaTab({ucty}){
       if(bezne<dno.stav)dno={stav:bezne,den:g.kdy};
     }
     return {u,p,cekaji:kroky,z,dno,maAktualni,
+      vynechane:p.filter(x=>x.ven&&x.chybiV.length),
       venCelkem:p.filter(x=>x.ven).reduce((s,x)=>s+x.castka,0),
       dovnitrCelkem:p.filter(x=>!x.ven).reduce((s,x)=>s+x.castka,0)};
   };
@@ -3108,7 +3122,7 @@ function LikviditaTab({ucty}){
 
     {!karty.length&&<div style={{color:C.dim,fontSize:13,padding:20}}>Zatím není z čeho počítat — chybí dokončené měsíce s výpisy.</div>}
 
-    {karty.map(({u,p,cekaji,z,dno,maAktualni,venCelkem,dovnitrCelkem})=>{
+    {karty.map(({u,p,cekaji,z,dno,maAktualni,venCelkem,dovnitrCelkem,vynechane})=>{
       const chybi=dno.stav<0?-dno.stav:0;
       const barva=chybi?C.red:(dno.stav<5000?C.orange:C.green);
       const otevreno=!!rozbaleno[u.id];
@@ -3119,6 +3133,7 @@ function LikviditaTab({ucty}){
             <div style={{fontWeight:800,fontSize:14.5,color:C.text}}>{u.nazev}</div>
             <div style={{fontSize:11.5,color:C.dim,marginTop:2}}>
               {p.length} pravidelných položek · ven {kc0(venCelkem)} · dovnitř {kc0(dovnitrCelkem)}
+              {vynechane.length>0&&<span style={{color:C.red,fontWeight:700}}> · ⚠ {vynechane.length}× vynechaná splátka</span>}
             </div>
           </div>
           <div style={{textAlign:"right"}}>
@@ -3136,6 +3151,15 @@ function LikviditaTab({ucty}){
         </div>
 
         {otevreno&&<div style={{borderTop:`1px solid ${C.border}`,padding:"10px 16px 14px"}}>
+          {vynechane.length>0&&<div style={{background:C.redS,border:`1px solid ${C.red}`,borderRadius:10,
+              padding:"9px 12px",fontSize:12,marginBottom:9,lineHeight:1.6}}>
+            <strong>Pevná platba, která v některém měsíci neodešla:</strong>
+            {vynechane.map(g=><div key={g.k}>
+              {g.nazev} — {kc0(g.zaklad)} chybí v {g.chybiV.join(", ")}
+              {g.dvojiteV.length>0&&<span style={{color:C.muted}}> (dohnáno v {g.dvojiteV.join(", ")})</span>}
+            </div>)}
+            <div style={{color:C.muted,marginTop:3}}>Buď na účtu ten den nebylo, nebo přišla o pár dní později v jiném měsíci.</div>
+          </div>}
           {!maAktualni&&<div style={{fontSize:11.5,color:C.orange,marginBottom:7}}>
             Výpis za tenhle měsíc ještě není naimportovaný — počítám všechny obvyklé platby od dneška dál.
           </div>}
