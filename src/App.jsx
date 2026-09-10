@@ -11874,6 +11874,27 @@ function pomIkona(ikona){
   if(/\p{Extended_Pictographic}/u.test(s))return s;
   return POM_IKONY_SLOVA[s.toLowerCase()]||"";
 }
+// Číslo sešitu: 1. číslice formát, 2. počet listů (× 10), 3. druh linkování.
+// 544 = A5, 40 listů, linkovaný. Písmeno za číslem (544R, 560e) se nepopisuje.
+const POM_FORMAT={"4":"A4","5":"A5","6":"A6"};
+const POM_LINKOVANI={"0":"čistý","1":"linkovaný pro 1. třídu s pomocnou linkou","2":"linkovaný pro 2. třídu","3":"linkovaný pro 3. třídu","4":"linkovaný","5":"čtverečkovaný"};
+function pomPopisSesitu(nazev){
+  const m=String(nazev||"").trim().match(/^([456])([1-9])(\d)\s*[a-z]?$/i);
+  if(!m)return "";
+  return [POM_FORMAT[m[1]],`${+m[2]*10} listů`,POM_LINKOVANI[m[3]]].filter(Boolean).join(" · ");
+}
+function PomLegendaSesitu(){
+  const radek=(cislo,co)=><div style={{display:"flex",gap:8}}><b style={{minWidth:16,color:C.text}}>{cislo}</b><span>{co}</span></div>;
+  return <div style={{background:C.accentS,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14,fontSize:12,color:C.muted,lineHeight:1.6}}>
+    <div style={{fontWeight:800,color:C.text,marginBottom:6}}>Jak číst číslo sešitu</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:"8px 20px"}}>
+      <div><div style={{fontWeight:700,color:C.text}}>1. číslice — formát</div>{radek(4,"A4")}{radek(5,"A5")}{radek(6,"A6")}</div>
+      <div><div style={{fontWeight:700,color:C.text}}>2. číslice — počet listů</div>{radek(1,"10 listů")}{radek(2,"20 listů")}{radek(4,"40 listů")}{radek(6,"60 listů")}</div>
+      <div><div style={{fontWeight:700,color:C.text}}>3. číslice — linkování</div>{Object.entries(POM_LINKOVANI).map(([c,t])=><div key={c}>{radek(c,t)}</div>)}</div>
+    </div>
+    <div style={{marginTop:8}}>Příklad: <b style={{color:C.text}}>544</b> = A5, 40 listů, linkovaný · <b style={{color:C.text}}>420</b> = A4, 20 listů, čistý. Písmeno na konci (544R, 560e) je varianta téhož sešitu — v Nákupu se zásoba sčítá dohromady.</div>
+  </div>;
+}
 const pomSeradKat=kategorie=>[...kategorie].sort((a,b)=>(+a.poradi||0)-(+b.poradi||0)||pomAbc(a.nazev,b.nazev));
 // Výdej = odečíst ze zásoby + zapsat do pomucky_vydej. Když zápis výdeje selže,
 // počet se vrátí, aby zásoba a historie nejely každá jinak.
@@ -11963,6 +11984,7 @@ function PomuckyTab(){
 
 function PomZasoba({hlavicka,uzky,polozky,setPolozky,reloadPolozky,kategorie,umisteni,pozadavky,deti,reloadCiselniky}){
   const [sbalene,setSbalene]=useState(pomNactiSbalene);
+  const [legenda,setLegenda]=useState(false);
   const [fMisto,setFMisto]=useState("");
   const [fProv,setFProv]=useState("");
   const [hledat,setHledat]=useState("");
@@ -12048,8 +12070,11 @@ function PomZasoba({hlavicka,uzky,polozky,setPolozky,reloadPolozky,kategorie,umi
         {dochazi>0&&<span style={{color:C.orange}}> · {dochazi} dochází</span>}
       </div>
       <div style={{flex:1}}/>
+      <button onClick={()=>setLegenda(v=>!v)} style={{border:"none",background:"none",padding:0,color:C.accent,fontSize:12,fontWeight:700,cursor:"pointer"}}>ℹ️ {legenda?"Skrýt čísla sešitů":"Co znamenají čísla sešitů"}</button>
       {!q&&karty.length>1&&<button onClick={sbalVse} style={{border:"none",background:"none",padding:0,color:C.accent,fontSize:12,fontWeight:700,cursor:"pointer"}}>{vseSbalene?"▾ Rozbalit vše":"▸ Sbalit vše"}</button>}
     </div>}
+
+    {legenda&&<PomLegendaSesitu/>}
 
     {polozky.length===0&&<EmptyState emoji="📚" text="Zatím žádné pomůcky. Pokud tu data mají být, zkontroluj přihlášení — bez něj tabulky nic nevrátí." action="+ Přidat položku" onAction={()=>setEdit("nova")}/>}
     {polozky.length>0&&karty.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.dim,fontSize:13}}>Filtrům nic neodpovídá</div>}
@@ -12072,9 +12097,11 @@ function PomZasoba({hlavicka,uzky,polozky,setPolozky,reloadPolozky,kategorie,umi
             const prov=String(p.provedeni||"").trim();
             const u=p.umisteni_id!=null?umMap.get(String(p.umisteni_id)):null;
             const misto=u?u.nazev:"bez umístění";
+            const popis=pomPopisSesitu(p.nazev);
             return <div key={p.id} onClick={()=>setEdit(p)} style={{display:"grid",gridTemplateColumns:sloupce,alignItems:"center",gap:10,padding:"8px 14px",borderTop:`1px solid ${C.border}`,background:pocet===0?`${C.redS}99`:C.surface,cursor:"pointer"}}>
               <div style={{minWidth:0}}>
                 <div style={{fontSize:14,fontWeight:700}}>{p.nazev}{prov&&<span style={{fontSize:11,fontWeight:600,color:C.muted,background:C.bg,padding:"1px 7px",borderRadius:20,marginLeft:7,whiteSpace:"nowrap"}}>{prov}</span>}</div>
+                {popis&&<div style={{fontSize:11,color:C.dim,marginTop:2}}>{popis}</div>}
                 {uzky&&!fMisto&&<div style={{fontSize:11,color:u?C.muted:C.dim,marginTop:2}}>{misto}</div>}
               </div>
               {!uzky&&!fMisto&&<div style={{fontSize:12,color:u?C.muted:C.dim,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u?`📍 ${misto}`:misto}</div>}
@@ -12141,7 +12168,7 @@ function PomPolozkaModal({polozka,kategorie,umisteni,deti,provedeniVolby,default
   };
 
   return <Modal title={nova?"Nová pomůcka":`✏️ ${polozka.nazev}`} onClose={onClose} width={500}>
-    <Field label="Název"><input style={inp} value={f.nazev} onChange={e=>set("nazev",e.target.value)} placeholder="např. 544 nebo Pravítko 30 cm" autoFocus={nova}/></Field>
+    <Field label="Název" hint={pomPopisSesitu(f.nazev)||undefined}><input style={inp} value={f.nazev} onChange={e=>set("nazev",e.target.value)} placeholder="např. 544 nebo Pravítko 30 cm" autoFocus={nova}/></Field>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
       <Field label="Provedení" hint="prázdné = neurčeno">
         <input style={inp} list="pom-provedeni-polozka" value={f.provedeni} onChange={e=>set("provedeni",e.target.value)}/>
@@ -12408,7 +12435,7 @@ function PomNakup({pozadavky,reloadPozadavky,polozky,kategorie,deti}){
                 {prov&&<span style={{color:C.dim,fontSize:11,fontWeight:500,marginLeft:6}}>{prov}</span>}
                 {!dite&&d&&<span style={{marginLeft:8,fontSize:11,fontWeight:700,color:d.barva||C.muted}}>{d.emoji?d.emoji+" ":""}{d.jmeno}</span>}
               </div>
-              <div style={{fontSize:11,color:C.muted,marginTop:2}}>potřeba {potreba} · skladem {skladem}</div>
+              <div style={{fontSize:11,color:C.muted,marginTop:2}}>{pomPopisSesitu(p.nazev)&&<span style={{color:C.dim}}>{pomPopisSesitu(p.nazev)} · </span>}potřeba {potreba} · skladem {skladem}</div>
             </div>
             {p.vyrizeno
               ?<Tag color={C.muted}>vyřízeno</Tag>
@@ -12480,7 +12507,7 @@ function PomPozadavekModal({pozadavek,kategorie,deti,roky,defaultRok,defaultDite
           {kategorie.map(k=><option key={k.id} value={String(k.id)}>{pomIkona(k.ikona)?pomIkona(k.ikona)+" ":""}{k.nazev}</option>)}
         </select>
       </Field>
-      <Field label="Název" hint={skladem!=null?`skladem ${skladem} ks`:undefined}>
+      <Field label="Název" hint={[pomPopisSesitu(f.nazev),skladem!=null?`skladem ${skladem} ks`:""].filter(Boolean).join(" · ")||undefined}>
         <input style={inp} value={f.nazev} onChange={e=>set("nazev",e.target.value)} placeholder="např. 544" autoFocus={novy}/>
       </Field>
       <Field label="Provedení" hint="prázdné = neurčeno">
