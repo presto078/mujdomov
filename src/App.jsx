@@ -5495,6 +5495,12 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     &&katTyp[String(t.kategorie_id)]==="vydaj"
     &&katSVydaji.has(String(t.kategorie_id));
 
+  // Ne každý projekt je povinná platba. Hypotéka a energie ano, „Vanesa — účet"
+  // je sledovací projekt a svatba jednorázová akce — ty do povinných závazků
+  // nepatří, jinak by mezi nimi svítily nákupy v potravinách.
+  const povinneProj=new Set((projekty||[]).filter(p=>p.povinny!==false&&p.typ!=="akce").map(p=>String(p.id)));
+  const povinny=t=>t.projekt_id&&povinneProj.has(String(t.projekt_id));
+
   const toky=bezPrevodu.filter(t=>!jeNeutralni(t));
   const firemni =toky.filter(t=>podnik.has(t.ucet_id));
   const soucet=(xs,f)=>xs.reduce((a,t)=>a+(f(t)?Math.abs(+t.castka):0),0);
@@ -5502,8 +5508,8 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   const vratkyZav =soucet(toky,t=>jeVratka(t)&&t.projekt_id);
   const vratkyZbyt=soucet(toky,t=>jeVratka(t)&&!t.projekt_id);
   const vratky  =vratkyZav+vratkyZbyt;
-  const zavazky =soucet(toky,t=>+t.castka<0&&t.projekt_id)-vratkyZav;
-  const zbytek  =soucet(toky,t=>+t.castka<0&&!t.projekt_id)-vratkyZbyt;
+  const zavazky =soucet(toky,t=>+t.castka<0&&povinny(t))-vratkyZav;
+  const zbytek  =soucet(toky,t=>+t.castka<0&&!povinny(t))-vratkyZbyt;
   const neutralniObjem=soucet(bezPrevodu,t=>jeNeutralni(t)&&+t.castka>0);
   const bizIn   =soucet(firemni,  t=>+t.castka>0&&!jeVratka(t));     // jen pro informaci
   // Hotovostní příjem je zadaný jako měsíční, takže se natáhne na délku období.
@@ -5561,8 +5567,8 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     const mer=nMesicu/delitel;          // u rozsahu se průměr natáhne na počet měsíců
     const S=(xs,f)=>xs.reduce((a,t)=>a+(f(t)?Math.abs(+t.castka):0),0)/nn*mer;
     const prij=S(bp,t=>+t.castka>0&&!jeVratka(t));
-    const zav =S(bp,t=>+t.castka<0&&t.projekt_id)   -S(bp,t=>jeVratka(t)&&t.projekt_id);
-    const zbyt=S(bp,t=>+t.castka<0&&!t.projekt_id)  -S(bp,t=>jeVratka(t)&&!t.projekt_id);
+    const zav =S(bp,t=>+t.castka<0&&povinny(t))   -S(bp,t=>jeVratka(t)&&povinny(t));
+    const zbyt=S(bp,t=>+t.castka<0&&!povinny(t))  -S(bp,t=>jeVratka(t)&&!povinny(t));
     const prev=v.filter(t=>t.typ==="prevod"||t.prevod_ucet_id)
                 .reduce((a,t)=>a+(+t.castka||0),0)/nn*mer;
     return {prijmy:prij,zavazky:zav,zbytek:zbyt,prevody:prev,
@@ -5643,6 +5649,46 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
             utraceno:hotovostMesicne-cisty/mesiceObdobi.length};   // co zmizí v hotovosti
   })();
 
+  // ── Výhled na běžící měsíc ──────────────────────────────────────────────
+  // Medián z dokončených měsíců, ne průměr — jeden srpen s opravou za padesát
+  // tisíc by výhled posunul tak, že by k ničemu nebyl. Povinné závazky se
+  // berou z toho, co projekty říkají, že měsíčně stojí; kde to nastavené není,
+  // použije se medián toho, co z nich reálně odešlo.
+  const vyhled=(()=>{
+    const zdroj=hotoveMesice.slice(-6);
+    if(zdroj.length<3)return null;
+    const med=a=>{const x=[...a].sort((p,q)=>p-q);return x.length?x[Math.floor(x.length/2)]:0;};
+    const zaMesic=m=>{
+      const v=(pohyby||[]).filter(t=>String(t.datum).slice(0,7)===m&&!jeNeutralni(t));
+      const S=fn=>v.reduce((a,t)=>a+(fn(t)?Math.abs(+t.castka):0),0);
+      return {
+        prijmy:S(t=>+t.castka>0&&!jeVratka(t)),
+        zav   :S(t=>+t.castka<0&&povinny(t))  -S(t=>jeVratka(t)&&povinny(t)),
+        zbyt  :S(t=>+t.castka<0&&!povinny(t)) -S(t=>jeVratka(t)&&!povinny(t)),
+      };
+    };
+    const d=zdroj.map(zaMesic);
+    const prijmy=med(d.map(x=>x.prijmy));
+    const hot=(()=>{
+      const r=hotRadky.filter(h=>h.mesic===tentoMesic);
+      return r.length?r.reduce((a,h)=>a+(+h.castka||0),0):hotSablonaSuma;
+    })();
+    // Závazky: co projekty říkají, že stojí. Bez nastavené částky se vezme
+    // medián toho, co z projektu reálně odcházelo.
+    const zProjektu=(projekty||[]).filter(p=>p.aktivni!==false&&povinneProj.has(String(p.id)))
+      .map(p=>{
+        if(+p.mesicni_castka>0)return {p,castka:+p.mesicni_castka,zdroj:"nastaveno"};
+        const ms=zdroj.map(m=>(pohyby||[]).filter(t=>String(t.projekt_id)===String(p.id)
+          &&String(t.datum).slice(0,7)===m&&+t.castka<0).reduce((a,t)=>a-(+t.castka),0));
+        return {p,castka:med(ms),zdroj:"medián"};
+      }).filter(x=>x.castka>0).sort((a,b)=>b.castka-a.castka);
+    const zav=zProjektu.reduce((a,x)=>a+x.castka,0)||med(d.map(x=>x.zav));
+    const obvykleUtratis=med(d.map(x=>x.zbyt));
+    const naZivot=prijmy+hot-zav;
+    return {mesicu:zdroj.length,prijmy,hot,zav,zProjektu,naZivot,obvykleUtratis,
+            vysledek:naZivot-obvykleUtratis};
+  })();
+
   const likvidni=(ucty||[]).filter(u=>["finance","hotovost","podnikani"].includes(u.skupina||"finance"));
   const likvidita=likvidni.reduce((a,u)=>a+posledniStav(u),0);
   // Dojezd má smysl počítat, jen když je schodek dost velký na to, aby nebyl
@@ -5676,7 +5722,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
       const vratka=jeVratka(t);
       if(+t.castka>=0&&!vratka)continue;
       const k=klic(t);
-      const cil=t.projekt_id?vp:m;
+      const cil=povinny(t)?vp:m;
       if(!cil.has(k))cil.set(k,{suma:0,polozky:[]});
       const z=cil.get(k); z.suma+=-(+t.castka); z.polozky.push(t);   // vratka má plus, výdaj minus
     }
@@ -5693,7 +5739,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   const dleProjektu=(()=>{
     const m=new Map();
     for(const t of bezPrevodu){
-      if(+t.castka>=0||!t.projekt_id)continue;
+      if(+t.castka>=0||!povinny(t))continue;
       const k=String(t.projekt_id);
       if(!m.has(k))m.set(k,{suma:0,polozky:[]});
       const z=m.get(k); z.suma+=(-+t.castka); z.polozky.push(t);
@@ -5706,13 +5752,15 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   // Některá čísla nejsou hromádka plateb, ale výsledek odčítání — „zbývá na
   // život" žádné vlastní platby nemá. Rozpad by tam nedával smysl, ale
   // ukázat, z čeho to vzniklo, ano.
-  const karta=(l,v,barva,pozn,polozky,prumerV,vypocet)=>{
+  const karta=(l,v,barva,pozn,polozky,prumerV,vypocet,duraz)=>{
     const rozd=prumerV!=null?v-prumerV:null;
     const pct=(rozd!=null&&Math.abs(prumerV)>1000)?rozd/Math.abs(prumerV)*100:null;
     return <div
       onClick={polozky?()=>setRozpad({titulek:`${l} · rozpad`,polozky})
               :vypocet?()=>setVypocet({titulek:l,radky:vypocet,vysledek:v}):undefined}
-      style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:190,cursor:(polozky||vypocet)?"pointer":"default"}}>
+      style={{background:duraz?(v===0?C.surface:(barva===C.green?"#f0f7ee":"#fdefef")):C.surface,
+              border:`${duraz?2:1}px solid ${duraz?barva:C.border}`,borderRadius:12,padding:"14px 16px",
+              flex:1,minWidth:190,cursor:(polozky||vypocet)?"pointer":"default"}}>
       <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3}}>{l}</div>
       <div style={{fontSize:23,fontWeight:800,color:barva||C.text,marginTop:5}}>{kc0(v)}</div>
       {pozn&&<div style={{fontSize:11,color:C.dim,marginTop:3}}>{pozn}</div>}
@@ -5860,29 +5908,84 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
          vratky?`bez vratek ${kc0(vratky/n)}`:null,
          neutralniObjem?`bez průběžných ${kc0(neutralniObjem/n)}`:null].filter(Boolean).join(" · ")||"jen to, co přišlo na účty",
         toky.filter(t=>+t.castka>0&&!jeVratka(t)),prumerZaklad?(prumerZaklad.prijmy+prumerZaklad.hotovost):null)}
-      {karta("Povinné závazky"+zaObdobi,mZavazky,C.orange,"hypotéka, SJM, insolvence, auta",
-        toky.filter(t=>+t.castka<0&&t.projekt_id),prumerZaklad?.zavazky)}
+      {karta("Povinné závazky"+zaObdobi,mZavazky,C.orange,"co se platit musí — hypotéka, SJM, auta, energie",
+        toky.filter(t=>+t.castka<0&&povinny(t)),prumerZaklad?.zavazky)}
       {karta((dokoncene?"Na život bylo":"Zbývá na život")+zaObdobi,kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků",
         null,prumerZaklad?.zbyvaNaZivot,[
           {l:"Příjmy na účty",v:mPrijmy,znak:"+"},
           ...(hotovostMesicne?[{l:"Hotovost mimo účty",v:hotovostMesicne,znak:"+"}]:[]),
           {l:"Povinné závazky",v:-mZavazky,znak:"−"},
         ])}
+      {karta((dokoncene?"Utratil jsi":"Skutečně utrácíš")+zaObdobi,mZbytek,C.red,
+        vratky?`všechno ostatní, po odečtení vratek`:"všechno ostatní",
+        toky.filter(t=>+t.castka<0&&!povinny(t)),prumerZaklad?.zbytek)}
+      {karta((rozdil>=0?"Zbylo":"Chybělo")+zaObdobi,Math.abs(rozdil),rozdil>=0?C.green:C.red,
+        rozdil>=0?"tolik ti po všem zůstalo":"tolik muselo přijít odjinud — z rezervy nebo z kreditky",
+        null,null,[
+          {l:dokoncene?"Na život bylo":"Zbývalo na život",v:kDispozici,znak:"+"},
+          {l:dokoncene?"Utratil jsi":"Utrácíš",v:-mZbytek,znak:"−"},
+        ],true)}
+    </div>}
+
+    {/* Rezerva a spoření jsou jiné téma než měsíční bilance — patří pod ni,
+        ne doprostřed věty „přišlo → odešlo → zbylo". */}
+    {!jedenUcet&&vyhled&&<div style={{background:C.surface,border:`2px solid ${C.accent}`,borderRadius:14,
+        padding:"16px 18px",marginBottom:12}}>
+      <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.4,marginBottom:3}}>
+        Výhled na {nazevMesice(tentoMesic)}
+      </div>
+      <div style={{fontSize:11.5,color:C.dim,marginBottom:12}}>
+        Medián z {vyhled.mesicu} dokončených měsíců — ne průměr, ať to nerozhodí jedna velká oprava.
+      </div>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13.5}}>
+        <tbody>
+          <tr><td style={{padding:"6px 4px",color:C.muted}}>
+            <span style={{display:"inline-block",width:16,fontWeight:800,color:C.green}}>+</span>Očekávané příjmy na účty</td>
+            <td style={{padding:"6px 4px",textAlign:"right",fontWeight:700}}>{kc0(vyhled.prijmy)}</td></tr>
+          {vyhled.hot!==0&&<tr><td style={{padding:"6px 4px",color:C.muted}}>
+            <span style={{display:"inline-block",width:16,fontWeight:800,color:C.green}}>+</span>Hotovost podle deníku</td>
+            <td style={{padding:"6px 4px",textAlign:"right",fontWeight:700}}>{kc0(vyhled.hot)}</td></tr>}
+          <tr><td style={{padding:"6px 4px",color:C.muted}}>
+            <span style={{display:"inline-block",width:16,fontWeight:800,color:C.red}}>−</span>Povinné závazky</td>
+            <td style={{padding:"6px 4px",textAlign:"right",fontWeight:700}}>{kc0(vyhled.zav)}</td></tr>
+          <tr style={{borderTop:`2px solid ${C.text}`}}>
+            <td style={{padding:"10px 4px",fontWeight:800}}>= Na život zbyde</td>
+            <td style={{padding:"10px 4px",textAlign:"right",fontSize:20,fontWeight:800,
+                        color:vyhled.naZivot>0?C.text:C.red}}>{kc0(vyhled.naZivot)}</td></tr>
+        </tbody>
+      </table>
+
+      <div style={{marginTop:12,padding:"11px 13px",borderRadius:10,lineHeight:1.65,fontSize:12.5,
+          background:vyhled.vysledek>=0?"#f0f7ee":"#fdefef",
+          color:vyhled.vysledek>=0?"#3f7d33":"#b03030"}}>
+        Obvykle v takovém měsíci utratíš <strong>{kc0(vyhled.obvykleUtratis)}</strong>.
+        {vyhled.vysledek>=0
+          ? <> Když to vyjde stejně, skončíš v plusu o <strong>{kc0(vyhled.vysledek)}</strong>.</>
+          : <> Když to vyjde stejně, budeš <strong>{kc0(Math.abs(vyhled.vysledek))}</strong> pod nulou.
+               Abys skončil na nule, musíš se vejít do <strong>{kc0(vyhled.naZivot)}</strong> —
+               to je o {kc0(Math.abs(vyhled.vysledek))} míň, než je tvůj obvyklý měsíc.</>}
+      </div>
+
+      {vyhled.zProjektu.length>0&&<div style={{marginTop:11}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3,marginBottom:6}}>
+          Z čeho jsou ty závazky
+        </div>
+        {vyhled.zProjektu.map(x=><div key={x.p.id} style={{display:"flex",justifyContent:"space-between",
+            fontSize:12.5,padding:"3px 0",borderTop:`1px solid ${C.border}`}}>
+          <span style={{color:C.text}}>{x.p.emoji||"📁"} {x.p.nazev}
+            {x.zdroj==="medián"&&<span style={{color:C.dim,fontSize:11}}> · odhad z historie</span>}</span>
+          <strong>{kc0(x.castka)}</strong>
+        </div>)}
+      </div>}
+    </div>}
+
+    {!jedenUcet&&(rezervaInfo||sporeniInfo)&&<div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
       {rezervaInfo&&karta("🛟 Rezerva",rezervaInfo.kon,rezervaInfo.netto>=0?C.green:C.red,
         `+${kc0(rezervaInfo.prit)} · −${kc0(rezervaInfo.ven)} · čistě ${rezervaInfo.netto>=0?"+":""}${kc0(rezervaInfo.netto)} měsíčně`,
         null,null)}
       {sporeniInfo&&karta("🎯 Spoření",sporeniInfo.kon,sporeniInfo.netto>=0?C.green:C.orange,
         `+${kc0(sporeniInfo.prit)} · −${kc0(sporeniInfo.ven)} · čistě ${sporeniInfo.netto>=0?"+":""}${kc0(sporeniInfo.netto)} měsíčně`,
         null,null)}
-      {karta((dokoncene?"Utratil jsi":"Skutečně utrácíš")+zaObdobi,mZbytek,C.red,
-        vratky?`všechno ostatní, po odečtení vratek`:"všechno ostatní",
-        bezPrevodu.filter(t=>+t.castka<0&&!t.projekt_id),prumerZaklad?.zbytek)}
-      {karta((rozdil>=0?"Zbylo":"Chybělo")+zaObdobi,Math.abs(rozdil),rozdil>=0?C.green:C.red,
-        rozdil>=0?"tolik ti po všem zůstalo":"tolik muselo přijít odjinud — z rezervy nebo z kreditky",
-        null,null,[
-          {l:dokoncene?"Na život bylo":"Zbývalo na život",v:kDispozici,znak:"+"},
-          {l:dokoncene?"Utratil jsi":"Utrácíš",v:-mZbytek,znak:"−"},
-        ])}
     </div>}
 
     {!jedenUcet&&<div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
