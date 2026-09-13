@@ -2028,6 +2028,13 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
   // Jen datumy a účty — na zjištění, co chybí, víc netřeba.
   const {data:pokryti,reload:reloadPokryti}=useData(()=>nactiVse((od,do_)=>sb.from("fin_transakce")
     .select("ucet_id,datum").eq("zdroj","import").order("datum").range(od,do_)));
+  // Účty bez výpisů (hotovost, investice) se doplňují ručně a snadno se na ně
+  // zapomene — pak v Majetku i v přehledu visí měsíc starý zůstatek a nikdo
+  // si toho nevšimne. Sem patří stejně jako chybějící výpis.
+  const {data:stavyVse,reload:reloadStavyVse}=useData(()=>
+    sb.from("fin_stavy").select("ucet_id,rok,mesic,stav").gte("rok",2025));
+  const [zust,setZust]=useState({});        // ucet_id → rozepsaná hodnota
+  const [uklZust,setUklZust]=useState(null);
   const [davky,setDavky]=useState([]);      // načtené výpisy čekající na uložení
   const [stav,setStav]=useState("");
   const [uklada,setUklada]=useState(false);
@@ -2053,6 +2060,67 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
         JSON.stringify({kdy:new Date().toISOString(),davky}));
     }catch(e){/* přeplněné úložiště — jede se dál bez odkládání */}
   },[davky]);
+
+  // Panel „chybí zůstatky" — u účtů, které nemají výpis, je ruční zápis
+  // jediný zdroj pravdy. Dá se vyplnit rovnou tady, ať kvůli dvěma číslům
+  // nemusí nikdo chodit do Majetku.
+  const panelZustatky=(()=>{
+    if(!Array.isArray(stavyVse)||!Array.isArray(ucty))return null;
+    const ted=new Date();
+    const konec=(()=>{
+      const posledniDen=new Date(ted.getFullYear(),ted.getMonth()+1,0).getDate()===ted.getDate();
+      const d=posledniDen?ted:new Date(ted.getFullYear(),ted.getMonth()-1,1);
+      return {rok:d.getFullYear(),mesic:d.getMonth()+1};
+    })();
+    const klic=`${konec.rok}-${String(konec.mesic).padStart(2,"0")}`;
+    const bezVypisu=(ucty||[]).filter(u=>u.aktivni!==false
+      &&["hotovost","investice"].includes(u.skupina||""));
+    const ma=u=>stavyVse.some(x=>String(x.ucet_id)===String(u.id)&&x.rok===konec.rok&&x.mesic===konec.mesic);
+    const chybi=bezVypisu.filter(u=>!ma(u));
+    if(!chybi.length)return null;
+    const posledni=u=>{
+      const h=stavyVse.filter(x=>String(x.ucet_id)===String(u.id))
+        .sort((a,b)=>(a.rok*100+a.mesic)-(b.rok*100+b.mesic));
+      return h.length?h[h.length-1]:null;
+    };
+    const uloz=async u=>{
+      const v=zust[u.id];
+      if(v===undefined||v==="")return;
+      setUklZust(u.id);
+      const {error}=await sb.from("fin_stavy")
+        .upsert({ucet_id:u.id,rok:konec.rok,mesic:konec.mesic,stav:+v},{onConflict:"ucet_id,rok,mesic"});
+      setUklZust(null);
+      if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+      setZust(z=>{const n={...z};delete n[u.id];return n;});
+      reloadStavyVse();
+    };
+    return <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:12,padding:"13px 16px",marginTop:10}}>
+      <div style={{fontSize:13,fontWeight:800,color:"#3066b0",marginBottom:4}}>
+        💰 Chybí zůstatky za {klic} — {chybi.length} {chybi.length===1?"účet":chybi.length<5?"účty":"účtů"}
+      </div>
+      <div style={{fontSize:11.5,color:"#3066b0",marginBottom:9,opacity:.85}}>
+        Tyhle účty nemají výpis, takže se dopisují ručně. Dokud tam zůstatek není, počítá se
+        s tím posledním zapsaným a přehled ukazuje starší stav, než jaký je.
+      </div>
+      {chybi.map(u=>{
+        const p=posledni(u);
+        return <div key={u.id} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",padding:"3px 0",fontSize:12.5}}>
+          <strong style={{flex:"1 1 150px",color:"#24528f"}}>{u.nazev}</strong>
+          <span style={{fontSize:11,color:"#3066b0",opacity:.8,minWidth:130}}>
+            {p?`naposled ${kc0(p.stav)} k ${p.mesic}/${p.rok}`:"nikdy nezapsáno"}
+          </span>
+          <input style={{...inp,width:120,fontSize:12,padding:"4px 8px"}} type="number" placeholder="stav k 30. dni"
+            value={zust[u.id]??""} onChange={e=>setZust(z=>({...z,[u.id]:e.target.value}))}
+            onKeyDown={e=>{if(e.key==="Enter")uloz(u);}}/>
+          <button onClick={()=>uloz(u)} disabled={uklZust===u.id||(zust[u.id]??"")===""}
+            style={{...btnC(C.accent),fontSize:11.5,padding:"4px 12px",
+                    opacity:(zust[u.id]??"")===""?.4:1}}>
+            {uklZust===u.id?"…":"Zapsat"}
+          </button>
+        </div>;
+      })}
+    </div>;
+  })();
 
   // Panel „co chybí doimportovat" — patří vedle nápovědy, ne až pod výpisy;
   // je to první věc, kterou chce člověk vědět, když otevře Import.
@@ -2459,6 +2527,7 @@ function ImportVypisu({ucty,kategorie,projekty,deti,auta,reloadProjekty,onHotovo
         </div>
       </div>
       {panelChybi}
+      {panelZustatky}
       </div>
       <NapovedaFormatu/>
     </div>
