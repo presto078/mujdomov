@@ -3515,6 +3515,20 @@ function MajetekTab({ucty,reloadUcty}){
     if(error){alert("Nepodařilo se uložit: "+error.message);return;}
     setZapis(null);reload();
   };
+  // Rezerva je to, co si Jirka odkládá stranou — u něj Moneta a RB spořící.
+  // Není to vlastnost skupiny účtů, protože spořicí účet může být i cíl na
+  // něco konkrétního; proto se to u účtu přepíná ručně.
+  // Rezerva a spoření nejsou totéž. Rezerva je na to, co se pokazí; spoření
+  // má cíl — děti, dovolená. Když se to sloučí, vypadá to, že máš na horší
+  // časy dvojnásobek, a přitom polovina je slíbená jinam.
+  const UCELY=[null,"rezerva","sporeni"];
+  const UCEL_POPIS={rezerva:"🛟 rezerva",sporeni:"🎯 spoření"};
+  const prepniUcel=async u=>{
+    const dalsi=UCELY[(UCELY.indexOf(u.ucel||null)+1)%UCELY.length];
+    const {error}=await sb.from("fin_ucty").update({ucel:dalsi}).eq("id",u.id);
+    if(error){alert("Chyba: "+error.message);return;}
+    reloadUcty&&reloadUcty();
+  };
   const smazStav=async(u,p)=>{
     if(!confirm(`Smazat zapsaný zůstatek ${kc0(p.stav)} za ${p.mesic}/${p.rok} u účtu ${u.nazev}?\n\nPoužij, když je zjevně špatný — poslední známý zůstatek se pak vezme z předchozího měsíce.`))return;
     const {error}=await sb.from("fin_stavy").delete().eq("id",p.id);
@@ -3575,10 +3589,18 @@ function MajetekTab({ucty,reloadUcty}){
           style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",
                   padding:"8px 12px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,marginBottom:6}}>
           <div style={{minWidth:190,flex:1}}>
-            <div style={{fontSize:13.5,fontWeight:700}}>{u.nazev}</div>
+            <div style={{fontSize:13.5,fontWeight:700}}>
+              {u.nazev}
+              {u.ucel&&<span style={{...stitek,marginLeft:7,
+                background:u.ucel==="rezerva"?"#e6f4ed":"#f3eeff",
+                color:u.ucel==="rezerva"?C.green:C.purple}}>{UCEL_POPIS[u.ucel]}</span>}
+            </div>
             <div style={{fontSize:11,color:stary?C.orange:C.dim}}>
               {p?<>stav k {p.mesic}/{p.rok}{stary?" — starší údaj":""}</>:"zůstatek nikdy nezapsaný"}
               {u.cislo_uctu?` · ${u.cislo_uctu}`:""}
+              {sk.likvidni&&<>{" · "}<button onClick={()=>prepniUcel(u)} title="Přepíná: běžný → rezerva → spoření"
+                style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,textDecoration:"underline",padding:0}}>
+                {u.ucel==="rezerva"?"přepnout na spoření":u.ucel==="sporeni"?"zrušit označení":"označit jako rezervu"}</button></>}
             </div>
           </div>
           <div style={{textAlign:"right"}}>
@@ -5218,6 +5240,42 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
             zmena:prij-zav-zbyt+prev, odeslo:zav+zbyt, pocet:nn};
   })();
 
+  // Poslední zapsaný zůstatek k danému měsíci (nebo dřív) — pro srovnání
+  // stavu na začátku a na konci období.
+  const stavKMesici=(uid,m)=>{
+    const h=(stavy||[]).filter(x=>String(x.ucet_id)===String(uid))
+      .map(x=>({k:`${x.rok}-${String(x.mesic).padStart(2,"0")}`,v:+x.stav}))
+      .filter(x=>x.k<=m).sort((a,b)=>a.k.localeCompare(b.k));
+    return h.length?h[h.length-1].v:null;
+  };
+  const mesicPred=m=>{const [r,mm]=m.split("-").map(Number);
+    return mm===1?`${r-1}-12`:`${r}-${String(mm-1).padStart(2,"0")}`;};
+
+  // ── Rezerva — účty, které si Jirka označil jako „stranou" ───────────────
+  // Zajímavé na ní není, kolik tam odkládá, ale kolik tam po výběrech
+  // zůstane. Odkládat 17 tisíc a vybírat 53 není spoření.
+  const skupinaUctu=ucel=>(()=>{
+    const ru=(ucty||[]).filter(u=>u.ucel===ucel);
+    if(!ru.length||!mesiceObdobi.length)return null;
+    const pred=mesicPred(mesiceObdobi[0]), posl=mesiceObdobi[mesiceObdobi.length-1];
+    let zac=0, kon=0;
+    for(const u of ru){
+      const a=stavKMesici(u.id,pred), b=stavKMesici(u.id,posl);
+      if(a==null||b==null)return null;
+      zac+=a; kon+=b;
+    }
+    const ids=new Set(ru.map(u=>u.id));
+    const ph=(trans||[]).filter(t=>ids.has(t.ucet_id)&&mesiceObdobi.includes(String(t.datum).slice(0,7)));
+    const nm=mesiceObdobi.length;
+    const netto=(kon-zac)/nm;
+    return {pocet:ru.length, zac, kon,
+      prit:ph.filter(t=>+t.castka>0).reduce((a,t)=>a+ +t.castka,0)/nm,
+      ven :ph.filter(t=>+t.castka<0).reduce((a,t)=>a-(+t.castka),0)/nm,
+      netto, vydrzi:netto<-100?kon/Math.abs(netto):null};
+  })();
+  const rezervaInfo=skupinaUctu("rezerva");
+  const sporeniInfo=skupinaUctu("sporeni");
+
   // ── Kontrola hotovostního odhadu ────────────────────────────────────────
   // Peněženka nemá jedinou transakci, ale má ručně zapsané zůstatky. A přesně
   // z nich se dá dopočítat, kolik hotovosti do ní ve skutečnosti přiteklo:
@@ -5233,15 +5291,8 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   const hotovostKontrola=(()=>{
     const hotUcty=(ucty||[]).filter(u=>(u.skupina||"")==="hotovost");
     if(!hotUcty.length||!mesiceObdobi.length)return null;
-    const stavKMesici=(uid,m)=>{
-      const h=(stavy||[]).filter(x=>String(x.ucet_id)===String(uid))
-        .map(x=>({k:`${x.rok}-${String(x.mesic).padStart(2,"0")}`,v:+x.stav}))
-        .filter(x=>x.k<=m).sort((a,b)=>a.k.localeCompare(b.k));
-      return h.length?h[h.length-1].v:null;
-    };
-    const prvni=mesiceObdobi[0], posl=mesiceObdobi[mesiceObdobi.length-1];
-    const [r0,m0]=prvni.split("-").map(Number);
-    const pred=m0===1?`${r0-1}-12`:`${r0}-${String(m0-1).padStart(2,"0")}`;
+    const posl=mesiceObdobi[mesiceObdobi.length-1];
+    const pred=mesicPred(mesiceObdobi[0]);
     let zacatek=0, konec=0;
     for(const u of hotUcty){
       const a=stavKMesici(u.id,pred), b=stavKMesici(u.id,posl);
@@ -5477,6 +5528,12 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
         toky.filter(t=>+t.castka<0&&t.projekt_id),prumerZaklad?.zavazky)}
       {karta("Zbývá na život"+zaObdobi,kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků",
         null,prumerZaklad?.zbyvaNaZivot)}
+      {rezervaInfo&&karta("🛟 Rezerva",rezervaInfo.kon,rezervaInfo.netto>=0?C.green:C.red,
+        `+${kc0(rezervaInfo.prit)} · −${kc0(rezervaInfo.ven)} · čistě ${rezervaInfo.netto>=0?"+":""}${kc0(rezervaInfo.netto)} měsíčně`,
+        null,null)}
+      {sporeniInfo&&karta("🎯 Spoření",sporeniInfo.kon,sporeniInfo.netto>=0?C.green:C.orange,
+        `+${kc0(sporeniInfo.prit)} · −${kc0(sporeniInfo.ven)} · čistě ${sporeniInfo.netto>=0?"+":""}${kc0(sporeniInfo.netto)} měsíčně`,
+        null,null)}
       {karta("Skutečně utrácíš"+zaObdobi,mZbytek,C.red,vratky?`všechno ostatní, po odečtení vratek`:"všechno ostatní",
         bezPrevodu.filter(t=>+t.castka<0&&!t.projekt_id),prumerZaklad?.zbytek)}
     </div>}
@@ -5495,6 +5552,24 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
         {!schodekVyrazny&&<> Dojezd nemá cenu počítat — při takhle malém rozdílu by stačila jedna větší platba a číslo se překlopí.</>}
         {" "}Dětské spoření, investice ani Fortuna se do toho nepočítají.
       </div>
+      {sporeniInfo&&<div style={{fontSize:11.5,color:C.muted,marginTop:7,lineHeight:1.6}}>
+        <strong style={{color:C.text}}>Spoření s cílem.</strong>{" "}
+        {kc0(sporeniInfo.kon)}, měsíčně přibude {kc0(sporeniInfo.prit)} a ubere se {kc0(sporeniInfo.ven)} —
+        {sporeniInfo.netto>=0
+          ? <> čistě <strong style={{color:C.green}}>+{kc0(sporeniInfo.netto)}</strong>.</>
+          : <> čistě <strong style={{color:C.orange}}>{kc0(sporeniInfo.netto)}</strong>. Tohle jsou peníze slíbené jinam,
+              takže je do rezervy na horší časy nepočítej.</>}
+      </div>}
+      {rezervaInfo&&<div style={{fontSize:11.5,color:C.muted,marginTop:7,lineHeight:1.6}}>
+        <strong style={{color:C.text}}>Rezerva.</strong>{" "}
+        Na účtu, který máš označený jako rezervu, je <strong style={{color:C.text}}>{kc0(rezervaInfo.kon)}</strong>{" "}
+        (na začátku období {kc0(rezervaInfo.zac)}). Měsíčně tam pošleš {kc0(rezervaInfo.prit)} a vybereš {kc0(rezervaInfo.ven)}.
+        {rezervaInfo.netto>=0
+          ? <> Zůstává tedy <strong style={{color:C.green}}>+{kc0(rezervaInfo.netto)}</strong> — rezerva roste.</>
+          : <> Čistě z ní <strong style={{color:C.red}}>ubývá {kc0(Math.abs(rezervaInfo.netto))}</strong> měsíčně
+              {rezervaInfo.vydrzi!=null&&<>, takže při tomhle tempu vydrží <strong style={{color:rezervaInfo.vydrzi<6?C.red:C.orange}}>{rezervaInfo.vydrzi.toFixed(1)} měsíce</strong></>}.
+              {" "}Odkládat a zase vybírat není spoření — rezerva mizí dřív než zůstatek na běžných účtech.</>}
+      </div>}
       <div style={{fontSize:11,color:C.dim,marginTop:8}}>
         {hotRadky.length
           ? <>Hotovost mimo účty: <strong style={{color:C.text}}>{kc0(hotovostMesicne)} měsíčně</strong> —
