@@ -3482,6 +3482,28 @@ function HotovostTab({kategorie}){
 // hotovosti. A počítá se ve třech oknech, protože průměr za celý rok umí
 // schovat, že poslední tři měsíce vypadají úplně jinak.
 // ══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+// Pět jmen nahoře, nástroje pod nimi. Měsíční rutina jsou tři kroky —
+// naimportovat, dopsat zůstatky, podívat se na Kde jsem. Zbytek je nářadí,
+// do kterého se leze, jen když něco nesedí, a nemá zabírat místo v menu.
+// ══════════════════════════════════════════════════════════════════════════════
+const FIN_SKUPINY=[
+  {id:"kdejsem", l:"🧭 Kde jsem"},
+  {id:"mesic",   l:"🎯 Měsíc"},
+  {id:"import",  l:"📥 Import", pod:[
+    {id:"import",   l:"Načíst výpisy"},
+    {id:"pokryti",  l:"Pokrytí měsíců"}]},
+  {id:"zarazeni",l:"🏷 Zařazení", pod:[
+    {id:"zarazeni", l:"Platby k zařazení"},
+    {id:"kategorie",l:"Kategorie"},
+    {id:"pravidla", l:"Pravidla"}]},
+  {id:"majetek", l:"💼 Majetek", pod:[
+    {id:"ucty",     l:"Účty a zůstatky"},
+    {id:"projekty", l:"Projekty a závazky"},
+    {id:"likvidita",l:"Likvidita"},
+    {id:"hotovost", l:"Hotovost"}]},
+];
+
 function KdeJsemTab({ucty,projekty}){
   const {data:stavy,loading}=useData(()=>nactiVse((od,do_)=>
     sb.from("fin_stavy").select("ucet_id,rok,mesic,stav").gte("rok",2024).order("rok").range(od,do_)));
@@ -6100,6 +6122,7 @@ function FinanceNoveTab(){
   const {data:deti}=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:auta}=useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
   const [zalozka,setZalozka]=useState("kdejsem");
+  const [pod,setPod]=useState({});          // skupina → aktivní nástroj
   const {data:pocet,reload:reloadPocet}=useData(()=>sb.from("fin_transakce").select("id",{count:"exact",head:true}).eq("zdroj","import").then(({count,error})=>({data:count??0,error})));
   // Spinner jen při prvním načtení. Při přenačtení po uložení se komponenta
   // nesmí odmountovat — přišel by o rozdělané hledání i o rozbalené řádky.
@@ -6113,20 +6136,43 @@ function FinanceNoveTab(){
       <div style={{fontSize:12,color:C.muted}}>{bankovni.length} bankovních účtů · {pocet??0} naimportovaných transakcí</div>
     </div>
     <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
-      {[{id:"kdejsem",l:"🧭 Kde jsem"},{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"likvidita",l:"💧 Likvidita"},{id:"hotovost",l:"💵 Hotovost"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"},{id:"pravidla",l:"⚙️ Pravidla"},{id:"majetek",l:"💼 Majetek"}].map(t=>
-        <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{t.l}</button>)}
+      {FIN_SKUPINY.map(g=>
+        <button key={g.id} onClick={()=>setZalozka(g.id)} style={{padding:"9px 20px",border:"none",background:"none",cursor:"pointer",fontSize:13.5,fontWeight:700,color:zalozka===g.id?C.accent:C.muted,borderBottom:zalozka===g.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{g.l}</button>)}
     </div>
-    {zalozka==="kdejsem"&&<KdeJsemTab ucty={ucty} projekty={projekty}/>}
-    {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>}
-    {zalozka==="projekty"&&<FinProjektyTab/>}
-    {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadProjekty={reloadProjekty} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
-    {zalozka==="pokryti"&&<PokrytiImportu ucty={ucty}/>}
-    {zalozka==="likvidita"&&<LikviditaTab ucty={ucty}/>}
-    {zalozka==="hotovost"&&<HotovostTab kategorie={kategorie}/>}
-    {zalozka==="pravidla"&&<PravidlaTab ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta}/>}
-    {zalozka==="majetek"&&<MajetekTab ucty={ucty} reloadUcty={reloadUcty}/>}
-    {zalozka==="kategorie"&&<KategorieTab kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadPocet();}}/>}
-    {zalozka==="zarazeni"&&<ZarazeniTransakci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie} onZmena={()=>{reloadUcty();reloadPocet();reloadProjekty();}}/>}
+
+    {/* Druhá úroveň — nástroje jedné oblasti. Nahoře zůstává pět jmen, sem
+        se schová všechno, do čeho se leze, jen když něco nesedí. */}
+    {(()=>{
+      const g=FIN_SKUPINY.find(x=>x.id===zalozka);
+      if(!g?.pod)return null;
+      const akt=pod[g.id]||g.pod[0].id;
+      return <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
+        {g.pod.map(x=><button key={x.id} onClick={()=>setPod(p2=>({...p2,[g.id]:x.id}))}
+          style={{padding:"5px 13px",borderRadius:8,cursor:"pointer",fontSize:12.5,fontWeight:700,
+                  border:`1px solid ${akt===x.id?C.accent:C.border}`,
+                  background:akt===x.id?C.accentS:C.surface,
+                  color:akt===x.id?C.accent:C.muted}}>{x.l}</button>)}
+      </div>;
+    })()}
+
+    {(()=>{
+      const g=FIN_SKUPINY.find(x=>x.id===zalozka);
+      const co=g?.pod?(pod[g.id]||g.pod[0].id):zalozka;
+      switch(co){
+        case "kdejsem":  return <KdeJsemTab ucty={ucty} projekty={projekty}/>;
+        case "mesic":    return <PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>;
+        case "import":   return <ImportVypisu ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadProjekty={reloadProjekty} onHotovo={()=>{reloadUcty();reloadPocet();}}/>;
+        case "pokryti":  return <PokrytiImportu ucty={ucty}/>;
+        case "zarazeni": return <ZarazeniTransakci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie} onZmena={()=>{reloadUcty();reloadPocet();reloadProjekty();}}/>;
+        case "kategorie":return <KategorieTab kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadPocet();}}/>;
+        case "pravidla": return <PravidlaTab ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta}/>;
+        case "ucty":     return <MajetekTab ucty={ucty} reloadUcty={reloadUcty}/>;
+        case "projekty": return <FinProjektyTab/>;
+        case "likvidita":return <LikviditaTab ucty={ucty}/>;
+        case "hotovost": return <HotovostTab kategorie={kategorie}/>;
+        default:         return null;
+      }
+    })()}
   </div>;
 }
 
