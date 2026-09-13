@@ -5354,6 +5354,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     .select("id,datum,castka,typ,popis,poznamka,protistrana,vs,kategorie_id,projekt_id,subjekt_typ,subjekt_id,ucet_id,prevod_ucet_id")
     .eq("zdroj","import").order("datum").range(od,do_)));
   const [rozpad,setRozpad]=useState(null);   // {titulek, polozky}
+  const [vypocet,setVypocet]=useState(null); // {titulek, radky, vysledek}
   const [obdobi,setObdobi]=useState(null);   // null = výchozí (poslední dokončený měsíc)
   const [ucetFiltr,setUcetFiltr]=useState("");  // "" = všechny účty dohromady
   const {data:stavy,loading:ls}=useData(()=>nactiVse((od,do_)=>sb.from("fin_stavy").select("*").gte("rok",2025).order("rok").range(od,do_)));
@@ -5454,6 +5455,10 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     ? vybraneVse.filter(t=>String(t.ucet_id)===String(ucetFiltr))
     : vybrane;
   const naMesic=x=>x*delitel/nMesicu;    // převod na měsíční tempo (kvůli dojezdu)
+  // U uzavřeného období už nic „nezbývá" — je po všem a jde jen o to, co
+  // zbylo nebo chybělo. U rozdělaného měsíce naopak zbývá, protože se ještě
+  // utrácí. Stejné číslo, jiná otázka, jiný název.
+  const dokoncene=prumer||ob.rezim==="rozsah"||(ob.rezim==="mesic"&&ob.mesic<tentoMesic);
   const zaObdobi=prumer?" měsíčně":"";
 
   // U jednoho účtu je převod skutečný pohyb — Airbanka o ty peníze přijde,
@@ -5698,12 +5703,16 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
 
   // Srovnání s průměrem: absolutní rozdíl i procenta. U malých základů procenta
   // nic neříkají (z 200 na 400 je +100 %), proto se pod tisícovkou neukazují.
-  const karta=(l,v,barva,pozn,polozky,prumerV)=>{
+  // Některá čísla nejsou hromádka plateb, ale výsledek odčítání — „zbývá na
+  // život" žádné vlastní platby nemá. Rozpad by tam nedával smysl, ale
+  // ukázat, z čeho to vzniklo, ano.
+  const karta=(l,v,barva,pozn,polozky,prumerV,vypocet)=>{
     const rozd=prumerV!=null?v-prumerV:null;
     const pct=(rozd!=null&&Math.abs(prumerV)>1000)?rozd/Math.abs(prumerV)*100:null;
     return <div
-      onClick={polozky?()=>setRozpad({titulek:`${l} · rozpad`,polozky}):undefined}
-      style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:190,cursor:polozky?"pointer":"default"}}>
+      onClick={polozky?()=>setRozpad({titulek:`${l} · rozpad`,polozky})
+              :vypocet?()=>setVypocet({titulek:l,radky:vypocet,vysledek:v}):undefined}
+      style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",flex:1,minWidth:190,cursor:(polozky||vypocet)?"pointer":"default"}}>
       <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3}}>{l}</div>
       <div style={{fontSize:23,fontWeight:800,color:barva||C.text,marginTop:5}}>{kc0(v)}</div>
       {pozn&&<div style={{fontSize:11,color:C.dim,marginTop:3}}>{pozn}</div>}
@@ -5713,6 +5722,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
         </strong>
       </div>}
       {polozky&&<div style={{fontSize:10,color:C.accent,marginTop:5}}>▸ ukázat {polozky.length} pohybů</div>}
+      {!polozky&&vypocet&&<div style={{fontSize:10,color:C.accent,marginTop:5}}>▸ z čeho to vzniklo</div>}
     </div>;
   };
 
@@ -5852,16 +5862,27 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
         toky.filter(t=>+t.castka>0&&!jeVratka(t)),prumerZaklad?(prumerZaklad.prijmy+prumerZaklad.hotovost):null)}
       {karta("Povinné závazky"+zaObdobi,mZavazky,C.orange,"hypotéka, SJM, insolvence, auta",
         toky.filter(t=>+t.castka<0&&t.projekt_id),prumerZaklad?.zavazky)}
-      {karta("Zbývá na život"+zaObdobi,kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků",
-        null,prumerZaklad?.zbyvaNaZivot)}
+      {karta((dokoncene?"Na život bylo":"Zbývá na život")+zaObdobi,kDispozici,kDispozici>0?C.text:C.red,"po zaplacení závazků",
+        null,prumerZaklad?.zbyvaNaZivot,[
+          {l:"Příjmy na účty",v:mPrijmy,znak:"+"},
+          ...(hotovostMesicne?[{l:"Hotovost mimo účty",v:hotovostMesicne,znak:"+"}]:[]),
+          {l:"Povinné závazky",v:-mZavazky,znak:"−"},
+        ])}
       {rezervaInfo&&karta("🛟 Rezerva",rezervaInfo.kon,rezervaInfo.netto>=0?C.green:C.red,
         `+${kc0(rezervaInfo.prit)} · −${kc0(rezervaInfo.ven)} · čistě ${rezervaInfo.netto>=0?"+":""}${kc0(rezervaInfo.netto)} měsíčně`,
         null,null)}
       {sporeniInfo&&karta("🎯 Spoření",sporeniInfo.kon,sporeniInfo.netto>=0?C.green:C.orange,
         `+${kc0(sporeniInfo.prit)} · −${kc0(sporeniInfo.ven)} · čistě ${sporeniInfo.netto>=0?"+":""}${kc0(sporeniInfo.netto)} měsíčně`,
         null,null)}
-      {karta("Skutečně utrácíš"+zaObdobi,mZbytek,C.red,vratky?`všechno ostatní, po odečtení vratek`:"všechno ostatní",
+      {karta((dokoncene?"Utratil jsi":"Skutečně utrácíš")+zaObdobi,mZbytek,C.red,
+        vratky?`všechno ostatní, po odečtení vratek`:"všechno ostatní",
         bezPrevodu.filter(t=>+t.castka<0&&!t.projekt_id),prumerZaklad?.zbytek)}
+      {karta((rozdil>=0?"Zbylo":"Chybělo")+zaObdobi,Math.abs(rozdil),rozdil>=0?C.green:C.red,
+        rozdil>=0?"tolik ti po všem zůstalo":"tolik muselo přijít odjinud — z rezervy nebo z kreditky",
+        null,null,[
+          {l:dokoncene?"Na život bylo":"Zbývalo na život",v:kDispozici,znak:"+"},
+          {l:dokoncene?"Utratil jsi":"Utrácíš",v:-mZbytek,znak:"−"},
+        ])}
     </div>}
 
     {!jedenUcet&&<div style={{background:rozdil>=0?"#f0f7ee":"#fdefef",border:`1px solid ${rozdil>=0?"#8fc07f":"#e59a9a"}`,borderRadius:12,padding:"16px 18px",marginBottom:16}}>
@@ -5934,6 +5955,38 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
 
     {rozpad&&<RozpadModal {...rozpad} pocetMesicu={prumer?n:null} ucty={ucty} kategorie={kategorie} projekty={projekty}
       deti={deti} auta={auta} reloadKategorie={reloadKategorie} onZmena={reloadTrans} onClose={()=>setRozpad(null)}/>}
+
+    {vypocet&&<Modal title={vypocet.titulek} onClose={()=>setVypocet(null)} width={440}>
+      <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.6}}>
+        Tohle číslo nemá vlastní platby — je to výsledek odčítání. Proto se nedá rozkliknout
+        na pohyby, ale tady je vidět, z čeho vzniklo.
+      </div>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13.5}}>
+        <tbody>
+          {vypocet.radky.map((r,i)=><tr key={i} style={{borderTop:i?`1px solid ${C.border}`:"none"}}>
+            <td style={{padding:"9px 4px",color:C.muted}}>
+              <span style={{display:"inline-block",width:16,fontWeight:800,
+                            color:r.znak==="−"?C.red:C.green}}>{r.znak}</span>
+              {r.l}
+            </td>
+            <td style={{padding:"9px 4px",textAlign:"right",fontWeight:700}}>{kc0(Math.abs(r.v))}</td>
+          </tr>)}
+          <tr style={{borderTop:`2px solid ${C.text}`}}>
+            <td style={{padding:"10px 4px",fontWeight:800}}>= {vypocet.titulek.replace(zaObdobi,"")}</td>
+            <td style={{padding:"10px 4px",textAlign:"right",fontSize:17,fontWeight:800,
+                        color:vypocet.vysledek>0?C.text:C.red}}>{kc0(vypocet.vysledek)}</td>
+          </tr>
+        </tbody>
+      </table>
+      {vypocet.radky.length>2&&<div style={{fontSize:12,color:C.muted,marginTop:14,lineHeight:1.6,
+                   background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px"}}>
+        Proti tomu jsi skutečně utratil <strong style={{color:C.text}}>{kc0(mZbytek)}</strong>
+        {" "}— {mZbytek>vypocet.vysledek
+          ? <>tedy o <strong style={{color:C.red}}>{kc0(mZbytek-vypocet.vysledek)}</strong> víc, než kolik zbývalo.</>
+          : <>tedy o <strong style={{color:C.green}}>{kc0(vypocet.vysledek-mZbytek)}</strong> míň. Tolik ti zůstalo.</>}
+        {" "}Jednotlivé platby najdeš pod sousední kartou.
+      </div>}
+    </Modal>}
   </div>;
 }
 
