@@ -3470,6 +3470,226 @@ function HotovostTab({kategorie}){
   </div>;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// KDE JSEM — jedna obrazovka, která odpoví na „jak na tom jsem"
+//
+// Všechno ostatní v modulu je nástroj: import, třídění, pravidla. Tohle je
+// výsledek. Čte se shora dolů a nic se v tom neklikne — kolik máš, jak rychle
+// to ubývá, jak dlouho to vydrží, kdy se uleví a jestli se to stihne.
+//
+// Tempo se počítá ze zůstatků, ne z pohybů. Zůstatek je změřený, součet plateb
+// je odhad, který má tolik děr, kolik je nezařazených plateb a neevidované
+// hotovosti. A počítá se ve třech oknech, protože průměr za celý rok umí
+// schovat, že poslední tři měsíce vypadají úplně jinak.
+// ══════════════════════════════════════════════════════════════════════════════
+function KdeJsemTab({ucty,projekty}){
+  const {data:stavy,loading}=useData(()=>nactiVse((od,do_)=>
+    sb.from("fin_stavy").select("ucet_id,rok,mesic,stav").gte("rok",2024).order("rok").range(od,do_)));
+  const {data:trans,loading:lt}=useData(()=>nactiVse((od,do_)=>
+    sb.from("fin_transakce").select("ucet_id,datum,castka,projekt_id").eq("zdroj","import").order("datum").range(od,do_)));
+  const {data:hotovost}=useData(()=>sb.from("fin_hotovost").select("mesic,castka,aktivni"));
+  const {data:projPlatby}=useData(()=>sb.from("fin_projekt_platby").select("projekt_id,castka"));
+
+  if(loading||lt)return <Spinner/>;
+
+  const f=kc0;
+  const klic=(r,m)=>`${r}-${String(m).padStart(2,"0")}`;
+  const posun=(m,o)=>{const [r,x]=m.split("-").map(Number);
+    const d=new Date(r,x-1+o,1);return klic(d.getFullYear(),d.getMonth()+1);};
+
+  // Poslední měsíc, ke kterému má smysl počítat — rozdělaný se nebere.
+  const ted=new Date();
+  const konecMesice=new Date(ted.getFullYear(),ted.getMonth()+1,0).getDate()===ted.getDate();
+  const posledni=(()=>{const d=konecMesice?ted:new Date(ted.getFullYear(),ted.getMonth()-1,1);
+    return klic(d.getFullYear(),d.getMonth()+1);})();
+
+  const stavKMesici=(uid,m)=>{
+    const h=(stavy||[]).filter(x=>String(x.ucet_id)===String(uid))
+      .map(x=>({k:klic(x.rok,x.mesic),v:+x.stav})).filter(x=>x.k<=m)
+      .sort((a,b)=>a.k.localeCompare(b.k));
+    return h.length?h[h.length-1].v:null;
+  };
+  const skupina=n=>(ucty||[]).filter(u=>u.aktivni!==false&&n.includes(u.skupina||"finance"));
+  const soucet=(a,m)=>a.reduce((s,u)=>s+(stavKMesici(u.id,m)||0),0);
+
+  const likvidni=skupina(["finance","podnikani","hotovost"]);
+  const banky   =skupina(["finance","podnikani"]);
+  const mam     =soucet(likvidni,posledni);
+  const rezerva =(ucty||[]).filter(u=>u.ucel==="rezerva");
+  const sporeni =(ucty||[]).filter(u=>u.ucel==="sporeni");
+  const mamRez=soucet(rezerva,posledni), mamSpo=soucet(sporeni,posledni);
+  const mamBezne=mam-mamRez-mamSpo;
+
+  // Tempo ve třech oknech. Delší okno je klidnější, kratší pravdivější —
+  // proto se ukazují všechna a nechá se na člověku, čemu věří.
+  const tempo=n=>{
+    const zac=posun(posledni,-n);
+    const a=soucet(likvidni,zac), b=mam;
+    return {mesicu:n, od:zac, zmena:(b-a)/n, vydrzi:(b-a)<0?b/Math.abs((b-a)/n):null};
+  };
+  const okna=[tempo(8),tempo(3),tempo(1)].filter(x=>x.zmena!==0||true);
+  const tempoBank=n=>{const zac=posun(posledni,-n);
+    return (soucet(banky,posledni)-soucet(banky,zac))/n;};
+
+  // Nejkratší okno bere jako pravdu — ale jen když je horší. Když se poslední
+  // měsíce zlepšily, nemá cenu strašit dlouhodobým průměrem.
+  const nejhorsi=okna.reduce((a,b)=>b.zmena<a.zmena?b:a);
+  const rozchod=Math.abs(okna[0].zmena-okna[1].zmena)>5000;
+
+  // Závazek, který někdy skončí — kolik zbývá a za jak dlouho.
+  const zavazky=(projekty||[]).filter(p=>p.typ==="zavazek"&&p.cilova_castka>0&&p.mesicni_castka>0)
+    .map(p=>{
+      const zVypisu=(trans||[]).filter(t=>String(t.projekt_id)===String(p.id)&&+t.castka<0)
+        .reduce((a,t)=>a-(+t.castka),0);
+      const hot=(projPlatby||[]).filter(x=>String(x.projekt_id)===String(p.id))
+        .reduce((a,x)=>a+(+x.castka||0),0);
+      const zaplaceno=(+p.zaplaceno_pred||0)+zVypisu+hot;
+      const zbyva=Math.max(0,+p.cilova_castka-zaplaceno);
+      return {p,zaplaceno,zbyva,mesicu:zbyva/(+p.mesicni_castka),
+              procenta:zaplaceno/(+p.cilova_castka)*100};
+    }).sort((a,b)=>a.mesicu-b.mesicu);
+  const prvni=zavazky[0];
+
+  // Kolik hotovosti zmizí mimo evidenci: pohyby na likvidních účtech plus to,
+  // co má podle deníku přijít, versus skutečná změna zůstatků.
+  const slepeMisto=(()=>{
+    const n=8, zac=posun(posledni,-n);
+    const mesice=[]; for(let m=posun(zac,1); m<=posledni; m=posun(m,1))mesice.push(m);
+    const ids=new Set(likvidni.map(u=>u.id));
+    const toky=(trans||[]).filter(t=>ids.has(t.ucet_id)&&mesice.includes(String(t.datum).slice(0,7)))
+      .reduce((a,t)=>a+(+t.castka||0),0);
+    const hr=(hotovost||[]).filter(h=>h.aktivni!==false);
+    if(!hr.length)return null;
+    const sablona=hr.filter(h=>!h.mesic).reduce((a,h)=>a+(+h.castka||0),0);
+    const hot=mesice.reduce((a,m)=>{
+      const r=hr.filter(h=>h.mesic===m);
+      return a+(r.length?r.reduce((s,h)=>s+(+h.castka||0),0):sablona);
+    },0);
+    const skutecnost=mam-soucet(likvidni,zac);
+    return {ocekavano:(toky+hot)/n, skutecnost:skutecnost/n, rozdil:(toky+hot-skutecnost)/n};
+  })();
+
+  const nadpis=t=><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",
+    letterSpacing:.4,marginBottom:8}}>{t}</div>;
+  const blok=(deti,barva)=><div style={{background:C.surface,border:`1px solid ${barva||C.border}`,
+    borderRadius:14,padding:"16px 18px",marginBottom:12}}>{deti}</div>;
+
+  return <div style={{maxWidth:860}}>
+    <div style={{fontSize:12,color:C.dim,marginBottom:12}}>
+      Stav k {posledni}. Tempo se počítá ze zůstatků na účtech, ne ze součtu plateb — zůstatek je
+      změřený, součet plateb má tolik děr, kolik je nezařazených položek.
+    </div>
+
+    {/* ── Kolik mám ─────────────────────────────────────────────────── */}
+    {blok(<>
+      {nadpis("Kolik máš")}
+      <div style={{fontSize:34,fontWeight:800,color:C.text,lineHeight:1.1}}>{f(mam)}</div>
+      <div style={{fontSize:12,color:C.muted,marginTop:3}}>běžné účty, spořicí a hotovost — bez dětí, investic a Fortuny</div>
+      {(rezerva.length>0||sporeni.length>0)&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12}}>
+        {[["🛟 rezerva na mimořádné",mamRez,C.green],
+          ["🎯 spoření s cílem",mamSpo,C.purple],
+          ["běžné účty a hotovost",mamBezne,C.muted]].filter(([,v])=>v!==0).map(([l,v,c])=>
+          <div key={l} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,
+                padding:"8px 12px",flex:"1 1 180px"}}>
+            <div style={{fontSize:11,color:C.muted}}>{l}</div>
+            <div style={{fontSize:17,fontWeight:800,color:c}}>{f(v)}</div>
+          </div>)}
+      </div>}
+      {mamSpo>0&&<div style={{fontSize:11.5,color:C.muted,marginTop:9}}>
+        Spoření s cílem jsou peníze slíbené jinam. Na nečekané věci máš ve skutečnosti <strong style={{color:C.text}}>{f(mamRez)}</strong>.
+      </div>}
+    </>)}
+
+    {/* ── Jak rychle ubývá ──────────────────────────────────────────── */}
+    {blok(<>
+      {nadpis("Jak rychle ubývá")}
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+        <tbody>
+          {okna.map(o=><tr key={o.mesicu} style={{borderTop:`1px solid ${C.border}`}}>
+            <td style={{padding:"7px 4px",color:C.muted}}>
+              {o.mesicu===1?"poslední měsíc":`posledních ${o.mesicu} měsíců`}
+              <span style={{fontSize:11,color:C.dim}}> · od {o.od}</span>
+            </td>
+            <td style={{padding:"7px 4px",textAlign:"right",fontWeight:800,
+                        color:o.zmena<0?C.red:C.green}}>
+              {o.zmena>=0?"+":""}{f(o.zmena)} / měs
+            </td>
+            <td style={{padding:"7px 4px",textAlign:"right",color:C.muted,width:110}}>
+              {o.vydrzi!=null?`vydrží ${o.vydrzi.toFixed(1)} měs.`:"roste"}
+            </td>
+          </tr>)}
+        </tbody>
+      </table>
+      <div style={{fontSize:11.5,color:C.muted,marginTop:9,lineHeight:1.6}}>
+        {rozchod
+          ? <>Dlouhý průměr a poslední měsíce si <strong style={{color:C.orange}}>odporují</strong> —
+             a když se rozcházejí, pravdu mívá ten kratší. Ber vážně{" "}
+             <strong style={{color:C.text}}>{f(nejhorsi.zmena)} měsíčně</strong>.</>
+          : <>Všechna okna říkají zhruba totéž, takže tempo je stabilní.</>}
+        {" "}Na samotných bankovních účtech, kde je každá koruna z výpisu, to vychází na{" "}
+        {f(tempoBank(8))} za osm měsíců a {f(tempoBank(3))} za poslední tři.
+      </div>
+    </>,rozchod?C.orange:C.border)}
+
+    {/* ── Kdy se uleví ──────────────────────────────────────────────── */}
+    {prvni&&blok(<>
+      {nadpis("Kdy se uleví")}
+      <div style={{fontSize:13.5,lineHeight:1.7}}>
+        <strong>{prvni.p.emoji||"📁"} {prvni.p.nazev}</strong> — zaplaceno {f(prvni.zaplaceno)} z{" "}
+        {f(prvni.p.cilova_castka)}, zbývá <strong>{f(prvni.zbyva)}</strong>.
+        Při {f(prvni.p.mesicni_castka)} měsíčně to je{" "}
+        <strong style={{color:C.accent}}>{prvni.mesicu.toFixed(1)} měsíce</strong>
+        {prvni.p.datum_do&&<> (termín {new Date(prvni.p.datum_do).toLocaleDateString("cs-CZ")})</>}.
+        Pak se ta částka uvolní.
+      </div>
+      <div style={{height:7,background:C.border,borderRadius:5,overflow:"hidden",margin:"10px 0 4px"}}>
+        <div style={{width:`${Math.min(100,prvni.procenta)}%`,height:"100%",background:C.accent}}/>
+      </div>
+      {nejhorsi.vydrzi!=null&&<div style={{fontSize:12.5,marginTop:10,padding:"9px 12px",borderRadius:10,
+          background:nejhorsi.vydrzi>prvni.mesicu?"#e6f4ed":"#fdecea",
+          color:nejhorsi.vydrzi>prvni.mesicu?C.green:C.red,lineHeight:1.6}}>
+        {nejhorsi.vydrzi>prvni.mesicu
+          ? <><strong>Stihne se to.</strong> Peníze vydrží {nejhorsi.vydrzi.toFixed(1)} měsíce a závazek končí
+             za {prvni.mesicu.toFixed(1)} — po něm se měsíční bilance zlepší o {f(prvni.p.mesicni_castka)}.</>
+          : <><strong>Nestihne se to.</strong> Závazek končí za {prvni.mesicu.toFixed(1)} měsíce, ale při
+             současném tempu ti peníze vydrží jen {nejhorsi.vydrzi.toFixed(1)}. Ta úleva {f(prvni.p.mesicni_castka)}
+             {" "}měsíčně přijde, jen možná až potom.</>}
+      </div>}
+      {zavazky.length>1&&<div style={{fontSize:11.5,color:C.muted,marginTop:9}}>
+        Další v pořadí: {zavazky.slice(1).map(z=>`${z.p.nazev} (${z.mesicu.toFixed(0)} měs.)`).join(" · ")}
+      </div>}
+    </>)}
+
+    {/* ── Cíl ───────────────────────────────────────────────────────── */}
+    {blok(<>
+      {nadpis("Laťka na tenhle měsíc")}
+      <div style={{fontSize:13.5,lineHeight:1.7}}>
+        Na konci {posledni} jsi měl <strong>{f(mam)}</strong>. Měsíc skončil kolem nuly tehdy,
+        když na konci toho dalšího budeš mít <strong style={{color:C.accent}}>aspoň tolik</strong>.
+      </div>
+      <div style={{fontSize:11.5,color:C.muted,marginTop:7}}>
+        Jedno číslo, jedna kontrola. Nezávisí na tom, jak jsou platby zařazené ani kolik hotovosti
+        se odhadlo — porovnává se zůstatek se zůstatkem.
+      </div>
+    </>)}
+
+    {/* ── Co model neví ─────────────────────────────────────────────── */}
+    {slepeMisto&&Math.abs(slepeMisto.rozdil)>2000&&blok(<>
+      {nadpis("Co model neví")}
+      <div style={{fontSize:13.5,lineHeight:1.7}}>
+        Podle pohybů na účtech a hotovostního deníku by mělo měsíčně{" "}
+        {slepeMisto.ocekavano>=0?"přibývat":"ubývat"} <strong>{f(Math.abs(slepeMisto.ocekavano))}</strong>,
+        ale zůstatky říkají <strong>{f(slepeMisto.skutecnost)}</strong>.
+        Rozdíl <strong style={{color:C.orange}}>{f(Math.abs(slepeMisto.rozdil))} měsíčně</strong> nikde není.
+      </div>
+      <div style={{fontSize:11.5,color:C.muted,marginTop:7,lineHeight:1.6}}>
+        Nejčastěji je to hotovost, kterou utratíš v hotovosti — příjem se do deníku zapíše, útrata ne.
+        Dá se to zavřít řádkem v 💵 Hotovosti. Může to být i chybějící výpis nebo nezapsaný zůstatek.
+      </div>
+    </>,C.orange)}
+  </div>;
+}
+
 function MajetekTab({ucty,reloadUcty}){
   const {data:stavy,loading,reload}=useData(()=>nactiVse((od,do_)=>
     sb.from("fin_stavy").select("*").gte("rok",2024).order("rok").range(od,do_)));
@@ -5686,7 +5906,7 @@ function FinanceNoveTab(){
   const {data:projekty,reload:reloadProjekty}=useData(()=>sb.from("fin_projekty").select("*").order("poradi"));
   const {data:deti}=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva").order("jmeno"));
   const {data:auta}=useData(()=>sb.from("auta").select("id,nazev,spz").order("nazev"));
-  const [zalozka,setZalozka]=useState("prehled");
+  const [zalozka,setZalozka]=useState("kdejsem");
   const {data:pocet,reload:reloadPocet}=useData(()=>sb.from("fin_transakce").select("id",{count:"exact",head:true}).eq("zdroj","import").then(({count,error})=>({data:count??0,error})));
   // Spinner jen při prvním načtení. Při přenačtení po uložení se komponenta
   // nesmí odmountovat — přišel by o rozdělané hledání i o rozbalené řádky.
@@ -5700,9 +5920,10 @@ function FinanceNoveTab(){
       <div style={{fontSize:12,color:C.muted}}>{bankovni.length} bankovních účtů · {pocet??0} naimportovaných transakcí</div>
     </div>
     <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
-      {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"likvidita",l:"💧 Likvidita"},{id:"hotovost",l:"💵 Hotovost"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"},{id:"pravidla",l:"⚙️ Pravidla"},{id:"majetek",l:"💼 Majetek"}].map(t=>
+      {[{id:"kdejsem",l:"🧭 Kde jsem"},{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"likvidita",l:"💧 Likvidita"},{id:"hotovost",l:"💵 Hotovost"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"},{id:"pravidla",l:"⚙️ Pravidla"},{id:"majetek",l:"💼 Majetek"}].map(t=>
         <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{t.l}</button>)}
     </div>
+    {zalozka==="kdejsem"&&<KdeJsemTab ucty={ucty} projekty={projekty}/>}
     {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>}
     {zalozka==="projekty"&&<FinProjektyTab/>}
     {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadProjekty={reloadProjekty} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
