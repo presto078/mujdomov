@@ -16,8 +16,15 @@
 
 alter table fin_ucty add column if not exists ucel text;
 
--- Převzít, co už bylo označené předchozím skriptem.
-update fin_ucty set ucel = 'rezerva' where rezerva is true and ucel is null;
+-- Převzít, co už bylo označené předchozím skriptem — jen když ten sloupec
+-- vůbec existuje, ať skript funguje i bez rezerva.sql.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_name = 'fin_ucty' and column_name = 'rezerva') then
+    update fin_ucty set ucel = 'rezerva' where rezerva is true and ucel is null;
+  end if;
+end $$;
 
 update fin_ucty set ucel = 'rezerva' where trim(nazev) = 'Moneta Spořící';
 update fin_ucty set ucel = 'sporeni' where trim(nazev) = 'Raiffeisen Spořící';
