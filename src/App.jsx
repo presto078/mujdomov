@@ -4973,6 +4973,17 @@ function RozpadModal({titulek,polozky:mimoProjekty,vProjektech=[],pocetMesicu,uc
   const nezarazena=t=>t.typ!=="prevod"&&!t.kategorie_id&&!t.projekt_id&&!t.subjekt_typ;
   const nezarazenych=viditelne.filter(nezarazena).length;
   const kTrideni=jenNezarazene?viditelne.filter(nezarazena):viditelne;
+  const dleKategorii=(()=>{
+    const m=new Map();
+    for(const t of kTrideni){
+      const k=String(t.kategorie_id||"");
+      if(!m.has(k))m.set(k,{klic:"kat:"+k,
+        nazev:k&&katMap[k]?`${katMap[k].emoji||"🏷"} ${katMap[k].nazev}`:"❓ Bez kategorie",
+        suma:0,polozky:[]});
+      const z=m.get(k); z.suma+=Math.abs(+t.castka); z.polozky.push(t);
+    }
+    return [...m.values()].sort((a,b)=>b.suma-a.suma);
+  })();
   const celkem=viditelne.reduce((a,t)=>a+Math.abs(+t.castka),0);
 
   // U příchozích plateb je jediné, co odesílatele identifikuje, číslo protiúčtu
@@ -5028,7 +5039,7 @@ function RozpadModal({titulek,polozky:mimoProjekty,vProjektech=[],pocetMesicu,uc
     </div>
     <div style={{fontSize:12,color:C.muted,marginBottom:10}}>
       {mesic
-        ? <>Platby za {mesic} od nejnovější. U každé můžeš rovnou přepnout kategorii — a jestli tam nepatří, označit ji jako převod, čímž z příjmů i výdajů vypadne.
+        ? <>Seskupeno podle kategorie — klikni na řádek a rozbalí se platby. U každé můžeš rovnou přepnout kategorii, a jestli tam nepatří, označit ji jako převod, čímž z příjmů i výdajů vypadne.
            {" "}<label style={{cursor:"pointer",color:C.accent}}>
              <input type="checkbox" checked={jenNezarazene} onChange={e=>setJenNezarazene(e.target.checked)} style={{marginRight:4,verticalAlign:"-1px"}}/>
              jen nezařazené ({nezarazenych})
@@ -5041,10 +5052,36 @@ function RozpadModal({titulek,polozky:mimoProjekty,vProjektech=[],pocetMesicu,uc
       {kTrideni.length===0&&<div style={{fontSize:12,color:C.dim,padding:"10px 0"}}>
         {jenNezarazene?"Všechno v tomhle měsíci je zařazené.":"Za tenhle měsíc tu nic není."}
       </div>}
-      {kTrideni.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
-        <Radek key={t.id||i} t={t} uctyMap={uctyMap} katMap={katMap} projMap={projMap} kategorie={kategorie}
-          projekty={projekty} deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav}
-          novaKategorie={novaKategorie} naOstatni={otevriPravidlo} editovatelny/>)}
+      {/* Čtrnáct plateb pod sebou je k nepřečtení a u Povinných závazků se
+          v tom ztratí, že tři čtvrtiny jsou dvě kategorie. Nejdřív se proto
+          ukáže rozpad podle kategorie a teprv po rozkliknutí platby v ní. */}
+      {dleKategorii.map(g=>{
+        // Jedna jediná kategorie nemá co schovávat — rozbalí se rovnou.
+        const otevreno=rozbaleno===g.klic||dleKategorii.length===1;
+        return <div key={g.klic} style={{borderBottom:`1px solid ${C.border}`}}>
+          <div onClick={()=>setRozbaleno(otevreno?null:g.klic)}
+            style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,
+                    padding:"9px 4px",cursor:"pointer"}}>
+            <div style={{display:"flex",gap:9,alignItems:"baseline",minWidth:0,flex:1}}>
+              <span style={{fontSize:13,color:C.dim,width:12}}>{otevreno?"▾":"▸"}</span>
+              <span style={{fontWeight:700,fontSize:13.5,color:C.text}}>{g.nazev}</span>
+              <span style={{fontSize:11.5,color:C.dim}}>{g.polozky.length}×</span>
+            </div>
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              <div style={{width:110,height:5,background:C.border,borderRadius:4,overflow:"hidden"}}>
+                <div style={{width:`${g.suma/(dleKategorii[0]?.suma||1)*100}%`,height:"100%",background:C.accent}}/>
+              </div>
+              <strong style={{fontSize:13.5,minWidth:90,textAlign:"right"}}>{kc0(g.suma)}</strong>
+            </div>
+          </div>
+          {otevreno&&<div style={{paddingBottom:6}}>
+            {g.polozky.slice().sort((a,b)=>String(b.datum).localeCompare(String(a.datum))).map((t,i)=>
+              <Radek key={t.id||i} t={t} uctyMap={uctyMap} katMap={katMap} projMap={projMap} kategorie={kategorie}
+                projekty={projekty} deti={deti} auta={auta} uklada={uklada===t.id} uprav={uprav}
+                novaKategorie={novaKategorie} naOstatni={otevriPravidlo} editovatelny/>)}
+          </div>}
+        </div>;
+      })}
     </div>}
 
     {pravidlo&&<PravidloModal {...pravidlo} onClose={()=>setPravidlo(null)}
