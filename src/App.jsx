@@ -3201,6 +3201,206 @@ function LikviditaTab({ucty}){
   </div>;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// HOTOVOST — deník toho, co se neděje přes účty
+//
+// Peněženka nemá výpis, takže se hotovost dlouho vedla jedním číslem
+// v nastavení: 38 000 příjem měsíčně. Nešlo do toho napsat, že mámě dáváš
+// 10 000, ani že tenhle měsíc chtěla 12 000.
+//
+// Tabulka fin_hotovost má dva druhy řádků: šablonu (mesic je NULL), která se
+// opakuje každý měsíc, a skutečnost konkrétního měsíce. Měsíc se ze šablon
+// založí sám, ale od té chvíle si žije vlastním životem — přepsaná částka se
+// příště nevrátí na šablonovou.
+//
+// Do fin_transakce se to schválně nezapisuje. Generované pohyby v účetních
+// datech už jednou nadělaly škodu (dvojité alimenty) a hotovost nemá výpis,
+// o který by se opřely. Přehled si tuhle evidenci jen sečte.
+// ══════════════════════════════════════════════════════════════════════════════
+function HotovostTab({kategorie}){
+  const {data:radky,loading,reload}=useData(()=>sb.from("fin_hotovost").select("*").order("poradi"));
+  const {data:rozsah,loading:lr}=useData(()=>sb.from("fin_transakce")
+    .select("datum").eq("zdroj","import").order("datum").limit(1));
+  const [mesic,setMesic]=useState(null);
+  const [edit,setEdit]=useState(null);        // řádek nebo {novy:true, mesic}
+  const zalozeno=useRef(new Set());
+
+  const dnes=new Date();
+  const tentoMesic=`${dnes.getFullYear()}-${String(dnes.getMonth()+1).padStart(2,"0")}`;
+  const sablony=(radky||[]).filter(r=>!r.mesic&&r.aktivni!==false).sort((a,b)=>(a.poradi??100)-(b.poradi??100));
+
+  // Seznam měsíců od prvního výpisu do teď.
+  const mesice=(()=>{
+    const start=(rozsah&&rozsah[0]?.datum)||`${dnes.getFullYear()}-01-01`;
+    const out=[]; const d=new Date(String(start).slice(0,7)+"-01");
+    for(let i=0;i<120;i++){
+      const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+      out.push(k); if(k>=tentoMesic)break;
+      d.setMonth(d.getMonth()+1);
+    }
+    return out;
+  })();
+  const aktMesic=mesic||mesice[mesice.length-1];
+
+  // Měsíc, který ještě řádky nemá, se založí ze šablon. Dělá se to jen pro
+  // měsíce, které už proběhly nebo běží — do budoucna se nic nepředvyplňuje.
+  useEffect(()=>{
+    if(loading||lr||!Array.isArray(radky)||!sablony.length)return;
+    const chybi=mesice.filter(m=>m<=tentoMesic
+      &&!zalozeno.current.has(m)
+      &&!radky.some(r=>r.mesic===m));
+    if(!chybi.length)return;
+    chybi.forEach(m=>zalozeno.current.add(m));
+    const nove=chybi.flatMap(m=>sablony.map(s=>({
+      mesic:m, nazev:s.nazev, castka:s.castka, kategorie_id:s.kategorie_id,
+      poznamka:null, poradi:s.poradi, aktivni:true })));
+    sb.from("fin_hotovost").insert(nove).then(({error})=>{ if(!error)reload(); });
+  },[radky,loading,lr]);
+
+  if(loading||lr)return <Spinner/>;
+
+  const proMesic=m=>(radky||[]).filter(r=>r.mesic===m&&r.aktivni!==false)
+    .sort((a,b)=>(a.poradi??100)-(b.poradi??100));
+  const soucet=m=>proMesic(m).reduce((a,r)=>a+(+r.castka||0),0);
+  const katMap=Object.fromEntries((kategorie||[]).map(k=>[String(k.id),k]));
+
+  const uloz=async f=>{
+    const row={mesic:f.mesic??null,nazev:(f.nazev||"").trim(),castka:+f.castka||0,
+               kategorie_id:f.kategorie_id||null,poznamka:f.poznamka||null,
+               poradi:+f.poradi||100,aktivni:f.aktivni!==false};
+    if(!row.nazev)return;
+    const {error}=f.id?await sb.from("fin_hotovost").update(row).eq("id",f.id)
+                      :await sb.from("fin_hotovost").insert(row);
+    if(error){alert("Chyba: "+error.message);return;}
+    setEdit(null);reload();
+  };
+  const smaz=async r=>{
+    const txt=r.mesic
+      ? `Smazat „${r.nazev}" z ${r.mesic}?`
+      : `Smazat šablonu „${r.nazev}"? Už založené měsíce zůstanou, jen se nebude zakládat do dalších.`;
+    if(!confirm(txt))return;
+    await sb.from("fin_hotovost").delete().eq("id",r.id);reload();
+  };
+
+  const radekTabulky=(r,jeSablona)=><tr key={r.id} style={{borderTop:`1px solid ${C.border}`}}>
+    <td style={{padding:"7px 6px"}}>
+      <div style={{color:C.text,fontWeight:600}}>{r.nazev}</div>
+      {r.poznamka&&<div style={{fontSize:10.5,color:C.dim,marginTop:2}}>{r.poznamka}</div>}
+    </td>
+    <td style={{padding:"7px 6px",color:C.muted,fontSize:12}}>
+      {r.kategorie_id&&katMap[String(r.kategorie_id)]
+        ? `${katMap[String(r.kategorie_id)].emoji||"🏷"} ${katMap[String(r.kategorie_id)].nazev}` : "—"}
+    </td>
+    <td style={{padding:"7px 6px",textAlign:"right",fontWeight:700,color:+r.castka>=0?C.green:C.red}}>
+      {+r.castka>=0?"+":"−"}{kc0(Math.abs(+r.castka))}
+    </td>
+    <td style={{padding:"7px 6px",textAlign:"right",whiteSpace:"nowrap"}}>
+      <button onClick={()=>setEdit({...r})} style={{...btnC(C.accent,true),fontSize:11,padding:"3px 9px"}}>Upravit</button>
+      {" "}
+      <button onClick={()=>smaz(r)} style={{...btnC(C.red,true),fontSize:11,padding:"3px 9px"}}>✕</button>
+    </td>
+  </tr>;
+
+  const mesicniSoucty=mesice.slice(-14).map(m=>({m,v:soucet(m),ma:proMesic(m).length>0}));
+  const s=soucet(aktMesic);
+  const prijem=proMesic(aktMesic).filter(r=>+r.castka>0).reduce((a,r)=>a+ +r.castka,0);
+  const vydaj =proMesic(aktMesic).filter(r=>+r.castka<0).reduce((a,r)=>a-(+r.castka),0);
+
+  return <div>
+    <div style={{background:"#eef4fc",border:"1px solid #b3d1f0",borderRadius:10,padding:"10px 14px",
+                 fontSize:12,color:"#3066b0",marginBottom:14,lineHeight:1.6}}>
+      Co se nikdy neobjeví na výpise — hotovost, která přijde, a hotovost, kterou předáš dál.
+      <strong> Šablona</strong> se opakuje každý měsíc, <strong>měsíc</strong> se z ní založí sám a dá se přepsat:
+      když máma jednou chtěla dvanáct místo deseti, opravíš to jen v tom měsíci.
+      Přehled si tyhle řádky sečte místo jednoho čísla v nastavení.
+    </div>
+
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+      {mesicniSoucty.map(({m,v,ma})=>{
+        const akt=aktMesic===m;
+        return <div key={m} onClick={()=>setMesic(m)}
+          style={{background:akt?C.accent:C.bg,color:akt?"#fff":C.text,
+                  border:`1px solid ${akt?C.accent:C.border}`,borderRadius:8,padding:"5px 10px",
+                  fontSize:11,cursor:"pointer",opacity:ma?1:.5}}>
+          <div style={{color:akt?"#ffffffcc":C.muted}}>{m}</div>
+          <div style={{fontWeight:700}}>{ma?kc0(v):"—"}</div>
+        </div>;
+      })}
+    </div>
+
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+      {[["Přijde v hotovosti",prijem,C.green],["Odejde v hotovosti",vydaj,C.red],
+        ["Čistý přínos",s,s>=0?C.text:C.red]].map(([l,v,c])=>
+        <div key={l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,
+              padding:"14px 16px",flex:1,minWidth:180}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.3}}>{l}</div>
+          <div style={{fontSize:23,fontWeight:800,color:c,marginTop:5}}>{kc0(v)}</div>
+        </div>)}
+    </div>
+
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
+        <h3 style={{margin:0,fontSize:14.5,fontWeight:800}}>{aktMesic}</h3>
+        <button onClick={()=>setEdit({novy:true,mesic:aktMesic,nazev:"",castka:"",poradi:100})}
+          style={{...btnC(C.accent,true),fontSize:12,padding:"5px 12px"}}>+ Přidat do měsíce</button>
+      </div>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+        <tbody>
+          {proMesic(aktMesic).length===0&&<tr><td style={{padding:"10px 6px",color:C.dim,fontSize:12}}>
+            Za tenhle měsíc tu nic není. {sablony.length?"Ze šablon se založí, jakmile se na měsíc podíváš.":"Nejdřív si dole vytvoř šablonu."}
+          </td></tr>}
+          {proMesic(aktMesic).map(r=>radekTabulky(r,false))}
+        </tbody>
+      </table>
+    </div>
+
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,flexWrap:"wrap",gap:8}}>
+        <h3 style={{margin:0,fontSize:14.5,fontWeight:800}}>Šablony — co se opakuje každý měsíc</h3>
+        <button onClick={()=>setEdit({novy:true,mesic:null,nazev:"",castka:"",poradi:100})}
+          style={{...btnC(C.accent,true),fontSize:12,padding:"5px 12px"}}>+ Nová šablona</button>
+      </div>
+      <div style={{fontSize:11.5,color:C.dim,marginBottom:10}}>
+        Změna šablony se do už založených měsíců nepromítne — ty se musí opravit jednotlivě.
+      </div>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+        <tbody>
+          {sablony.length===0&&<tr><td style={{padding:"10px 6px",color:C.dim,fontSize:12}}>Zatím žádná šablona.</td></tr>}
+          {sablony.map(r=>radekTabulky(r,true))}
+        </tbody>
+      </table>
+    </div>
+
+    {edit&&<Modal title={edit.novy?(edit.mesic?`Nová položka — ${edit.mesic}`:"Nová šablona"):"Upravit"}
+                  onClose={()=>setEdit(null)} width={460}>
+      <div style={{marginBottom:11}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Název</div>
+        <input style={inp} autoFocus value={edit.nazev||""} placeholder="např. Mámě v hotovosti"
+          onChange={e=>setEdit(x=>({...x,nazev:e.target.value}))}/>
+      </div>
+      <div style={{marginBottom:11}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Částka</div>
+        <input style={inp} type="number" value={edit.castka??""} placeholder="38000 nebo -10000"
+          onChange={e=>setEdit(x=>({...x,castka:e.target.value}))}/>
+        <div style={{fontSize:11,color:C.dim,marginTop:4}}>
+          Kladná = hotovost přijde. Záporná = hotovost odejde (mámě, do kasičky).
+        </div>
+      </div>
+      <div style={{marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>Kategorie (nepovinné)</div>
+        <select style={inp} value={edit.kategorie_id||""} onChange={e=>setEdit(x=>({...x,kategorie_id:e.target.value||null}))}>
+          <option value="">— bez kategorie —</option>
+          {(kategorie||[]).map(k=><option key={k.id} value={k.id}>{k.emoji||"🏷"} {k.nazev}</option>)}
+        </select>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>uloz(edit)} style={btnC(C.green)}>Uložit</button>
+        <button onClick={()=>setEdit(null)} style={btnC(C.muted,true)}>Zrušit</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 function MajetekTab({ucty,reloadUcty}){
   const {data:stavy,loading,reload}=useData(()=>nactiVse((od,do_)=>
     sb.from("fin_stavy").select("*").gte("rok",2024).order("rok").range(od,do_)));
@@ -4810,11 +5010,12 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   const [ucetFiltr,setUcetFiltr]=useState("");  // "" = všechny účty dohromady
   const {data:stavy,loading:ls}=useData(()=>nactiVse((od,do_)=>sb.from("fin_stavy").select("*").gte("rok",2025).order("rok").range(od,do_)));
   const {data:nastaveni,reload:reloadNast}=useData(()=>sb.from("app_nastaveni").select("*").eq("klic","fin_hotovostni_prijem"));
+  const {data:hotovost}=useData(()=>sb.from("fin_hotovost").select("mesic,nazev,castka,aktivni"));
   const [hotEdit,setHotEdit]=useState(null);
 
   if(loading||ls)return <Spinner/>;
 
-  const hotovostniPrijem=+((nastaveni||[])[0]?.hodnota||0);
+  const hotovostniPrijem=+((nastaveni||[])[0]?.hodnota||0);   // starý režim, než vznikl deník
   const ulozHotovost=async v=>{
     const existuje=(nastaveni||[]).length>0;
     if(existuje)await sb.from("app_nastaveni").update({hodnota:String(v)}).eq("klic","fin_hotovostni_prijem");
@@ -4894,6 +5095,13 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
     popisObdobi=`${nazevMesice(ob.mesic)}${hotoveMesice.includes(ob.mesic)?"":" — pozor, za tenhle měsíc nemáš výpisy ze všech účtů"}.`;
   }
   const n=delitel;                       // dělitel pro průměry ve sloupcích níž
+  // Měsíce, které vybrané období pokrývá — potřeba pro kontrolu hotovosti,
+  // která se opírá o zůstatky na začátku a na konci, ne o pohyby.
+  const mesiceObdobi=(ob.rezim==="prumer")
+    ? hotoveMesice
+    : (ob.rezim==="rozsah")
+      ? [...new Set(vybraneVse.map(t=>String(t.datum).slice(0,7)))].sort()
+      : [ob.mesic];
   const vHotovych=ucetFiltr
     ? vybraneVse.filter(t=>String(t.ucet_id)===String(ucetFiltr))
     : vybrane;
@@ -4924,7 +5132,15 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   const katTyp=Object.fromEntries((kategorie||[]).map(k=>[String(k.id),k.typ]));
   const neutralniProj=new Set((projekty||[]).filter(p=>p.neutralni).map(p=>String(p.id)));
   const jeNeutralni=t=>t.projekt_id&&neutralniProj.has(String(t.projekt_id));
-  const jeVratka   =t=>+t.castka>0&&t.kategorie_id&&katTyp[String(t.kategorie_id)]==="vydaj";
+  // Pojistka proti špatně nastavené kategorii: za vratku se platba bere jen
+  // tehdy, když se v té kategorii ve stejném období taky utrácelo. Kategorie,
+  // kam jen chodí peníze, je prostě špatně označená jako výdajová (tak se
+  // „Mateřská a rodičovská" tvářila jako vratka za 24 148 Kč měsíčně) a je
+  // lepší ji nechat v příjmech, než z ní udělat záporný výdaj.
+  const katSVydaji=new Set(bezPrevodu.filter(t=>+t.castka<0&&t.kategorie_id).map(t=>String(t.kategorie_id)));
+  const jeVratka   =t=>+t.castka>0&&t.kategorie_id
+    &&katTyp[String(t.kategorie_id)]==="vydaj"
+    &&katSVydaji.has(String(t.kategorie_id));
 
   const toky=bezPrevodu.filter(t=>!jeNeutralni(t));
   const firemni =toky.filter(t=>podnik.has(t.ucet_id));
@@ -4938,7 +5154,21 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
   const neutralniObjem=soucet(bezPrevodu,t=>jeNeutralni(t)&&+t.castka>0);
   const bizIn   =soucet(firemni,  t=>+t.castka>0&&!jeVratka(t));     // jen pro informaci
   // Hotovostní příjem je zadaný jako měsíční, takže se natáhne na délku období.
-  const hotovostZaObdobi=hotovostniPrijem*nMesicu/delitel;
+  // Hotovost se bere z deníku (záložka 💵 Hotovost). Měsíc, který v něm ještě
+  // není, se ocení součtem šablon — jinak by v přehledu chyběl příjem jen
+  // proto, že se na ten měsíc nikdo v deníku nepodíval. Bez deníku platí
+  // staré jedno číslo z nastavení.
+  const hotRadky=(hotovost||[]).filter(h=>h.aktivni!==false);
+  const hotSablonaSuma=hotRadky.filter(h=>!h.mesic).reduce((a,h)=>a+(+h.castka||0),0);
+  const hotovostZaObdobi=(()=>{
+    if(!hotRadky.length)return hotovostniPrijem*nMesicu/delitel;
+    const zaMesic=m=>{
+      const r=hotRadky.filter(h=>h.mesic===m);
+      return r.length?r.reduce((a,h)=>a+(+h.castka||0),0):hotSablonaSuma;
+    };
+    return mesiceObdobi.reduce((a,m)=>a+zaMesic(m),0)/delitel;
+  })();
+  const hotovostMesicne=naMesic(hotovostZaObdobi);
   const mPrijmy=prijmy/n, mZavazky=zavazky/n, mZbytek=zbytek/n;
   const kDispozici=mPrijmy+hotovostZaObdobi-mZavazky;
   const rozdil=kDispozici-mZbytek;
@@ -4986,6 +5216,49 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
             hotovost:hotovostniPrijem*nMesicu/delitel,
             zbyvaNaZivot:prij+hotovostniPrijem*nMesicu/delitel-zav,
             zmena:prij-zav-zbyt+prev, odeslo:zav+zbyt, pocet:nn};
+  })();
+
+  // ── Kontrola hotovostního odhadu ────────────────────────────────────────
+  // Peněženka nemá jedinou transakci, ale má ručně zapsané zůstatky. A přesně
+  // z nich se dá dopočítat, kolik hotovosti do ní ve skutečnosti přiteklo:
+  //
+  //     změna peněženky = příjem − co se v hotovosti utratí + výběry − vklady
+  //   ⇒ příjem − útrata = změna + vklady − výběry
+  //
+  // Dvě neznámé, jedna rovnice — samotný příjem z toho nevypadne. Vypadne
+  // ale ČISTÝ PŘÍNOS hotovosti, a to je číslo, o které rozpočtu jde: kolik
+  // ti hotovost reálně přidá na útratu. Nastavený příjem je vždycky vyšší
+  // o to, co v hotovosti utratíš — a to se v rozpočtu neobjeví na žádné
+  // straně, takže na schodek to vliv nemá. Obě čísla jsou jen nafouklá.
+  const hotovostKontrola=(()=>{
+    const hotUcty=(ucty||[]).filter(u=>(u.skupina||"")==="hotovost");
+    if(!hotUcty.length||!mesiceObdobi.length)return null;
+    const stavKMesici=(uid,m)=>{
+      const h=(stavy||[]).filter(x=>String(x.ucet_id)===String(uid))
+        .map(x=>({k:`${x.rok}-${String(x.mesic).padStart(2,"0")}`,v:+x.stav}))
+        .filter(x=>x.k<=m).sort((a,b)=>a.k.localeCompare(b.k));
+      return h.length?h[h.length-1].v:null;
+    };
+    const prvni=mesiceObdobi[0], posl=mesiceObdobi[mesiceObdobi.length-1];
+    const [r0,m0]=prvni.split("-").map(Number);
+    const pred=m0===1?`${r0-1}-12`:`${r0}-${String(m0-1).padStart(2,"0")}`;
+    let zacatek=0, konec=0;
+    for(const u of hotUcty){
+      const a=stavKMesici(u.id,pred), b=stavKMesici(u.id,posl);
+      if(a==null||b==null)return null;      // bez zapsaných zůstatků se počítat nedá
+      zacatek+=a; konec+=b;
+    }
+    // Vklady do bankomatu jsou převod, takže v `pohyby` nejsou — musí se brát
+    // ze všech pohybů za období, jinak by vyšly nula a kontrola by lhala.
+    const zdroj=vybraneVse.filter(t=>sledovane.has(t.ucet_id));
+    const txt=t=>bezDiakritiky(`${t.popis||""} ${t.poznamka||""}`);
+    const vklady=zdroj.filter(t=>+t.castka>0&&txt(t).includes("vklad hotovosti"))
+      .reduce((a,t)=>a+ +t.castka,0);
+    const vybery=zdroj.filter(t=>+t.castka<0&&(txt(t).includes("vyber hotovosti")||txt(t).includes("bankomat")))
+      .reduce((a,t)=>a+(-+t.castka),0);
+    const cisty=(konec-zacatek)+vklady-vybery;      // za celé období
+    return {zacatek,konec,vklady,vybery,cisty:cisty/mesiceObdobi.length,
+            utraceno:hotovostMesicne-cisty/mesiceObdobi.length};   // co zmizí v hotovosti
   })();
 
   const likvidni=(ucty||[]).filter(u=>["finance","hotovost","podnikani"].includes(u.skupina||"finance"));
@@ -5142,7 +5415,7 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
       {jedenUcet?" U jednoho účtu se přesuny mezi tvými účty počítají — na zůstatek mají vliv.":null}
     </div>
 
-    {(chybejiciMesice.length>0||neuplneMesice.length>0||podilNezarazenych>0.3||!hotovostniPrijem)&&
+    {(chybejiciMesice.length>0||neuplneMesice.length>0||podilNezarazenych>0.3||!hotovostMesicne)&&
       <div style={{background:"#fff8e1",border:"1px solid #f5a623",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:12,color:"#9a5b00"}}>
         <div style={{fontWeight:800,marginBottom:6}}>Než těmhle číslům uvěříš</div>
         {chybejiciMesice.length>0&&<div style={{marginBottom:4}}>
@@ -5157,9 +5430,9 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
           • {neuplneMesice.join(", ")} se do průměru nepočítá — za ten měsíc nemáš výpis
           ze všech účtů, takže by se dělilo měsícem, o kterém skoro nic nevíme.
         </div>}
-        {!hotovostniPrijem&&<div>
-          • Hotovostní příjem je nastavený na nulu. Pokud část peněz dostáváš mimo účty,
-          nastav ho níž, jinak ti přehled ukazuje horší situaci, než jaká je.
+        {!hotovostMesicne&&<div>
+          • Hotovost mimo účty je nulová. Pokud část peněz dostáváš v hotovosti, zapiš ji
+          v záložce 💵 Hotovost — jinak ti přehled ukazuje horší situaci, než jaká je.
         </div>}
       </div>}
 
@@ -5223,13 +5496,33 @@ function PrehledFinanci({ucty,kategorie,projekty,deti,auta,reloadKategorie}){
         {" "}Dětské spoření, investice ani Fortuna se do toho nepočítají.
       </div>
       <div style={{fontSize:11,color:C.dim,marginTop:8}}>
-        Hotovostní příjem mimo účty:{" "}
-        {hotEdit===null
-          ? <>{kc0(hotovostniPrijem)} měsíčně <button onClick={()=>setHotEdit(String(hotovostniPrijem))} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,textDecoration:"underline"}}>změnit</button></>
-          : <><input style={{...inp,width:120,display:"inline-block",fontSize:11,padding:"3px 8px"}} type="number" autoFocus value={hotEdit} onChange={e=>setHotEdit(e.target.value)}/>
-              {" "}<button onClick={()=>ulozHotovost(+hotEdit||0)} style={{...btnC(),fontSize:11,padding:"3px 10px"}}>Uložit</button>
-              {" "}<button onClick={()=>setHotEdit(null)} style={{...btnC(C.muted,true),fontSize:11,padding:"3px 10px"}}>Zrušit</button></>}
+        {hotRadky.length
+          ? <>Hotovost mimo účty: <strong style={{color:C.text}}>{kc0(hotovostMesicne)} měsíčně</strong> —
+             sečteno z deníku v záložce 💵 Hotovost, kde se dá měsíc po měsíci opravit.</>
+          : <>Hotovostní příjem mimo účty:{" "}
+             {hotEdit===null
+               ? <>{kc0(hotovostniPrijem)} měsíčně <button onClick={()=>setHotEdit(String(hotovostniPrijem))} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,textDecoration:"underline"}}>změnit</button></>
+               : <><input style={{...inp,width:120,display:"inline-block",fontSize:11,padding:"3px 8px"}} type="number" autoFocus value={hotEdit} onChange={e=>setHotEdit(e.target.value)}/>
+                   {" "}<button onClick={()=>ulozHotovost(+hotEdit||0)} style={{...btnC(),fontSize:11,padding:"3px 10px"}}>Uložit</button>
+                   {" "}<button onClick={()=>setHotEdit(null)} style={{...btnC(C.muted,true),fontSize:11,padding:"3px 10px"}}>Zrušit</button></>}</>}
       </div>
+
+      {hotovostKontrola&&(()=>{
+        const k=hotovostKontrola, sedi=Math.abs(k.utraceno)<3000;
+        return <div style={{marginTop:9,paddingTop:9,borderTop:`1px solid ${C.border}`,fontSize:11.5,lineHeight:1.65,
+            color:C.muted}}>
+          <strong style={{color:C.text}}>Kontrola podle peněženky.</strong>{" "}
+          Zůstatek {kc0(k.zacatek)} → {kc0(k.konec)}, do bankomatů z ní šlo {kc0(k.vklady)} a zpátky {kc0(k.vybery)}.
+          Z toho vychází, že hotovost ti čistě přidá <strong style={{color:C.text}}>{kc0(k.cisty)} měsíčně</strong>.
+          {" "}
+          {sedi
+            ? <>To sedí na {kc0(hotovostMesicne)}, se kterými rozpočet počítá.</>
+            : <>Rozpočet počítá s {kc0(hotovostMesicne)} — rozdíl <strong style={{color:C.orange}}>{kc0(Math.abs(k.utraceno))}</strong>
+               {k.utraceno>0
+                 ? <> je hotovost, kterou v hotovosti i utratíš. Na schodek to vliv nemá (chybí na obou stranách), ale příjmy i výdaje jsou o tolik nafouklé.</>
+                 : <> znamená, že hotovosti chodí víc, než máš zadáno — příjmy jsou podhodnocené.</>}</>}
+        </div>;
+      })()}
     </div>}
 
     <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
@@ -5263,7 +5556,7 @@ function FinanceNoveTab(){
       <div style={{fontSize:12,color:C.muted}}>{bankovni.length} bankovních účtů · {pocet??0} naimportovaných transakcí</div>
     </div>
     <div style={{display:"flex",gap:2,marginBottom:20,borderBottom:`2px solid ${C.border}`,overflowX:"auto"}}>
-      {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"likvidita",l:"💧 Likvidita"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"},{id:"pravidla",l:"⚙️ Pravidla"},{id:"majetek",l:"💼 Majetek"}].map(t=>
+      {[{id:"prehled",l:"🎯 Kolik můžu utratit"},{id:"projekty",l:"📁 Projekty"},{id:"import",l:"📥 Import z banky"},{id:"pokryti",l:"📅 Pokrytí"},{id:"likvidita",l:"💧 Likvidita"},{id:"hotovost",l:"💵 Hotovost"},{id:"zarazeni",l:"🏷 Zařazení"},{id:"kategorie",l:"🗂 Kategorie"},{id:"pravidla",l:"⚙️ Pravidla"},{id:"majetek",l:"💼 Majetek"}].map(t=>
         <button key={t.id} onClick={()=>setZalozka(t.id)} style={{padding:"9px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,fontWeight:700,color:zalozka===t.id?C.accent:C.muted,borderBottom:zalozka===t.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2,whiteSpace:"nowrap"}}>{t.l}</button>)}
     </div>
     {zalozka==="prehled"&&<PrehledFinanci ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadKategorie={reloadKategorie}/>}
@@ -5271,6 +5564,7 @@ function FinanceNoveTab(){
     {zalozka==="import"&&<ImportVypisu ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta} reloadProjekty={reloadProjekty} onHotovo={()=>{reloadUcty();reloadPocet();}}/>}
     {zalozka==="pokryti"&&<PokrytiImportu ucty={ucty}/>}
     {zalozka==="likvidita"&&<LikviditaTab ucty={ucty}/>}
+    {zalozka==="hotovost"&&<HotovostTab kategorie={kategorie}/>}
     {zalozka==="pravidla"&&<PravidlaTab ucty={ucty} kategorie={kategorie} projekty={projekty} deti={deti} auta={auta}/>}
     {zalozka==="majetek"&&<MajetekTab ucty={ucty} reloadUcty={reloadUcty}/>}
     {zalozka==="kategorie"&&<KategorieTab kategorie={kategorie} reloadKategorie={reloadKategorie} onZmena={()=>{reloadPocet();}}/>}
