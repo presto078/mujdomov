@@ -10342,7 +10342,9 @@ function elZalohyVObdobi(datumOd,datumDo,ceniky){
 
 function elSpoctiObdobi(od,doO,cen,ceniky){
   const dny=Math.round((new Date(doO.datum)-new Date(od.datum))/86400000);
-  const spVt=+doO.vt-+od.vt, spNt=+doO.nt-+od.nt, spC=spVt+spNt;
+  // Při výměně elektroměru navazuje další období na počáteční stav nového měřáku
+  const zVt=od.novy_vt!=null?+od.novy_vt:+od.vt, zNt=od.novy_nt!=null?+od.novy_nt:+od.nt;
+  const spVt=+doO.vt-zVt, spNt=+doO.nt-zNt, spC=spVt+spNt;
   const zal=elZalohyVObdobi(od.datum,doO.datum,ceniky);
   const zaklad={datumOd:od.datum,datumDo:doO.datum,dny,spVt,spNt,spC,cenik:cen?.nazev||"",zaloh:zal.pocet};
   if(!cen)return {...zaklad,chybiCenik:true,silova:null,distribuce:null,systemove:null,dan:null,pevne:null,bezDph:null,sDph:null,zaloha:zal.suma,rozdil:0};
@@ -10371,7 +10373,7 @@ function ElektrinaTab(){
   const {data:ceniky,reload:reloadCeniky}=useData(()=>sb.from("el_ceniky").select("*").order("platnost_od",{ascending:true}));
   const [zalozka,setZalozka]=useState("prehled");
   const [modalOdecet,setModalOdecet]=useState(null);
-  const [formOdecet,setFormOdecet]=useState({datum:"",vt:"",nt:"",poznamka:""});
+  const [formOdecet,setFormOdecet]=useState({datum:"",vt:"",nt:"",poznamka:"",vymena:false,novy_vt:"",novy_nt:""});
   const [modalFak,setModalFak]=useState(null);
   const [formFak,setFormFak]=useState({cislo_faktury:"",datum_vystaveni:"",datum_splatnosti:"",obdobi_od:"",obdobi_do:"",vt_od:"",vt_do:"",nt_od:"",nt_do:"",castka_celkem:"",zalohy:"",vyrovnani:"",zaplaceno:false,poznamka:""});
   const [modalCenik,setModalCenik]=useState(null);
@@ -10396,7 +10398,11 @@ function ElektrinaTab(){
   const bezCeniku=obdobi.filter(o=>o.chybiCenik).length;
 
   const ulozOdecet=async()=>{
-    const data={datum:formOdecet.datum,vt:formOdecet.vt===""?null:parseFloat(formOdecet.vt),nt:formOdecet.nt===""?null:parseFloat(formOdecet.nt),poznamka:formOdecet.poznamka||null};
+    const cis=v=>v===""||v==null?null:parseFloat(v);
+    const vym=formOdecet.vymena;
+    if(vym&&(formOdecet.novy_vt===""||formOdecet.novy_nt==="")){alert("Vyplň počáteční stav nového elektroměru (obvykle 0).");return;}
+    const data={datum:formOdecet.datum,vt:cis(formOdecet.vt),nt:cis(formOdecet.nt),poznamka:formOdecet.poznamka||null,
+      novy_vt:vym?cis(formOdecet.novy_vt):null,novy_nt:vym?cis(formOdecet.novy_nt):null};
     const {error}=modalOdecet==="nova"?await sb.from("el_odecty").insert(data):await sb.from("el_odecty").update(data).eq("id",modalOdecet.id);
     if(error){alert("Chyba při ukládání: "+error.message);return;}
     reloadOdecty();setModalOdecet(null);
@@ -10449,7 +10455,7 @@ function ElektrinaTab(){
     </div>
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
-      {karta("Poslední odečet",posledni?`${num(posledni.vt)} / ${num(posledni.nt)}`:"—",C.blue,posledni?`VT / NT · ${new Date(posledni.datum).toLocaleDateString("cs-CZ")}`:"zatím žádný")}
+      {karta("Poslední odečet",posledni?`${num(posledni.novy_vt??posledni.vt)} / ${num(posledni.novy_nt??posledni.nt)}`:"—",C.blue,posledni?`VT / NT · ${new Date(posledni.datum).toLocaleDateString("cs-CZ")}`:"zatím žádný")}
       {karta("Spotřeba od vyúčtování",`${(celkemVt+celkemNt).toLocaleString("cs")} kWh`,C.orange,`VT ${celkemVt.toLocaleString("cs")} · NT ${celkemNt.toLocaleString("cs")}`)}
       {karta("Spotřeba v Kč s DPH",kc(celkemCena),C.accent,vyrovnanoDo?`od ${new Date(vyrovnanoDo).toLocaleDateString("cs-CZ")}`:"za všechna období")}
       {karta(kumulativ>=0?"Průběžný přeplatek":"Průběžný nedoplatek",kc(Math.abs(kumulativ)),kumulativ>=0?C.green:C.red,vyrovnanoDo?`od vyúčtování k ${new Date(vyrovnanoDo).toLocaleDateString("cs-CZ")}`:"zálohy minus spotřeba")}
@@ -10467,7 +10473,7 @@ function ElektrinaTab(){
     {zalozka==="prehled"&&<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
         <div style={{fontWeight:700,fontSize:14}}>📅 Období mezi odečty</div>
-        <button onClick={()=>{setFormOdecet({datum:new Date().toISOString().slice(0,10),vt:"",nt:"",poznamka:""});setModalOdecet("nova");}} style={btnC()}>+ Zapsat odečet</button>
+        <button onClick={()=>{setFormOdecet({datum:new Date().toISOString().slice(0,10),vt:"",nt:"",poznamka:"",vymena:false,novy_vt:"",novy_nt:""});setModalOdecet("nova");}} style={btnC()}>+ Zapsat odečet</button>
       </div>
       <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:960}}>
@@ -10511,11 +10517,11 @@ function ElektrinaTab(){
             {(odecty||[]).length===0&&<tr><td colSpan={5} style={{padding:20,textAlign:"center",color:C.dim}}>Žádné odečty</td></tr>}
             {[...(odecty||[])].reverse().map((o,i)=><tr key={o.id} style={{background:i%2===0?C.surface:"#fafbff",borderBottom:`1px solid ${C.border}`}}>
               <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{new Date(o.datum).toLocaleDateString("cs-CZ")}</td>
-              <td style={{padding:"8px 10px",fontWeight:700}}>{num(o.vt)}</td>
-              <td style={{padding:"8px 10px",fontWeight:700}}>{num(o.nt)}</td>
-              <td style={{padding:"8px 10px",fontSize:12,color:C.muted}}>{o.poznamka||""}</td>
+              <td style={{padding:"8px 10px",fontWeight:700}}>{num(o.vt)}{o.novy_vt!=null&&<span style={{color:C.orange}}> → {num(o.novy_vt)}</span>}</td>
+              <td style={{padding:"8px 10px",fontWeight:700}}>{num(o.nt)}{o.novy_nt!=null&&<span style={{color:C.orange}}> → {num(o.novy_nt)}</span>}</td>
+              <td style={{padding:"8px 10px",fontSize:12,color:C.muted}}>{o.novy_vt!=null&&<span style={{background:"#fff3e0",color:C.orange,padding:"1px 6px",borderRadius:5,fontSize:10,fontWeight:800,marginRight:6}}>🔄 výměna elektroměru</span>}{o.poznamka||""}</td>
               <td style={{padding:"8px 6px",whiteSpace:"nowrap"}}>
-                <button onClick={()=>{setModalOdecet(o);setFormOdecet({datum:o.datum,vt:o.vt!=null?String(o.vt):"",nt:o.nt!=null?String(o.nt):"",poznamka:o.poznamka||""});}} style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10,marginRight:2}}>✏</button>
+                <button onClick={()=>{setModalOdecet(o);setFormOdecet({datum:o.datum,vt:o.vt!=null?String(o.vt):"",nt:o.nt!=null?String(o.nt):"",poznamka:o.poznamka||"",vymena:o.novy_vt!=null,novy_vt:o.novy_vt!=null?String(o.novy_vt):"",novy_nt:o.novy_nt!=null?String(o.novy_nt):""});}} style={{...btnC(C.accent,true),padding:"2px 6px",fontSize:10,marginRight:2}}>✏</button>
                 <button onClick={()=>smazOdecet(o.id)} style={{...btnC(C.red,true),padding:"2px 6px",fontSize:10}}>🗑</button>
               </td>
             </tr>)}
@@ -10595,10 +10601,18 @@ function ElektrinaTab(){
     {modalOdecet&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <div style={{background:C.surface,borderRadius:18,padding:28,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
         <h3 style={{margin:"0 0 18px",fontSize:17,fontWeight:800}}>{modalOdecet==="nova"?"Nový odečet":"Upravit odečet"}</h3>
-        {[{l:"Datum",k:"datum",t:"date"},{l:"Stav VT (kWh)",k:"vt",t:"number"},{l:"Stav NT (kWh)",k:"nt",t:"number"},{l:"Poznámka",k:"poznamka",t:"text",ph:"volitelně..."}].map(f=><div key={f.k} style={{marginBottom:11}}>
+        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:600,marginBottom:12,cursor:"pointer"}}>
+          <input type="checkbox" checked={formOdecet.vymena} onChange={e=>setFormOdecet(p=>({...p,vymena:e.target.checked,novy_vt:e.target.checked&&p.novy_vt===""?"0":p.novy_vt,novy_nt:e.target.checked&&p.novy_nt===""?"0":p.novy_nt}))}/> 🔄 Výměna elektroměru
+        </label>
+        {[{l:"Datum",k:"datum",t:"date"},
+          {l:formOdecet.vymena?"Konečný stav starého VT (kWh)":"Stav VT (kWh)",k:"vt",t:"number"},
+          {l:formOdecet.vymena?"Konečný stav starého NT (kWh)":"Stav NT (kWh)",k:"nt",t:"number"},
+          ...(formOdecet.vymena?[{l:"Počáteční stav nového VT (kWh)",k:"novy_vt",t:"number"},{l:"Počáteční stav nového NT (kWh)",k:"novy_nt",t:"number"}]:[]),
+          {l:"Poznámka",k:"poznamka",t:"text",ph:"volitelně..."}].map(f=><div key={f.k} style={{marginBottom:11}}>
           <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>{f.l}</div>
           <input style={inp} type={f.t} placeholder={f.ph||""} value={formOdecet[f.k]} onChange={e=>setFormOdecet(p=>({...p,[f.k]:e.target.value}))}/>
         </div>)}
+        {formOdecet.vymena&&<div style={{fontSize:11,color:C.muted,marginTop:-4,marginBottom:6}}>Spotřeba se do výměny počítá ze starého elektroměru, od výměny z nového.</div>}
         <div style={{display:"flex",gap:10,marginTop:16}}>
           <button onClick={ulozOdecet} style={btnC()}>Uložit</button>
           <button onClick={()=>setModalOdecet(null)} style={btnC(C.muted,true)}>Zrušit</button>
