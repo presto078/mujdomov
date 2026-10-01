@@ -51,13 +51,27 @@ if (zkouska.data.length === 0) {
 }
 
 // fin_stavy je nutné dělit na hranici 2021/2022 kvůli limitu počtu řádků
-const [ucty, typy, kategorie, plan, stavyA, stavyB] = await Promise.all([
+// Tabulka, která v databázi není, se přeskočí — ať kvůli jedné nespadne celý výpis.
+const nepovinne = async cesta => {
+  try { return await tab(cesta); }
+  catch (e) { console.log(`  (přeskočeno) ${cesta} — ${String(e.message).slice(0, 80)}`); return []; }
+};
+
+const [ucty, typy, kategorie, plan, stavyA, stavyB,
+       pravidla, projekty, projektPlatby, protistrany, deti, auta, nastaveni] = await Promise.all([
   tab("fin_ucty?select=*"),
   tab("fin_typy_uctu?select=*"),
   tab("fin_kategorie?select=*"),
   tab("fin_cashflow_plan?select=*"),
   tab("fin_stavy?select=*&rok=lte.2021&limit=2000"),
   tab("fin_stavy?select=*&rok=gte.2022&limit=2000"),
+  nepovinne("fin_pravidla?select=*&limit=2000"),
+  nepovinne("fin_projekty?select=*&limit=500"),
+  nepovinne("fin_projekt_platby?select=*&limit=2000"),
+  nepovinne("fin_protistrany?select=*&limit=2000"),
+  nepovinne("deti?select=id,jmeno,emoji"),
+  nepovinne("auta?select=id,nazev,spz"),
+  nepovinne("app_nastaveni?select=*"),
 ]);
 
 // Transakce po stránkách, ať se nenarazí na limit
@@ -69,7 +83,9 @@ while (true) {
   od += 1000;
 }
 
-const out = { vytvoreno: new Date().toISOString(), ucty, typy, kategorie, plan, stavy: [...stavyA, ...stavyB], transakce };
+const out = { vytvoreno: new Date().toISOString(), ucty, typy, kategorie, plan,
+  stavy: [...stavyA, ...stavyB], transakce,
+  pravidla, projekty, projektPlatby, protistrany, deti, auta, nastaveni };
 fs.writeFileSync("finance_dump.json", JSON.stringify(out, null, 1), "utf8");
 
 console.log("Hotovo — finance_dump.json");
@@ -79,3 +95,6 @@ console.log(`  kategorií: ${kategorie.length}`);
 console.log(`  transakcí: ${transakce.length}`);
 console.log(`  stavů:     ${stavyA.length + stavyB.length}`);
 console.log(`  plán:      ${plan.length}`);
+console.log(`  pravidel:  ${pravidla.length}`);
+console.log(`  projektů:  ${projekty.length}`);
+console.log(`  protistran:${protistrany.length}`);

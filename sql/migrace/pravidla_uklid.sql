@@ -24,22 +24,23 @@ update fin_pravidla set smer = 'vydaj' where vzor = '2226222/0800';
 -- „Příspěvky" sbíraly příjmy, „Školka Mannaz" výdaje. Odděleně se nedá
 -- poznat, jestli příspěvek školku pokryje. Jeden projekt to ukáže jako
 -- přišlo / odešlo / zůstává stranou.
+-- Proměnné mají předponu v_, aby se nepletly se sloupcem fin_transakce.zdroj.
 do $$
-declare cil bigint; zdroj bigint;
+declare v_cil bigint; v_zdroj bigint;
 begin
-  select id into cil   from fin_projekty where nazev = 'Příspěvky' limit 1;
-  select id into zdroj from fin_projekty where nazev = 'Školka Mannaz' limit 1;
-  if cil is not null and zdroj is not null then
-    update fin_transakce set projekt_id = cil where projekt_id = zdroj;
-    update fin_pravidla  set projekt_id = cil where projekt_id = zdroj;
-    update fin_projekt_platby set projekt_id = cil where projekt_id = zdroj;
-    delete from fin_projekty where id = zdroj;
+  select id into v_cil   from fin_projekty where nazev = 'Příspěvky' limit 1;
+  select id into v_zdroj from fin_projekty where nazev = 'Školka Mannaz' limit 1;
+  if v_cil is not null and v_zdroj is not null then
+    update fin_transakce      set projekt_id = v_cil where projekt_id = v_zdroj;
+    update fin_pravidla       set projekt_id = v_cil where projekt_id = v_zdroj;
+    update fin_projekt_platby set projekt_id = v_cil where projekt_id = v_zdroj;
+    delete from fin_projekty where id = v_zdroj;
   end if;
-  if cil is not null then
+  if v_cil is not null then
     update fin_projekty
        set nazev = 'Příspěvky na péči', emoji = '🧑‍🦽', typ = 'provoz',
            poznamka = 'Příspěvek na péči a na mobilitu z ÚP i přeposlaný Terezou, proti tomu platby školce Mannaz. Co zbude, zůstává dětem.'
-     where id = cil;
+     where id = v_cil;
   end if;
 end $$;
 
