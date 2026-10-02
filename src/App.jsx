@@ -3553,10 +3553,13 @@ function KdeJsemTab({ucty,projekty}){
   const tempoBank=n=>{const zac=posun(posledni,-n);
     return (soucet(banky,posledni)-soucet(banky,zac))/n;};
 
-  // Nejkratší okno bere jako pravdu — ale jen když je horší. Když se poslední
-  // měsíce zlepšily, nemá cenu strašit dlouhodobým průměrem.
+  // Nejhorší okno zůstává mírou opatrnosti tam, kde jde o závazek — na ten se
+  // nespoléhá podle jednoho dobrého měsíce. Komentář k tempu ale rozlišuje směr:
+  // zhoršení je varování, zlepšení je zpráva, ne poplach.
   const nejhorsi=okna.reduce((a,b)=>b.zmena<a.zmena?b:a);
-  const rozchod=Math.abs(okna[0].zmena-okna[1].zmena)>5000;
+  const dlouhe=okna[0], kratke=okna[1], posl=okna[2];
+  const rozchod=Math.abs(dlouhe.zmena-kratke.zmena)>5000;
+  const zlepseni=posl.zmena-kratke.zmena>5000;
 
   // Závazek, který někdy skončí — kolik zbývá a za jak dlouho.
   const zavazky=(projekty||[]).filter(p=>p.typ==="zavazek"&&p.cilova_castka>0&&p.mesicni_castka>0)
@@ -3643,7 +3646,14 @@ function KdeJsemTab({ucty,projekty}){
         </tbody>
       </table>
       <div style={{fontSize:11.5,color:C.muted,marginTop:9,lineHeight:1.6}}>
-        {rozchod
+        {zlepseni
+          ? <>Poslední měsíc <strong style={{color:C.green}}>vybočil k lepšímu</strong> —{" "}
+             <strong style={{color:C.text}}>{posl.zmena>=0?"+":""}{f(posl.zmena)}</strong> proti{" "}
+             {f(kratke.zmena)} za poslední tři měsíce. Jeden měsíc ale ještě není obrat —
+             tříměsíční průměr se otočí, až to zopakuješ. Do té doby počítej s{" "}
+             <strong style={{color:C.text}}>{f(kratke.zmena)} měsíčně</strong> a ten rozdíl ber
+             jako náskok, ne jako nový normál.</>
+          : rozchod
           ? <>Dlouhý průměr a poslední měsíce si <strong style={{color:C.orange}}>odporují</strong> —
              a když se rozcházejí, pravdu mívá ten kratší. Ber vážně{" "}
              <strong style={{color:C.text}}>{f(nejhorsi.zmena)} měsíčně</strong>.</>
@@ -3651,7 +3661,7 @@ function KdeJsemTab({ucty,projekty}){
         {" "}Na samotných bankovních účtech, kde je každá koruna z výpisu, to vychází na{" "}
         {f(tempoBank(8))} za osm měsíců a {f(tempoBank(3))} za poslední tři.
       </div>
-    </>,rozchod?C.orange:C.border)}
+    </>,zlepseni?C.green:rozchod?C.orange:C.border)}
 
     {/* ── Kdy se uleví ──────────────────────────────────────────────── */}
     {prvni&&blok(<>
