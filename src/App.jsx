@@ -1098,6 +1098,49 @@ function ObleceniTab(){
     X.writeFile(wb,`${APP_NAME.toLowerCase()}_obleceni_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
+  // Tisk — jedna A4 stránka na kontejner (stejná předloha jako list v Excelu), seznam k nalepení na box
+  const tiskKontejneru=(konts)=>{
+    const seznam=(konts||[]).slice().sort((a,b)=>String(a.velikost_id).localeCompare(String(b.velikost_id),"cs",{numeric:true})||a.nazev.localeCompare(b.nazev,"cs"));
+    if(seznam.length===0)return;
+    const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const strany=seznam.map(k=>{
+      const st=STORAGE_TYPES[k.typ]||STORAGE_TYPES.other;
+      const pols=vsechnyPolDedup.filter(p=>p.kontejner_id===k.id&&p.pocet>0).sort((a,b)=>a.nazev.localeCompare(b.nazev,"cs"));
+      const total=pols.reduce((a,p)=>a+p.pocet,0);
+      const prazdne=Array.from({length:Math.max(3,12-pols.length)},()=>`<tr class="e"><td></td><td></td></tr>`).join("");
+      return `<section>
+        <div class="vel">${esc(k.velikost_id)}</div>
+        <h1>${esc(k.nazev)}</h1>
+        <div class="sub">${esc([st.label,k.umisteni].filter(Boolean).join(" · "))}</div>
+        <table><thead><tr><th>Druh oblečení</th><th class="n">Počet ks</th></tr></thead>
+        <tbody>${pols.map(p=>`<tr><td>${esc(p.nazev)}</td><td class="n">${p.pocet}</td></tr>`).join("")}${prazdne}</tbody>
+        <tfoot><tr><td>CELKEM</td><td class="n">${total}</td></tr></tfoot></table>
+        <div class="pod">Datum uložení: ______________ &nbsp;&nbsp; Uložil/a: ____________________</div>
+      </section>`;
+    }).join("");
+    const w=window.open("","_blank");
+    if(!w){alert("Prohlížeč zablokoval okno pro tisk. Povol vyskakovací okna pro tuto stránku.");return;}
+    w.document.write(`<!doctype html><html lang="cs"><head><meta charset="utf-8"><title>${esc(APP_NAME)} — Oblečení</title><style>
+      @page{size:A4 portrait;margin:15mm}
+      body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0}
+      section{page-break-after:always;break-after:page;position:relative}
+      section:last-child{page-break-after:auto;break-after:auto}
+      .vel{position:absolute;top:0;right:0;font-size:54px;font-weight:800;border:4px solid #111;border-radius:12px;padding:2px 18px}
+      h1{font-size:30px;margin:0 140px 4px 0}
+      .sub{font-size:15px;color:#444;margin-bottom:18px}
+      table{width:100%;border-collapse:collapse;font-size:15px}
+      th,td{border:1px solid #333;padding:6px 10px;text-align:left}
+      th{background:#eee}
+      .n{width:90px;text-align:center}
+      tr.e td{height:26px}
+      tfoot td{font-weight:800;background:#f3f3f3}
+      .pod{margin-top:22px;font-size:14px}
+    </style></head><body>${strany}</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(()=>w.print(),300);
+  };
+
   const [zalozka,setZalozka]=useState("prehled");
 
   if(loading)return <Spinner/>;
@@ -1110,6 +1153,7 @@ function ObleceniTab(){
       <div style={{color:C.text,fontWeight:800,fontSize:17}}>👕 Oblečení</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <button onClick={spustFix} disabled={fixRunning} title="Sloučí duplicitní záznamy v databázi" style={{...btnC(C.orange,true),fontSize:12,padding:"6px 14px"}}>{fixRunning?"Opravuji…":"🔧 Opravit duplicity"}</button>
+        <button onClick={()=>tiskKontejneru(vsechnyKonts)} title="Vytiskne každý kontejner na samostatnou A4" style={{...btnC(C.accent,true),fontSize:12,padding:"6px 14px"}}>🖨 Tisk kontejnerů</button>
         <button onClick={exportExcel} style={{...btnC(C.green,true),fontSize:12,padding:"6px 14px"}}>↓ Excel</button>
       </div>
     </div>
@@ -1211,6 +1255,7 @@ function ObleceniTab(){
                 <div style={{color:C.dim,fontSize:12}}>{[k.umisteni,st.label].filter(Boolean).join(" · ")} · {pocetKs} ks</div>
               </div>
               <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
+                <button onClick={()=>tiskKontejneru([k])} title="Vytisknout seznam kontejneru" style={{...btnC(C.accent,true),padding:"4px 9px",fontSize:12}}>🖨</button>
                 <button onClick={()=>setEditKont(k)} style={{...btnC(C.muted,true),padding:"4px 9px",fontSize:12}}>✎</button>
                 <button onClick={async()=>{if(!confirm(`Smazat "${k.nazev}"?`))return;await sb.from("vel_kontejnery").delete().eq("id",k.id);reloadAll();}} style={{...btnC(C.red,true),padding:"4px 9px",fontSize:12}}>✕</button>
               </div>
