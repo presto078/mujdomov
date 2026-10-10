@@ -1109,9 +1109,9 @@ function ObleceniTab(){
       const total=pols.reduce((a,p)=>a+p.pocet,0);
       const prazdne=Array.from({length:Math.max(3,12-pols.length)},()=>`<tr class="e"><td></td><td></td></tr>`).join("");
       return `<section>
-        <div class="vel">${esc(k.velikost_id)}</div>
-        <h1>${esc(k.nazev)}</h1>
-        <div class="sub">${esc([st.label,k.umisteni].filter(Boolean).join(" · "))}</div>
+        <div class="hlav"><div><h1>${esc(k.nazev)}</h1>
+        <div class="sub">${esc([st.label,k.umisteni].filter(Boolean).join(" · "))}</div></div>
+        <div class="vel">${esc(k.velikost_id)}</div></div>
         <table><thead><tr><th>Druh oblečení</th><th class="n">Počet ks</th></tr></thead>
         <tbody>${pols.map(p=>`<tr><td>${esc(p.nazev)}</td><td class="n">${p.pocet}</td></tr>`).join("")}${prazdne}</tbody>
         <tfoot><tr><td>CELKEM</td><td class="n">${total}</td></tr></tfoot></table>
@@ -1122,12 +1122,12 @@ function ObleceniTab(){
     if(!w){alert("Prohlížeč zablokoval okno pro tisk. Povol vyskakovací okna pro tuto stránku.");return;}
     w.document.write(`<!doctype html><html lang="cs"><head><meta charset="utf-8"><title>${esc(APP_NAME)} — Oblečení</title><style>
       @page{size:A4 portrait;margin:15mm}
-      body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0}
-      section{page-break-after:always;break-after:page;position:relative}
+      body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;padding:15mm;max-width:180mm}@media print{body{padding:0;max-width:none}}
+      section{page-break-after:always;break-after:page;margin-bottom:30px}
       section:last-child{page-break-after:auto;break-after:auto}
-      .vel{position:absolute;top:0;right:0;font-size:54px;font-weight:800;border:4px solid #111;border-radius:12px;padding:2px 18px}
-      h1{font-size:30px;margin:0 140px 4px 0}
-      .sub{font-size:15px;color:#444;margin-bottom:18px}
+      .hlav{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}.vel{font-size:54px;font-weight:800;line-height:1;border:4px solid #111;border-radius:12px;padding:8px 18px;white-space:nowrap}
+      h1{font-size:30px;margin:0 0 4px 0}
+      .sub{font-size:15px;color:#444}
       table{width:100%;border-collapse:collapse;font-size:15px}
       th,td{border:1px solid #333;padding:6px 10px;text-align:left}
       th{background:#eee}
