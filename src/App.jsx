@@ -1367,6 +1367,508 @@ function SkladTab(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// UČEBNÍ POMŮCKY
+// ══════════════════════════════════════════════════════════════════════════════
+const pmEq=(a,b)=>a!=null&&b!=null&&String(a)===String(b);
+const pmProv=s=>String(s??"").trim();
+// 544R → 544, 560e → 560; jinak celý název
+const pmZaklad=nazev=>{const s=String(nazev??"").trim();const m=s.match(/^(\d+)[rle]$/i);return m?m[1]:s;};
+const pmKlic=(katId,nazev,prov)=>`${katId??""}|${pmZaklad(nazev).toLowerCase()}|${pmProv(prov).toLowerCase()}`;
+const pmDnes=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;};
+// Od července se bere nadcházející školní rok
+const pmSkolniRok=(d=new Date())=>{const r=d.getMonth()>=6?d.getFullYear():d.getFullYear()-1;return `${r}/${String((r+1)%100).padStart(2,"0")}`;};
+const pmPodleId=(a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true});
+const pmPodleNazvu=(a,b)=>String(a.nazev??"").localeCompare(String(b.nazev??""),"cs");
+const pmPodlePoradi=(a,b)=>(+a.poradi||0)-(+b.poradi||0)||pmPodleNazvu(a,b);
+const pmDatum=s=>s?new Date(String(s).slice(0,10)+"T00:00:00").toLocaleDateString("cs-CZ"):"";
+const pmMaleTl={...btnC(C.muted,true),padding:"3px 10px",fontSize:14};
+const PM_PROVEDENI_ZAKLAD=["bez linek","s linkama","ctvereckovany"];
+
+// Distinct provedení z položek (klíč malými písmeny, popisek podle prvního výskytu)
+function pmProvedeniVolby(polozky,extra=[]){
+  const m=new Map();
+  for(const s of [...polozky.map(p=>p.provedeni),...extra]){const t=pmProv(s);if(t&&!m.has(t.toLowerCase()))m.set(t.toLowerCase(),t);}
+  return [...m.entries()].map(([v,label])=>({v,label})).sort((a,b)=>a.label.localeCompare(b.label,"cs"));
+}
+
+// Zásoba se mezi požadavky celého školního roku rozděluje postupně (podle pořadí zadání),
+// aby se stejné kusy nezapočítaly dvakrát.
+function pmRozdelZasobu(pozadavky,polozky){
+  const sklad={};
+  for(const p of polozky){const k=pmKlic(p.kategorie_id,p.nazev,p.provedeni);sklad[k]=(sklad[k]||0)+Math.max(0,+p.pocet||0);}
+  const zbyva={...sklad},vysl={};
+  for(const r of pozadavky.filter(r=>!r.vyrizeno).sort(pmPodleId)){
+    const k=pmKlic(r.kategorie_id,r.nazev,r.provedeni),potreba=Math.max(0,+r.pocet||0);
+    const ze=Math.min(potreba,zbyva[k]||0);zbyva[k]=(zbyva[k]||0)-ze;
+    vysl[r.id]={klic:k,potreba,skladem:ze,dokoupit:potreba-ze,celkem:sklad[k]||0};
+  }
+  return vysl;
+}
+
+function pmNakupniSeznam(pozadavky,rozdel,kategorie,nadpis){
+  const skup={};
+  for(const r of pozadavky){
+    const i=rozdel[r.id];if(!i||i.dokoupit<=0)continue;
+    const g=skup[i.klic]||(skup[i.klic]={kategorie_id:r.kategorie_id,nazvy:new Set(),zaklad:pmZaklad(r.nazev),provedeni:pmProv(r.provedeni),ks:0});
+    g.nazvy.add(String(r.nazev).trim());g.ks+=i.dokoupit;
+  }
+  const vse=Object.values(skup),katSer=[...kategorie].sort(pmPodlePoradi);
+  const bloky=[...katSer.map(k=>({k,pol:vse.filter(g=>pmEq(g.kategorie_id,k.id))})),
+    {k:{nazev:"Bez kategorie"},pol:vse.filter(g=>!katSer.some(k=>pmEq(k.id,g.kategorie_id)))}].filter(b=>b.pol.length);
+  if(!bloky.length)return null;
+  const radky=[nadpis,""];
+  for(const b of bloky){
+    radky.push(`${b.k.ikona?b.k.ikona+" ":""}${b.k.nazev}`);
+    for(const g of b.pol.sort((a,c)=>a.zaklad.localeCompare(c.zaklad,"cs"))){
+      const nazev=g.nazvy.size===1?[...g.nazvy][0]:g.zaklad;
+      radky.push(`- ${nazev}${g.provedeni?` (${g.provedeni})`:""}: ${g.ks} ks`);
+    }
+    radky.push("");
+  }
+  return radky.join("\n").trim();
+}
+
+// Odečte kusy a zapíše výdej; když zápis výdeje selže, vrátí počet zpět. Vrací nový počet, nebo null.
+async function pmVydej(polozkaId,stav,kusu,extra={}){
+  const n=stav-kusu;
+  const {error:e1}=await sb.from("pomucky_polozky").update({pocet:n}).eq("id",polozkaId);
+  if(e1){alert("Počet se nepodařilo uložit: "+e1.message);return null;}
+  const {error:e2}=await sb.from("pomucky_vydej").insert({polozka_id:polozkaId,pocet:kusu,datum:pmDnes(),dite_id:extra.dite_id||null,poznamka:extra.poznamka||""});
+  if(!e2)return n;
+  const {error:e3}=await sb.from("pomucky_polozky").update({pocet:stav}).eq("id",polozkaId);
+  alert("Výdej se nepodařilo zapsat: "+e2.message+(e3?"\nPOZOR: počet se nepodařilo vrátit ("+e3.message+"), zkontroluj ho ručně.":"\nPočet byl vrácen zpět."));
+  return null;
+}
+
+function PomVydejForm({max,deti,onCancel,onConfirm}){
+  const [f,setF]=useState({pocet:"1",dite_id:"",poznamka:""});
+  const [saving,setSaving]=useState(false);
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const potvrd=async()=>{
+    const k=parseInt(f.pocet,10);
+    if(!(k>=1&&k<=max)){alert(`Lze vydat 1 až ${max} ks.`);return;}
+    setSaving(true);await onConfirm({pocet:k,dite_id:f.dite_id||null,poznamka:f.poznamka.trim()});setSaving(false);
+  };
+  return <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 14px 4px",marginBottom:14}}>
+    <div style={{display:"grid",gridTemplateColumns:"90px 1fr",gap:10}}>
+      <Field label="Kusů"><input style={inp} type="number" min={1} max={max} value={f.pocet} onChange={set("pocet")} autoFocus/></Field>
+      <Field label="Dítě"><select style={inp} value={f.dite_id} onChange={set("dite_id")}>
+        <option value="">— neuvedeno —</option>
+        {deti.map(d=><option key={d.id} value={d.id}>{d.emoji} {d.jmeno}</option>)}
+      </select></Field>
+    </div>
+    <Field label="Poznámka"><input style={inp} value={f.poznamka} onChange={set("poznamka")} onKeyDown={e=>e.key==="Enter"&&potvrd()}/></Field>
+    <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginBottom:10}}>
+      <button onClick={onCancel} style={{...btnC(C.muted,true),padding:"6px 14px"}}>Zrušit</button>
+      <button onClick={potvrd} disabled={saving} style={{...btnC(C.orange),padding:"6px 14px"}}>{saving?"…":"Vydat"}</button>
+    </div>
+  </div>;
+}
+
+function PomPolozkaModal({pol,kategorie,umisteni,deti,provedeniVolby,defaultMisto,onClose,onChanged}){
+  const isNew=!pol;
+  const [f,setF]=useState({nazev:pol?.nazev||"",provedeni:pol?.provedeni||"",kategorie_id:pol?.kategorie_id??"",pocet:pol?.pocet??0,umisteni_id:pol?.umisteni_id??defaultMisto??"",poznamka:pol?.poznamka||""});
+  const [stav,setStav]=useState(+pol?.pocet||0);
+  const [saving,setSaving]=useState(false);
+  const [vydej,setVydej]=useState(false);
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const hist=useData(()=>pol?sb.from("pomucky_vydej").select("*").eq("polozka_id",pol.id).order("datum",{ascending:false}).order("id",{ascending:false}).limit(5):Promise.resolve({data:[],error:null}),[pol?.id]);
+  const uloz=async()=>{
+    if(!f.nazev.trim()){alert("Vyplň název.");return;}
+    const data={nazev:f.nazev.trim(),provedeni:pmProv(f.provedeni),kategorie_id:f.kategorie_id||null,umisteni_id:f.umisteni_id||null,pocet:Math.max(0,parseInt(f.pocet,10)||0),poznamka:f.poznamka.trim()};
+    setSaving(true);
+    const {error}=isNew?await sb.from("pomucky_polozky").insert(data):await sb.from("pomucky_polozky").update(data).eq("id",pol.id);
+    setSaving(false);
+    if(error){alert("Chyba při ukládání: "+error.message);return;}
+    onChanged();onClose();
+  };
+  const smaz=async()=>{
+    if(!confirm(`Smazat položku ${pol.nazev}?`))return;
+    const {error}=await sb.from("pomucky_polozky").delete().eq("id",pol.id);
+    if(error){alert("Smazání selhalo: "+error.message);return;}
+    onChanged();onClose();
+  };
+  const vydat=async({pocet,dite_id,poznamka})=>{
+    const n=await pmVydej(pol.id,stav,pocet,{dite_id,poznamka});
+    if(n==null){onChanged();return;}
+    setStav(n);setF(p=>({...p,pocet:n}));setVydej(false);hist.reload();onChanged();
+  };
+  const ditMap=Object.fromEntries(deti.map(d=>[String(d.id),d]));
+  return <Modal title={isNew?"Nová pomůcka":"Upravit pomůcku"} onClose={onClose} width={500}>
+    <Field label="Název"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus={isNew} onKeyDown={e=>e.key==="Enter"&&uloz()} placeholder="např. 544, 560e, Pravítko"/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 100px",gap:10}}>
+      <Field label="Provedení" hint="Prázdné = neurčeno"><input style={inp} list="pm-provedeni-polozka" value={f.provedeni} onChange={set("provedeni")}/></Field>
+      <Field label="Počet ks"><input style={inp} type="number" min={0} value={f.pocet} onChange={set("pocet")}/></Field>
+    </div>
+    <datalist id="pm-provedeni-polozka">{provedeniVolby.map(o=><option key={o.v} value={o.label}/>)}</datalist>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      <Field label="Kategorie"><select style={inp} value={f.kategorie_id} onChange={set("kategorie_id")}>
+        <option value="">— bez kategorie —</option>
+        {kategorie.map(k=><option key={k.id} value={k.id}>{k.ikona} {k.nazev}</option>)}
+      </select></Field>
+      <Field label="Úložné místo"><select style={inp} value={f.umisteni_id} onChange={set("umisteni_id")}>
+        <option value="">— neurčeno —</option>
+        {umisteni.map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
+      </select></Field>
+    </div>
+    <Field label="Poznámka"><textarea style={{...inp,minHeight:56,resize:"vertical",fontFamily:"inherit"}} value={f.poznamka} onChange={set("poznamka")}/></Field>
+    {!isNew&&!vydej&&<div style={{marginBottom:14}}>
+      <button onClick={()=>setVydej(true)} disabled={stav<=0} style={{...btnC(C.orange,true),padding:"6px 14px",opacity:stav<=0?.4:1}}>Vydat…</button>
+      <span style={{color:C.dim,fontSize:12,marginLeft:10}}>skladem {stav} ks</span>
+    </div>}
+    {!isNew&&vydej&&<PomVydejForm max={stav} deti={deti} onCancel={()=>setVydej(false)} onConfirm={vydat}/>}
+    <div style={{display:"flex",justifyContent:"space-between",gap:10,marginTop:6}}>
+      <div>{!isNew&&<button onClick={smaz} style={btnC(C.red,true)}>Smazat</button>}</div>
+      <div style={{display:"flex",gap:10}}><button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button><button onClick={uloz} disabled={saving} style={btnC()}>{saving?"…":"Uložit"}</button></div>
+    </div>
+    {!isNew&&<div style={{marginTop:20,borderTop:`1px solid ${C.border}`,paddingTop:14}}>
+      <div style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",marginBottom:8}}>Poslední výdeje</div>
+      {hist.error&&<div style={{color:C.red,fontSize:12}}>Historii se nepodařilo načíst: {hist.error}</div>}
+      {!hist.error&&(hist.data||[]).length===0&&<div style={{color:C.dim,fontSize:12}}>{hist.loading?"Načítám…":"Zatím nic nevydáno."}</div>}
+      {(hist.data||[]).map(v=>{const d=ditMap[String(v.dite_id)];return(
+        <div key={v.id} style={{display:"flex",gap:10,fontSize:13,padding:"4px 0",color:C.text}}>
+          <span style={{color:C.muted,minWidth:84}}>{pmDatum(v.datum)}</span>
+          <span style={{fontWeight:700,minWidth:44}}>{v.pocet} ks</span>
+          <span style={{color:d?C.text:C.dim}}>{d?`${d.emoji||""} ${d.jmeno}`:"—"}</span>
+          {v.poznamka&&<span style={{color:C.dim,fontSize:12}}>{v.poznamka}</span>}
+        </div>);})}
+    </div>}
+  </Modal>;
+}
+
+function PomCiselnikRadek({row,sIkonou,pocet,onUloz,onSmaz}){
+  const [nazev,setNazev]=useState(row.nazev||"");
+  const [ikona,setIkona]=useState(row.ikona||"");
+  const zmeneno=nazev.trim()!==(row.nazev||"")||(sIkonou&&ikona.trim()!==(row.ikona||""));
+  const uloz=()=>{if(zmeneno)onUloz(nazev.trim(),ikona.trim());};
+  return <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:6}}>
+    {sIkonou&&<input style={{...inp,width:46,textAlign:"center",padding:"8px 4px"}} value={ikona} onChange={e=>setIkona(e.target.value)}/>}
+    <input style={{...inp,flex:1}} value={nazev} onChange={e=>setNazev(e.target.value)} onKeyDown={e=>e.key==="Enter"&&uloz()}/>
+    <span title="Navázané položky" style={{color:C.dim,fontSize:11,minWidth:22,textAlign:"right"}}>{pocet}</span>
+    {zmeneno&&<button onClick={uloz} style={{...btnC(C.green),padding:"5px 10px",fontSize:12}}>✓</button>}
+    <button onClick={onSmaz} style={{...btnC(C.red,true),padding:"5px 10px",fontSize:12}}>✕</button>
+  </div>;
+}
+
+function PomCiselnikSloupec({tabulka,titulek,rows,polozky,vazba,sIkonou,onChanged}){
+  const [novy,setNovy]=useState("");
+  const [novaIkona,setNovaIkona]=useState("");
+  const serazene=[...rows].sort(pmPodlePoradi);
+  const pocet=r=>polozky.filter(p=>pmEq(p[vazba],r.id)).length;
+  const duplicita=(n,id)=>rows.some(r=>!pmEq(r.id,id)&&String(r.nazev||"").trim().toLowerCase()===n.toLowerCase());
+  const pridej=async()=>{
+    const n=novy.trim();if(!n)return;
+    if(duplicita(n,null)){alert("Takový název už existuje.");return;}
+    const data={nazev:n,poradi:rows.reduce((m,r)=>Math.max(m,+r.poradi||0),0)+1};
+    if(sIkonou&&novaIkona.trim())data.ikona=novaIkona.trim();
+    const {error}=await sb.from(tabulka).insert(data);
+    if(error){alert("Chyba při ukládání: "+error.message);return;}
+    setNovy("");setNovaIkona("");onChanged();
+  };
+  const uloz=async(r,nazev,ikona)=>{
+    if(!nazev){alert("Název nesmí být prázdný.");return;}
+    if(duplicita(nazev,r.id)){alert("Takový název už existuje.");return;}
+    const data={nazev};if(sIkonou)data.ikona=ikona||null;
+    const {error}=await sb.from(tabulka).update(data).eq("id",r.id);
+    if(error){alert("Chyba při ukládání: "+error.message);return;}
+    onChanged();
+  };
+  const smaz=async r=>{
+    const n=pocet(r);
+    const dopad=vazba==="umisteni_id"?"zůstanou bez úložného místa":"spadnou do karty Bez kategorie (stejně tak požadavky na nákup)";
+    const msg=n?`Na ${r.nazev} je navázáno ${n} položek. Položky se nesmažou, jen ${dopad}.\n\nOpravdu smazat?`:`Smazat ${r.nazev}?`;
+    if(!confirm(msg))return;
+    const {error}=await sb.from(tabulka).delete().eq("id",r.id);
+    if(error){alert("Smazání selhalo: "+error.message);return;}
+    onChanged();
+  };
+  return <div>
+    <div style={{color:C.text,fontWeight:800,fontSize:14,marginBottom:10}}>{titulek}</div>
+    {serazene.length===0&&<div style={{color:C.dim,fontSize:12,marginBottom:8}}>Zatím nic.</div>}
+    {serazene.map(r=><PomCiselnikRadek key={r.id} row={r} sIkonou={sIkonou} pocet={pocet(r)} onUloz={(nazev,ikona)=>uloz(r,nazev,ikona)} onSmaz={()=>smaz(r)}/>)}
+    <div style={{display:"flex",gap:6,marginTop:10}}>
+      {sIkonou&&<input style={{...inp,width:46,textAlign:"center",padding:"8px 4px"}} value={novaIkona} onChange={e=>setNovaIkona(e.target.value)} placeholder="📓"/>}
+      <input style={{...inp,flex:1}} value={novy} onChange={e=>setNovy(e.target.value)} onKeyDown={e=>e.key==="Enter"&&pridej()} placeholder="Nový název"/>
+      <button onClick={pridej} style={{...btnC(),padding:"5px 12px"}}>+</button>
+    </div>
+  </div>;
+}
+
+function PomCiselnikyModal({umisteni,kategorie,polozky,onClose,onChanged}){
+  return <Modal title="⚙️ Místa a kategorie" onClose={onClose} width={760}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:28}}>
+      <PomCiselnikSloupec tabulka="pomucky_umisteni" titulek="📍 Úložná místa" rows={umisteni} polozky={polozky} vazba="umisteni_id" onChanged={onChanged}/>
+      <PomCiselnikSloupec tabulka="pomucky_kategorie" titulek="🗂 Kategorie" rows={kategorie} polozky={polozky} vazba="kategorie_id" sIkonou onChanged={onChanged}/>
+    </div>
+  </Modal>;
+}
+
+function PomPolozkaRadek({p,mistoNazev,busy,onOpen,onMinus,onPlus}){
+  const prov=pmProv(p.provedeni),ks=+p.pocet||0;
+  return <div onClick={onOpen} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",borderTop:`1px solid ${C.border}`,cursor:"pointer"}}>
+    <div style={{flex:1,minWidth:0}}>
+      <div style={{fontWeight:600,fontSize:14,color:C.text}}>{p.nazev}{prov&&<span style={{color:C.dim,fontSize:12,fontWeight:400,marginLeft:6}}>{prov}</span>}</div>
+      {mistoNazev&&<div style={{color:C.muted,fontSize:12}}>📍 {mistoNazev}</div>}
+    </div>
+    <span style={{fontSize:15,fontWeight:800,minWidth:44,textAlign:"right",color:ks>0?C.text:C.dim}}>{ks} ks</span>
+    <button onClick={e=>{e.stopPropagation();onMinus();}} disabled={busy||ks<=0} title="Vydat 1 ks" style={{...pmMaleTl,opacity:busy||ks<=0?.35:1,cursor:busy||ks<=0?"default":"pointer"}}>−1</button>
+    <button onClick={e=>{e.stopPropagation();onPlus();}} disabled={busy} title="Opravit evidenci (+1 ks)" style={{...pmMaleTl,opacity:busy?.35:1}}>+1</button>
+  </div>;
+}
+
+function PomZasoba({umisteni,kategorie,polozky,deti,reloadPol,reloadCiselniky}){
+  const [misto,setMisto]=useState("");
+  const [prov,setProv]=useState("");
+  const [hledat,setHledat]=useState("");
+  const [modal,setModal]=useState(null);
+  const [ciselniky,setCiselniky]=useState(false);
+  const [busy,setBusy]=useState(null);
+  const provedeniVolby=pmProvedeniVolby(polozky);
+  const mistaSer=[...umisteni].sort(pmPodlePoradi);
+  const katSer=[...kategorie].sort(pmPodlePoradi);
+  const mistoMap=Object.fromEntries(umisteni.map(u=>[String(u.id),u.nazev]));
+  const q=bezDiakritiky(hledat).trim();
+  const vyfiltr=polozky.filter(p=>
+    (!misto||pmEq(p.umisteni_id,misto))&&
+    (!prov||(prov==="__neurceno"?!pmProv(p.provedeni):pmProv(p.provedeni).toLowerCase()===prov))&&
+    (!q||bezDiakritiky(p.nazev).includes(q)));
+  const skupiny=[
+    ...katSer.map(k=>({id:k.id,nazev:k.nazev,ikona:k.ikona,pol:vyfiltr.filter(p=>pmEq(p.kategorie_id,k.id))})),
+    {id:"__bez",nazev:"Bez kategorie",ikona:"📦",pol:vyfiltr.filter(p=>!katSer.some(k=>pmEq(k.id,p.kategorie_id)))},
+  ].filter(s=>s.pol.length).map(s=>({...s,pol:[...s.pol].sort(pmPodleNazvu)}));
+  const kusu=vyfiltr.reduce((a,p)=>a+(+p.pocet||0),0);
+
+  const minus=async p=>{
+    const stav=+p.pocet||0;if(stav<=0)return;
+    setBusy(p.id);await pmVydej(p.id,stav,1);setBusy(null);reloadPol();
+  };
+  const plus=async p=>{
+    setBusy(p.id);
+    const {error}=await sb.from("pomucky_polozky").update({pocet:(+p.pocet||0)+1}).eq("id",p.id);
+    setBusy(null);
+    if(error)alert("Počet se nepodařilo uložit: "+error.message);
+    reloadPol();
+  };
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+      <button onClick={()=>setCiselniky(true)} style={btnC(C.muted,true)}>⚙️ Místa a kategorie</button>
+      <button onClick={()=>setModal("nova")} style={btnC()}>+ Nová položka</button>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+      <StatCard label="Položek" val={vyfiltr.length}/>
+      <StatCard label="Kusů celkem" val={kusu} color={C.green}/>
+    </div>
+    <div style={{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}}>
+      <select style={{...inp,flex:"1 1 160px",width:"auto"}} value={misto} onChange={e=>setMisto(e.target.value)}>
+        <option value="">Všechna místa</option>
+        {mistaSer.map(u=><option key={u.id} value={u.id}>{u.nazev}</option>)}
+      </select>
+      <select style={{...inp,flex:"1 1 160px",width:"auto"}} value={prov} onChange={e=>setProv(e.target.value)}>
+        <option value="">Všechna provedení</option>
+        {provedeniVolby.map(o=><option key={o.v} value={o.v}>{o.label}</option>)}
+        <option value="__neurceno">neurčeno</option>
+      </select>
+      <input style={{...inp,flex:"2 1 200px",width:"auto"}} value={hledat} onChange={e=>setHledat(e.target.value)} placeholder="🔍 Hledat v názvu…"/>
+    </div>
+    {skupiny.length===0&&<EmptyState emoji="📚" text={polozky.length?"Filtrům nic neodpovídá":"Zatím žádné pomůcky"} action={polozky.length?null:"Přidat první položku"} onAction={()=>setModal("nova")}/>}
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      {skupiny.map(s=><div key={s.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:C.bg}}>
+          <div style={{fontWeight:800,fontSize:14,color:C.text}}>{s.ikona} {s.nazev}</div>
+          <div style={{color:C.muted,fontSize:13,fontWeight:700}}>{s.pol.reduce((a,p)=>a+(+p.pocet||0),0)} ks</div>
+        </div>
+        {s.pol.map(p=><PomPolozkaRadek key={p.id} p={p} mistoNazev={misto?null:mistoMap[String(p.umisteni_id)]} busy={pmEq(busy,p.id)} onOpen={()=>setModal(p)} onMinus={()=>minus(p)} onPlus={()=>plus(p)}/>)}
+      </div>)}
+    </div>
+    {modal&&<PomPolozkaModal pol={modal==="nova"?null:modal} kategorie={katSer} umisteni={mistaSer} deti={deti} provedeniVolby={pmProvedeniVolby(polozky,PM_PROVEDENI_ZAKLAD)} defaultMisto={misto||""} onClose={()=>setModal(null)} onChanged={reloadPol}/>}
+    {ciselniky&&<PomCiselnikyModal umisteni={umisteni} kategorie={kategorie} polozky={polozky} onClose={()=>setCiselniky(false)} onChanged={()=>{reloadCiselniky();reloadPol();}}/>}
+  </div>;
+}
+
+function PomPozadavekModal({poz,rok,diteId,kategorie,deti,provedeniVolby,onClose,onSaved}){
+  const isNew=!poz;
+  const [f,setF]=useState({skolni_rok:poz?.skolni_rok||rok,dite_id:poz?.dite_id??diteId??"",kategorie_id:poz?.kategorie_id??kategorie[0]?.id??"",nazev:poz?.nazev||"",provedeni:poz?.provedeni||"",pocet:poz?.pocet??1,poznamka:poz?.poznamka||"",vyrizeno:!!poz?.vyrizeno});
+  const [saving,setSaving]=useState(false);
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const uloz=async()=>{
+    const skolni_rok=f.skolni_rok.trim();
+    if(!/^\d{4}\/\d{2}$/.test(skolni_rok)){alert("Školní rok zadej ve tvaru 2026/27.");return;}
+    if(!f.nazev.trim()){alert("Vyplň název.");return;}
+    const pocet=parseInt(f.pocet,10);
+    if(!(pocet>=1)){alert("Počet musí být alespoň 1.");return;}
+    const data={skolni_rok,dite_id:f.dite_id||null,kategorie_id:f.kategorie_id||null,nazev:f.nazev.trim(),provedeni:pmProv(f.provedeni),pocet,poznamka:f.poznamka.trim(),vyrizeno:f.vyrizeno};
+    setSaving(true);
+    const {error}=isNew?await sb.from("pomucky_pozadavky").insert(data):await sb.from("pomucky_pozadavky").update(data).eq("id",poz.id);
+    setSaving(false);
+    if(error){alert("Chyba při ukládání: "+error.message);return;}
+    onSaved();
+  };
+  const smaz=async()=>{
+    if(!confirm(`Smazat požadavek ${poz.nazev}?`))return;
+    const {error}=await sb.from("pomucky_pozadavky").delete().eq("id",poz.id);
+    if(error){alert("Smazání selhalo: "+error.message);return;}
+    onSaved();
+  };
+  return <Modal title={isNew?"Přidat požadavek":"Upravit požadavek"} onClose={onClose} width={500}>
+    <div style={{display:"grid",gridTemplateColumns:"120px 1fr",gap:10}}>
+      <Field label="Školní rok"><input style={inp} value={f.skolni_rok} onChange={set("skolni_rok")} placeholder="2026/27"/></Field>
+      <Field label="Dítě"><select style={inp} value={f.dite_id} onChange={set("dite_id")}>
+        <option value="">— neuvedeno —</option>
+        {deti.map(d=><option key={d.id} value={d.id}>{d.emoji} {d.jmeno}</option>)}
+      </select></Field>
+    </div>
+    <Field label="Kategorie"><select style={inp} value={f.kategorie_id} onChange={set("kategorie_id")}>
+      <option value="">— bez kategorie —</option>
+      {kategorie.map(k=><option key={k.id} value={k.id}>{k.ikona} {k.nazev}</option>)}
+    </select></Field>
+    <Field label="Název" hint="Kódy jako 544R nebo 560e se párují se zásobou 544 / 560"><input style={inp} value={f.nazev} onChange={set("nazev")} autoFocus={isNew} onKeyDown={e=>e.key==="Enter"&&uloz()}/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 100px",gap:10}}>
+      <Field label="Provedení" hint="Prázdné = neurčeno"><input style={inp} list="pm-provedeni-pozadavek" value={f.provedeni} onChange={set("provedeni")}/></Field>
+      <Field label="Počet ks"><input style={inp} type="number" min={1} value={f.pocet} onChange={set("pocet")}/></Field>
+    </div>
+    <datalist id="pm-provedeni-pozadavek">{provedeniVolby.map(o=><option key={o.v} value={o.label}/>)}</datalist>
+    <Field label="Poznámka"><input style={inp} value={f.poznamka} onChange={set("poznamka")}/></Field>
+    <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text,marginBottom:14,cursor:"pointer"}}>
+      <input type="checkbox" checked={f.vyrizeno} onChange={e=>setF(p=>({...p,vyrizeno:e.target.checked}))}/> Vyřízeno
+    </label>
+    <div style={{display:"flex",justifyContent:"space-between",gap:10}}>
+      <div>{!isNew&&<button onClick={smaz} style={btnC(C.red,true)}>Smazat</button>}</div>
+      <div style={{display:"flex",gap:10}}><button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button><button onClick={uloz} disabled={saving} style={btnC()}>{saving?"…":"Uložit"}</button></div>
+    </div>
+  </Modal>;
+}
+
+function PomSeznamModal({text,onClose}){
+  const ref=useRef(null);
+  const [zkopirovano,setZkopirovano]=useState(false);
+  const kopiruj=async()=>{
+    try{await navigator.clipboard.writeText(text);setZkopirovano(true);setTimeout(()=>setZkopirovano(false),1500);}
+    catch(e){ref.current?.select();alert("Kopírování se nepodařilo ("+e.message+"). Text je označený, zkopíruj ho ručně (Ctrl+C).");}
+  };
+  return <Modal title="🛒 Nákupní seznam" onClose={onClose} width={520}>
+    <textarea ref={ref} readOnly value={text} style={{...inp,minHeight:280,fontFamily:"ui-monospace,Consolas,monospace",fontSize:13,resize:"vertical",marginBottom:14}}/>
+    <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+      <button onClick={onClose} style={btnC(C.muted,true)}>Zavřít</button>
+      <button onClick={kopiruj} style={btnC(zkopirovano?C.green:C.accent)}>{zkopirovano?"✓ Zkopírováno":"📋 Kopírovat"}</button>
+    </div>
+  </Modal>;
+}
+
+function PomPozadavekRadek({r,info,ditePopis,onOpen}){
+  const prov=pmProv(r.provedeni);
+  return <div onClick={onOpen} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",borderTop:`1px solid ${C.border}`,cursor:"pointer",opacity:r.vyrizeno?.5:1}}>
+    <div style={{flex:1,minWidth:0}}>
+      <div style={{fontWeight:600,fontSize:14,color:C.text}}>{r.nazev}{prov&&<span style={{color:C.dim,fontSize:12,fontWeight:400,marginLeft:6}}>{prov}</span>}</div>
+      <div style={{color:C.muted,fontSize:12}}>
+        {r.vyrizeno?`potřeba ${+r.pocet||0}`:`potřeba ${info.potreba} · skladem ${info.skladem}`}
+        {ditePopis&&<span style={{marginLeft:8}}>{ditePopis}</span>}
+      </div>
+    </div>
+    {r.vyrizeno?<Tag color={C.muted}>vyřízeno</Tag>
+      :info.dokoupit>0?<Tag color={C.orange}>+{info.dokoupit} ks</Tag>
+      :<span title="Pokryto ze skladu" style={{color:C.green,fontWeight:800,fontSize:18}}>✓</span>}
+  </div>;
+}
+
+function PomNakup({kategorie,polozky,deti}){
+  const {data,loading,error,reload}=useData(()=>sb.from("pomucky_pozadavky").select("*"));
+  const [rok,setRok]=useState(pmSkolniRok());
+  const [extraRoky,setExtraRoky]=useState([]);
+  const [dite,setDite]=useState("");
+  const [modal,setModal]=useState(null);
+  const [seznam,setSeznam]=useState(null);
+  const vse=data||[];
+  const roky=[...new Set([pmSkolniRok(),...extraRoky,...vse.map(r=>r.skolni_rok).filter(Boolean)])].sort().reverse();
+  const katSer=[...kategorie].sort(pmPodlePoradi);
+  const katPor=id=>{const i=katSer.findIndex(k=>pmEq(k.id,id));return i<0?9999:i;};
+  const ditMap=Object.fromEntries(deti.map(d=>[String(d.id),d]));
+  const jmeno=id=>ditMap[String(id)]?.jmeno||"";
+  const roku=vse.filter(r=>r.skolni_rok===rok);
+  const rozdel=pmRozdelZasobu(roku,polozky);   // přes celý rok, nezávisle na filtru dítěte
+  const viditelne=roku.filter(r=>!dite||pmEq(r.dite_id,dite))
+    .sort((a,b)=>katPor(a.kategorie_id)-katPor(b.kategorie_id)||pmPodleNazvu(a,b)||jmeno(a.dite_id).localeCompare(jmeno(b.dite_id),"cs"));
+  const aktivni=viditelne.filter(r=>!r.vyrizeno);
+  const pokryto=aktivni.filter(r=>rozdel[r.id].dokoupit===0).length;
+  const dokoupit=aktivni.reduce((a,r)=>a+rozdel[r.id].dokoupit,0);
+  const skupiny=[
+    ...katSer.map(k=>({id:k.id,nazev:k.nazev,ikona:k.ikona,pol:viditelne.filter(r=>pmEq(r.kategorie_id,k.id))})),
+    {id:"__bez",nazev:"Bez kategorie",ikona:"📦",pol:viditelne.filter(r=>!katSer.some(k=>pmEq(k.id,r.kategorie_id)))},
+  ].filter(s=>s.pol.length);
+
+  const zmenRok=e=>{
+    const v=e.target.value;
+    if(v!=="__novy"){setRok(v);return;}
+    const n=(prompt("Nový školní rok ve tvaru 2027/28:")||"").trim();
+    if(!n)return;
+    if(!/^\d{4}\/\d{2}$/.test(n)){alert("Školní rok zadej ve tvaru 2027/28.");return;}
+    setExtraRoky(x=>x.includes(n)?x:[...x,n]);setRok(n);
+  };
+  const generuj=()=>{
+    const nadpis=`Nákupní seznam ${rok}${dite?" – "+jmeno(dite):""}`;
+    const text=pmNakupniSeznam(aktivni,rozdel,kategorie,nadpis);
+    if(!text){alert("Nic nechybí, všechno je pokryté ze skladu.");return;}
+    setSeznam(text);
+  };
+
+  if(loading&&!data)return <Spinner/>;
+  return <div>
+    {error&&<div style={{background:C.redS,color:C.red,borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:13}}>Požadavky se nepodařilo načíst: {error}</div>}
+    <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+      <select style={{...inp,flex:"1 1 140px",width:"auto"}} value={rok} onChange={zmenRok}>
+        {roky.map(r=><option key={r} value={r}>{r}</option>)}
+        <option value="__novy">+ Nový školní rok…</option>
+      </select>
+      <select style={{...inp,flex:"1 1 160px",width:"auto"}} value={dite} onChange={e=>setDite(e.target.value)}>
+        <option value="">Všechny děti</option>
+        {deti.map(d=><option key={d.id} value={d.id}>{d.emoji} {d.jmeno}</option>)}
+      </select>
+      <button onClick={generuj} style={btnC(C.green,true)}>Vygenerovat nákupní seznam</button>
+      <button onClick={()=>setModal("novy")} style={btnC()}>+ Přidat požadavek</button>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:18}}>
+      <StatCard label="Pokryto ze skladu" val={`${pokryto} z ${aktivni.length}`} color={C.green}/>
+      <StatCard label="Dokoupit" val={`${dokoupit} ks`} color={dokoupit?C.orange:C.green}/>
+    </div>
+    {skupiny.length===0&&<EmptyState emoji="🛒" text={`Pro rok ${rok} zatím žádné požadavky`} action="Přidat požadavek" onAction={()=>setModal("novy")}/>}
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      {skupiny.map(s=><div key={s.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+        <div style={{padding:"10px 14px",background:C.bg,fontWeight:800,fontSize:14,color:C.text}}>{s.ikona} {s.nazev}</div>
+        {s.pol.map(r=><PomPozadavekRadek key={r.id} r={r} info={rozdel[r.id]} ditePopis={dite?null:(ditMap[String(r.dite_id)]?`${ditMap[String(r.dite_id)].emoji||""} ${jmeno(r.dite_id)}`:null)} onOpen={()=>setModal(r)}/>)}
+      </div>)}
+    </div>
+    {modal&&<PomPozadavekModal poz={modal==="novy"?null:modal} rok={rok} diteId={dite} kategorie={katSer} deti={deti} provedeniVolby={pmProvedeniVolby(polozky,PM_PROVEDENI_ZAKLAD)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);reload();}}/>}
+    {seznam&&<PomSeznamModal text={seznam} onClose={()=>setSeznam(null)}/>}
+  </div>;
+}
+
+function PomuckyTab(){
+  const um=useData(()=>sb.from("pomucky_umisteni").select("*").order("poradi"));
+  const kat=useData(()=>sb.from("pomucky_kategorie").select("*").order("poradi"));
+  const pol=useData(()=>sb.from("pomucky_polozky").select("*"));
+  const det=useData(()=>sb.from("deti").select("id,jmeno,emoji").order("jmeno"));
+  const [zalozka,setZalozka]=useState("zasoba");
+  const zdroje=[["úložná místa",um],["kategorie",kat],["položky",pol],["děti",det]];
+  const chyby=zdroje.filter(([,d])=>d.error);
+  const nacita=zdroje.some(([,d])=>d.loading&&d.data==null&&!d.error);
+  const umisteni=um.data||[],kategorie=kat.data||[],polozky=pol.data||[],deti=det.data||[];
+  return <div>
+    <div style={{display:"flex",gap:0,marginBottom:20,borderBottom:`2px solid ${C.border}`}}>
+      {[{id:"zasoba",label:"📦 Zásoba"},{id:"nakup",label:"🛒 Nákup"}].map(z=>(
+        <button key={z.id} onClick={()=>setZalozka(z.id)} style={{padding:"8px 20px",border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:"transparent",transition:"all .15s",color:zalozka===z.id?C.accent:C.muted,borderBottom:zalozka===z.id?`2px solid ${C.accent}`:"2px solid transparent",marginBottom:-2}}>{z.label}</button>
+      ))}
+    </div>
+    {chyby.length>0&&<div style={{background:C.redS,color:C.red,borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:13}}>
+      {chyby.map(([co,d])=><div key={co}>Nepodařilo se načíst {co}: {d.error}</div>)}
+    </div>}
+    {nacita?<Spinner/>:<>
+      {zalozka==="zasoba"&&<PomZasoba umisteni={umisteni} kategorie={kategorie} polozky={polozky} deti={deti} reloadPol={pol.reload} reloadCiselniky={()=>{um.reload();kat.reload();}}/>}
+      {zalozka==="nakup"&&<PomNakup kategorie={kategorie} polozky={polozky} deti={deti}/>}
+    </>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ÚKOLY
 // ══════════════════════════════════════════════════════════════════════════════
 function UkolModal({ukol,onClose,onSaved}){
@@ -12849,6 +13351,7 @@ const TILES=[
   {id:"obleceni", emoji:"👕", label:"Oblečení",  popis:"Sklady a velikosti",     barva:"#3b6fd4"},
   {id:"boty",     emoji:"👟", label:"Boty",      popis:"Páry a umístění",        barva:"#6b3fa0"},
   {id:"sklad",    emoji:"📦", label:"Sklad",     popis:"Zásoby doma",            barva:"#c87000"},
+  {id:"pomucky",  emoji:"📚", label:"Učební pomůcky", popis:"Sešity, zásoba a nákup", barva:"#2563eb"},
   {id:"ukoly",    emoji:"🔁", label:"Úkoly",     popis:"Pravidelná údržba",      barva:"#1a6fa8"},
   {id:"spotreba", emoji:"💧", label:"Spotřeba",  popis:"Voda, elektřina, plyn",  barva:"#1a7a4a"},
   {id:"voda",     emoji:"🚰", label:"Voda",      popis:"Odečty, faktury, odhad", barva:"#0369a1"},
@@ -13062,6 +13565,7 @@ function AppInner() {
         {modul==="obleceni" && <ObleceniTab/>}
         {modul==="boty"     && <BotyTab/>}
         {modul==="sklad"    && <SkladTab/>}
+        {modul==="pomucky"  && <PomuckyTab/>}
         {modul==="ukoly"    && <UkolyTab/>}
         {modul==="spotreba" && <SpotrebaTab/>}
         {modul==="voda"     && <VodaTab/>}
