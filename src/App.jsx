@@ -774,6 +774,7 @@ function ClenDetail({clen,onEdit,onClose}){
       </div>
     </div>}
 
+    {tab==="finance"&&clen.typ==="dite"&&<DarkyDiteSouhrn diteId={clen.id}/>}
     {tab==="finance"&&<EntityFinancePanel sloupec="dite_id" id={clen.id} lock={{dite_id:clen.id}} nadpis={`Finance — ${clen.jmeno}`}/>}
     {tab==="dokumenty"&&<EntityDokumentyPanel lockVazba={`dite:${clen.id}`} nadpis={`Dokumenty — ${clen.jmeno}${celeJmeno?` (${celeJmeno})`:""}`}/>}
   </Modal>;
@@ -1865,6 +1866,446 @@ function PomuckyTab(){
       {zalozka==="zasoba"&&<PomZasoba umisteni={umisteni} kategorie={kategorie} polozky={polozky} deti={deti} reloadPol={pol.reload} reloadCiselniky={()=>{um.reload();kat.reload();}}/>}
       {zalozka==="nakup"&&<PomNakup kategorie={kategorie} polozky={polozky} deti={deti}/>}
     </>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DÁRKY — kdo z dětí co dostal, k jaké příležitosti a za kolik (po rocích)
+// ══════════════════════════════════════════════════════════════════════════════
+const DARKY_PRIL={
+  vanoce:    {label:"Vánoce",    emoji:"🎄",color:"#a8361f",bg:"#f6deda"},
+  narozeniny:{label:"Narozeniny",emoji:"🎂",color:"#563681",bg:"#ece2f6"},
+  jine:      {label:"Jiné",      emoji:"🎁",color:"#4a504b",bg:"#ece8df"},
+};
+const DARKY_STAV={
+  prani:   {label:"Přání",   color:"#7a4600",bg:"#fbebd2",next:"koupeno"},
+  koupeno: {label:"Koupeno", color:"#1d4a80",bg:"#e2eaf6",next:"zabaleno"},
+  zabaleno:{label:"Zabaleno",color:"#1a7a4a",bg:"#e6f4ed",next:"prani"},
+};
+const DARKY_STROP_VYCHOZI=6000;
+const kcD=n=>Math.round(+n||0).toLocaleString("cs-CZ")+" Kč";
+const darkySklon=(n,a,b,c)=>n===1?a:(n>=2&&n<=4?b:c);
+
+function darkySoucty(rows){
+  let koupeno=0,prani=0,nB=0,nP=0,nNezab=0;const po={};
+  rows.forEach(r=>{
+    const c=+r.cena||0;
+    if(r.stav==="prani"){prani+=c;nP++;}
+    else{koupeno+=c;nB++;po[r.prilezitost]=(po[r.prilezitost]||0)+c;if(r.stav==="koupeno")nNezab++;}
+  });
+  return {koupeno,prani,nB,nP,nNezab,po};
+}
+function darkyRozpad(po){
+  return ["narozeniny","vanoce","jine"].filter(k=>po[k]).map(k=>`${DARKY_PRIL[k].label} ${kcD(po[k])}`).join(" · ")||"zatím nic koupeno";
+}
+function darkyDnyDo(mesic,den){
+  const dnes=new Date();dnes.setHours(0,0,0,0);
+  let d=new Date(dnes.getFullYear(),mesic,den);
+  if(d<dnes)d=new Date(dnes.getFullYear()+1,mesic,den);
+  return Math.round((d-dnes)/86400000);
+}
+
+function useUzkeOkno(px=640){
+  const [u,setU]=useState(()=>typeof window!=="undefined"&&window.innerWidth<px);
+  useEffect(()=>{
+    const f=()=>setU(window.innerWidth<px);
+    window.addEventListener("resize",f);
+    return()=>window.removeEventListener("resize",f);
+  },[px]);
+  return u;
+}
+
+function DarkyPrepinac({volby,hodnota,onChange,plna}){
+  return <div style={{display:"flex",gap:4,background:"#e4e7f0",padding:4,borderRadius:10,width:plna?"100%":"auto"}}>
+    {volby.map(([id,label])=>{
+      const on=hodnota===id;
+      return <button key={id} type="button" onClick={()=>onChange(id)} aria-pressed={on}
+        style={{flex:plna?"1 1 0":"0 0 auto",border:"none",cursor:"pointer",background:on?C.surface:"transparent",color:on?C.text:C.muted,fontWeight:700,fontSize:13,padding:"8px 14px",borderRadius:8,minHeight:38,boxShadow:on?"0 1px 2px rgba(0,0,0,.08)":"none"}}>{label}</button>;
+    })}
+  </div>;
+}
+
+function DarkyStavBtn({stav,onClick}){
+  const s=DARKY_STAV[stav]||DARKY_STAV.prani;
+  return <button type="button" onClick={onClick} title="Kliknutím posuneš stav"
+    style={{border:"none",cursor:"pointer",background:s.bg,color:s.color,fontWeight:700,fontSize:12,padding:"7px 12px",borderRadius:999,minWidth:96,minHeight:36}}>{s.label}</button>;
+}
+
+function DarkyPrilTag({prilezitost}){
+  const p=DARKY_PRIL[prilezitost]||DARKY_PRIL.jine;
+  return <span style={{fontSize:11,fontWeight:800,padding:"2px 8px",borderRadius:999,background:p.bg,color:p.color,whiteSpace:"nowrap"}}>{p.label}</span>;
+}
+
+function DarkyRadek({r,num,onCycle,onOpen,uzke}){
+  const prani=r.stav==="prani";
+  const detail=prani?"přání":[r.kde||"obchod neuveden",r.schovane?`schované: ${r.schovane}`:null].filter(Boolean).join(" · ");
+  return <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"6px 12px",padding:"9px 14px",borderBottom:`1px solid ${C.border}`}}>
+    <span style={{flex:"0 0 22px",fontWeight:800,color:C.muted,fontSize:13}}>{prani?"–":`${num}.`}</span>
+    <button type="button" onClick={onOpen} style={{flex:"1 1 200px",minWidth:0,textAlign:"left",border:"none",background:"none",padding:0,cursor:"pointer",display:"flex",flexDirection:"column",gap:2}}>
+      <span style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:6}}>
+        <span style={{fontWeight:700,fontSize:14,color:prani?C.muted:C.text}}>{r.nazev}</span>
+        <DarkyPrilTag prilezitost={r.prilezitost}/>
+      </span>
+      <span style={{fontSize:12,color:C.muted}}>{detail}{r.poznamka?` · ${r.poznamka}`:""}</span>
+    </button>
+    <span style={{flex:uzke?"0 0 auto":"0 0 100px",marginLeft:uzke?34:0,textAlign:"right",fontWeight:800,color:prani?C.muted:C.text}}>{prani?"~ ":""}{kcD(r.cena)}</span>
+    <DarkyStavBtn stav={r.stav} onClick={onCycle}/>
+  </div>;
+}
+
+function DarkyModal({darek,deti,rok,prilezitost,diteId,onClose,onSaved}){
+  const isNew=!darek?.id;
+  const [f,setF]=useState({
+    nazev:darek?.nazev||"",dite_id:darek?.dite_id||diteId||deti[0]?.id||"",
+    rok:darek?.rok||rok,prilezitost:darek?.prilezitost||prilezitost||"vanoce",
+    cena:darek?.cena??"",stav:darek?.stav||"prani",kde:darek?.kde||"",
+    schovane:darek?.schovane||"",odkaz:darek?.odkaz||"",poznamka:darek?.poznamka||"",
+  });
+  const [saving,setSaving]=useState(false);
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const uloz=async()=>{
+    if(!f.nazev.trim()||!f.dite_id)return;
+    setSaving(true);
+    const data={...f,nazev:f.nazev.trim(),rok:+f.rok,cena:parseFloat(String(f.cena).replace(",","."))||0,
+      kde:f.kde||null,schovane:f.schovane||null,odkaz:f.odkaz||null,poznamka:f.poznamka||null};
+    const {error}=isNew?await sb.from("darky").insert(data):await sb.from("darky").update(data).eq("id",darek.id);
+    setSaving(false);
+    if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+    onSaved();
+  };
+  const smaz=async()=>{
+    if(!confirm(`Smazat „${darek.nazev}"?`))return;
+    const {error}=await sb.from("darky").delete().eq("id",darek.id);
+    if(error){alert("Nepodařilo se smazat: "+error.message);return;}
+    onSaved();
+  };
+  return <Modal title={isNew?"🎁 Nový dárek / přání":"🎁 Upravit dárek"} onClose={onClose} width={500}>
+    <Field label="Co"><input style={inp} value={f.nazev} onChange={set("nazev")} placeholder="např. Lego, brusle…" autoFocus/></Field>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:"0 12px"}}>
+      <Field label="Pro koho"><select style={inp} value={f.dite_id} onChange={set("dite_id")}>
+        {deti.map(d=><option key={d.id} value={d.id}>{d.emoji||""} {d.jmeno}</option>)}
+      </select></Field>
+      <Field label="Příležitost"><select style={inp} value={f.prilezitost} onChange={set("prilezitost")}>
+        {Object.entries(DARKY_PRIL).map(([k,p])=><option key={k} value={k}>{p.emoji} {p.label}</option>)}
+      </select></Field>
+      <Field label="Rok"><input style={inp} type="number" value={f.rok} onChange={set("rok")}/></Field>
+      <Field label={f.stav==="prani"?"Cena (odhad)":"Cena"}><input style={inp} type="number" value={f.cena} onChange={set("cena")} placeholder="Kč"/></Field>
+    </div>
+    <Field label="Stav">
+      <DarkyPrepinac plna volby={Object.entries(DARKY_STAV).map(([k,s])=>[k,s.label])} hodnota={f.stav} onChange={v=>setF(p=>({...p,stav:v}))}/>
+    </Field>
+    {f.stav!=="prani"&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:"0 12px"}}>
+      <Field label="Kde koupeno"><input style={inp} value={f.kde} onChange={set("kde")} placeholder="Alza, Smyths…"/></Field>
+      <Field label="Kde je schované"><input style={inp} value={f.schovane} onChange={set("schovane")} placeholder="půda, sklep…"/></Field>
+    </div>}
+    <Field label="Odkaz"><input style={inp} value={f.odkaz} onChange={set("odkaz")} placeholder="https://…"/></Field>
+    <Field label="Poznámka"><textarea style={{...inp,minHeight:60,resize:"vertical",fontFamily:"inherit"}} value={f.poznamka} onChange={set("poznamka")}/></Field>
+    <div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:8}}>
+      {!isNew?<button onClick={smaz} style={btnC(C.red,true)}>Smazat</button>:<span/>}
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+        <button onClick={uloz} disabled={saving} style={btnC()}>{saving?"Ukládám…":"Uložit"}</button>
+      </div>
+    </div>
+  </Modal>;
+}
+
+function DarkyStat({label,val,pod,tmava}){
+  return <div style={{background:tmava?C.green:C.surface,color:tmava?"#fff":C.text,border:tmava?"none":`1px solid ${C.border}`,borderRadius:14,padding:"14px 16px",display:"flex",flexDirection:"column",gap:2}}>
+    <span style={{fontSize:12,fontWeight:700,color:tmava?"#d5e8de":C.muted}}>{label}</span>
+    <span style={{fontSize:24,fontWeight:800}}>{val}</span>
+    <span style={{fontSize:12,color:tmava?"#d5e8de":C.muted}}>{pod}</span>
+  </div>;
+}
+
+function DarkyDiteKarta({d,s,strop,vybrano,onClick}){
+  const pct=strop>0?Math.min(100,Math.round(s.koupeno/strop*100)):0;
+  const nad=strop>0&&s.koupeno>strop;
+  const barva=d.barva||C.accent;
+  return <button type="button" onClick={onClick} aria-pressed={vybrano}
+    style={{textAlign:"left",cursor:"pointer",background:C.surface,border:`2px solid ${vybrano?barva:C.border}`,borderRadius:14,padding:12,display:"flex",flexDirection:"column",gap:8,color:C.text}}>
+    <span style={{display:"flex",alignItems:"center",gap:8}}>
+      <span style={{width:30,height:30,borderRadius:"50%",background:`${barva}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flex:"0 0 auto"}}>{d.emoji||d.jmeno.charAt(0)}</span>
+      <span style={{fontWeight:800,fontSize:15}}>{d.jmeno}</span>
+    </span>
+    <span style={{fontSize:19,fontWeight:800,color:nad?C.red:C.text}}>{kcD(s.koupeno)}</span>
+    <span style={{display:"block",height:6,background:C.bg,borderRadius:3,overflow:"hidden"}}>
+      <span style={{display:"block",height:6,width:`${pct}%`,background:nad?C.red:barva,borderRadius:3}}/>
+    </span>
+    <span style={{fontSize:12,color:C.muted}}>{s.nB} koupeno · {s.nP} přání</span>
+  </button>;
+}
+
+function DarkyRychlePrani({deti,diteId,prilezitost,rok,onSaved,jenDite}){
+  const [nazev,setNazev]=useState("");
+  const [dite,setDite]=useState(diteId||deti[0]?.id||"");
+  const [pril,setPril]=useState(prilezitost==="all"?"vanoce":prilezitost);
+  const [cena,setCena]=useState("");
+  const [saving,setSaving]=useState(false);
+  useEffect(()=>{if(prilezitost!=="all")setPril(prilezitost);},[prilezitost]);
+  useEffect(()=>{if(diteId)setDite(diteId);},[diteId]);
+  const pridej=async(e)=>{
+    e.preventDefault();
+    if(!nazev.trim()||!dite)return;
+    setSaving(true);
+    const {error}=await sb.from("darky").insert({dite_id:dite,rok,prilezitost:pril,nazev:nazev.trim(),cena:parseFloat(String(cena).replace(",","."))||0,stav:"prani"});
+    setSaving(false);
+    if(error){alert("Nepodařilo se přidat: "+error.message);return;}
+    setNazev("");setCena("");onSaved();
+  };
+  const lbl={display:"flex",flexDirection:"column",gap:4,fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5};
+  return <form onSubmit={pridej} style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-end",background:C.bg,padding:12,borderRadius:12}}>
+    <label style={{...lbl,flex:"3 1 200px"}}>{jenDite?"Nové přání":"Přání nebo dárek"}
+      <input style={{...inp,minHeight:40}} value={nazev} onChange={e=>setNazev(e.target.value)} placeholder="např. Lego, brusle…"/>
+    </label>
+    {!jenDite&&<label style={{...lbl,flex:"1 1 130px"}}>Pro koho
+      <select style={{...inp,minHeight:40}} value={dite} onChange={e=>setDite(e.target.value)}>
+        {deti.map(d=><option key={d.id} value={d.id}>{d.jmeno}</option>)}
+      </select>
+    </label>}
+    <label style={{...lbl,flex:"1 1 120px"}}>Příležitost
+      <select style={{...inp,minHeight:40}} value={pril} onChange={e=>setPril(e.target.value)}>
+        {Object.entries(DARKY_PRIL).map(([k,p])=><option key={k} value={k}>{p.label}</option>)}
+      </select>
+    </label>
+    <label style={{...lbl,flex:"1 1 90px"}}>Cena (odhad)
+      <input style={{...inp,minHeight:40}} type="number" value={cena} onChange={e=>setCena(e.target.value)} placeholder="Kč"/>
+    </label>
+    <button type="submit" disabled={saving} style={{...btnC(C.green),minHeight:40,flex:jenDite?"1 1 100%":"0 0 auto"}}>{saving?"Přidávám…":"Přidat přání"}</button>
+  </form>;
+}
+
+function DarkyDiteDetail({d,rows,strop,rok,pril,setPril,onBack,onCycle,onOpen,deti,onSaved}){
+  const s=darkySoucty(rows);
+  const nad=strop>0&&s.koupeno>strop;
+  const pct=strop>0?Math.min(100,Math.round(s.koupeno/strop*100)):0;
+  const koupene=rows.filter(r=>r.stav!=="prani");
+  const prani=rows.filter(r=>r.stav==="prani");
+  const barva=d.barva||C.accent;
+  const sumLabel=pril==="all"?`Celkem za rok ${rok}`:`Celkem ${DARKY_PRIL[pril].label} ${rok}`;
+  const box={background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden"};
+  return <div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <button type="button" onClick={onBack} style={{border:"none",background:"none",cursor:"pointer",color:C.accent,fontWeight:800,fontSize:14,padding:"8px 0",minHeight:40}}>‹ Všechny děti</button>
+      <span style={{fontSize:13,fontWeight:700,color:C.muted}}>Rok {rok}</span>
+    </div>
+    <DarkyPrepinac plna volby={[["all","Vše"],["vanoce","Vánoce"],["narozeniny","Narozeniny"]]} hodnota={pril} onChange={setPril}/>
+    <div style={{...box,padding:18,display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <span style={{width:50,height:50,borderRadius:"50%",background:`${barva}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26}}>{d.emoji||d.jmeno.charAt(0)}</span>
+        <span style={{display:"flex",flexDirection:"column"}}>
+          <span style={{fontSize:22,fontWeight:800}}>{d.jmeno}</span>
+          <span style={{fontSize:13,color:C.muted}}>{s.nB} koupeno · {s.nP} přání</span>
+        </span>
+      </div>
+      <span style={{fontSize:13,color:C.muted,fontWeight:600}}>{sumLabel}</span>
+      <span style={{fontSize:30,fontWeight:800,color:nad?C.red:C.text}}>{kcD(s.koupeno)}</span>
+      <span style={{display:"block",height:8,background:C.bg,borderRadius:4,overflow:"hidden"}}>
+        <span style={{display:"block",height:8,width:`${pct}%`,background:nad?C.red:barva,borderRadius:4}}/>
+      </span>
+      <span style={{fontSize:13,color:C.muted}}>{darkyRozpad(s.po)}</span>
+      {strop>0&&<span style={{fontSize:13,color:nad?C.red:C.muted}}>{nad?`o ${kcD(s.koupeno-strop)} nad ročním stropem ${kcD(strop)}`:`zbývá ${kcD(strop-s.koupeno)} do ročního stropu`}</span>}
+    </div>
+    <div style={box}>
+      <div style={{padding:"12px 14px 6px",fontWeight:800,fontSize:15}}>Koupeno</div>
+      {koupene.length===0&&<div style={{padding:"4px 14px 14px",color:C.muted,fontSize:14}}>Zatím nic.</div>}
+      {koupene.map((r,i)=><DarkyRadek key={r.id} r={r} num={i+1} uzke onCycle={()=>onCycle(r)} onOpen={()=>onOpen(r)}/>)}
+    </div>
+    <div style={box}>
+      <div style={{padding:"12px 14px 6px",fontWeight:800,fontSize:15}}>Přání</div>
+      {prani.length===0&&<div style={{padding:"4px 14px 10px",color:C.muted,fontSize:14}}>Žádná přání.</div>}
+      {prani.map(r=><div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",borderTop:`1px solid ${C.border}`}}>
+        <button type="button" onClick={()=>onOpen(r)} style={{flex:"1 1 auto",minWidth:0,textAlign:"left",border:"none",background:"none",padding:0,cursor:"pointer",display:"flex",flexDirection:"column",gap:3}}>
+          <span style={{fontWeight:700,fontSize:14,color:C.muted}}>{r.nazev}</span>
+          <span style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.muted}}><DarkyPrilTag prilezitost={r.prilezitost}/>~ {kcD(r.cena)}</span>
+        </button>
+        <button type="button" onClick={()=>onCycle(r)} style={{...btnC(C.green),padding:"8px 14px",borderRadius:999,flex:"0 0 auto"}}>Koupeno</button>
+      </div>)}
+      <div style={{padding:12,borderTop:`1px solid ${C.border}`}}>
+        <DarkyRychlePrani jenDite deti={deti} diteId={d.id} prilezitost={pril} rok={rok} onSaved={onSaved}/>
+      </div>
+    </div>
+  </div>;
+}
+
+function DarkyTab(){
+  const uzke=useUzkeOkno();
+  const det=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva,narozen").eq("typ","dite").order("narozen",{ascending:true,nullsFirst:false}));
+  const dar=useData(()=>sb.from("darky").select("*").order("created_at"));
+  const nast=useData(()=>sb.from("app_nastaveni").select("hodnota").eq("klic","darky_strop").maybeSingle());
+  const letos=new Date().getFullYear();
+  const [rok,setRok]=useState(letos);
+  const [pril,setPril]=useState("all");
+  const [child,setChild]=useState("all");
+  const [filtr,setFiltr]=useState("all");
+  const [modal,setModal]=useState(null);
+  const [stropEdit,setStropEdit]=useState(null);
+
+  const deti=det.data||[];
+  const vse=dar.data||[];
+  const strop=nast.data?.hodnota!=null&&nast.data.hodnota!==""?(+nast.data.hodnota||0):DARKY_STROP_VYCHOZI;
+
+  const posunStav=async(r)=>{
+    const novy=DARKY_STAV[r.stav]?.next||"koupeno";
+    dar.setData(p=>(p||[]).map(x=>x.id===r.id?{...x,stav:novy}:x));
+    const {error}=await sb.from("darky").update({stav:novy}).eq("id",r.id);
+    if(error){alert("Nepodařilo se změnit stav: "+error.message);dar.reload();}
+  };
+  const ulozStrop=async()=>{
+    if(stropEdit==null)return;
+    const v=String(Math.max(0,Math.round(+stropEdit||0)));
+    setStropEdit(null);
+    const {error}=await sb.from("app_nastaveni").upsert({klic:"darky_strop",hodnota:v});
+    if(error)alert("Nepodařilo se uložit strop: "+error.message);
+    nast.reload();
+  };
+  const zmenPril=v=>setPril(v);
+
+  if(det.error||dar.error)return <div style={{background:C.redS,color:C.red,borderRadius:10,padding:"10px 14px",fontSize:13}}>
+    {det.error&&<div>Nepodařilo se načíst děti: {det.error}</div>}
+    {dar.error&&<div>Nepodařilo se načíst dárky: {dar.error} — je spuštěná migrace sql/migrace/darky.sql?</div>}
+  </div>;
+  if(det.data==null||dar.data==null)return <Spinner/>;
+  if(deti.length===0)return <EmptyState emoji="🎁" text="V Rodině zatím nejsou žádné děti"/>;
+
+  const roky=[...new Set([letos,letos+1,...vse.map(r=>r.rok)])].sort((a,b)=>a-b);
+  const rokRows=vse.filter(r=>r.rok===rok&&(pril==="all"||r.prilezitost===pril));
+  const celkem=darkySoucty(rokRows);
+  const sumLabel=pril==="all"?`Celkem za rok ${rok}`:`Celkem ${DARKY_PRIL[pril].label} ${rok}`;
+  const titulek=`${pril==="all"?"Dárky":DARKY_PRIL[pril].label} ${rok}`;
+  const vybrane=child==="all"?null:deti.find(d=>String(d.id)===String(child));
+
+  // 4. karta: odpočet podle příležitosti
+  let odpocet;
+  if(pril==="narozeniny"){
+    const dalsi=deti.filter(d=>d.narozen).map(d=>{const n=new Date(d.narozen);return {d,dni:darkyDnyDo(n.getMonth(),n.getDate()),datum:n};}).sort((a,b)=>a.dni-b.dni)[0];
+    odpocet=dalsi?{label:`Narozeniny: ${dalsi.d.jmeno}`,val:dalsi.dni===0?"Dnes!":`${dalsi.dni} ${darkySklon(dalsi.dni,"den","dny","dní")}`,pod:dalsi.datum.toLocaleDateString("cs-CZ",{day:"numeric",month:"numeric"})}:{label:"Narozeniny",val:"—",pod:"v Rodině chybí data narození"};
+  }else{
+    const dni=darkyDnyDo(11,24);
+    odpocet={label:"Do Štědrého dne",val:dni===0?"Dnes!":`${dni} ${darkySklon(dni,"den","dny","dní")}`,pod:"24. 12."};
+  }
+
+  const zahlavi=<div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",justifyContent:"space-between",gap:12}}>
+    <h2 style={{margin:0,fontSize:26,fontWeight:800,letterSpacing:"-0.02em"}}>{titulek}</h2>
+    <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+      <DarkyPrepinac volby={[["all","Vše"],["vanoce","Vánoce"],["narozeniny","Narozeniny"]]} hodnota={pril} onChange={zmenPril}/>
+      <DarkyPrepinac volby={roky.map(y=>[y,String(y)])} hodnota={rok} onChange={setRok}/>
+    </div>
+  </div>;
+
+  const modalEl=modal&&<DarkyModal darek={modal==="novy"?null:modal} deti={deti} rok={rok} prilezitost={pril==="all"?"vanoce":pril} diteId={vybrane?.id} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);dar.reload();}}/>;
+
+  // Telefon: klik na dítě otevře jeho detail
+  if(uzke&&vybrane){
+    return <div>
+      <DarkyDiteDetail d={vybrane} rows={rokRows.filter(r=>String(r.dite_id)===String(vybrane.id))} strop={strop} rok={rok} pril={pril} setPril={zmenPril}
+        onBack={()=>setChild("all")} onCycle={posunStav} onOpen={r=>setModal(r)} deti={deti} onSaved={dar.reload}/>
+      {modalEl}
+    </div>;
+  }
+
+  const skupiny=deti.filter(d=>!vybrane||d.id===vybrane.id).map(d=>{
+    const mine=rokRows.filter(r=>String(r.dite_id)===String(d.id));
+    const s=darkySoucty(mine);
+    const koupene=mine.filter(r=>r.stav!=="prani"&&(filtr==="all"||r.stav===filtr));
+    const prani=(filtr==="all"||filtr==="prani")?mine.filter(r=>r.stav==="prani"):[];
+    return {d,s,koupene,prani};
+  });
+  const vRozsahu=vybrane?rokRows.filter(r=>String(r.dite_id)===String(vybrane.id)):rokRows;
+  const pocty={all:vRozsahu.length,prani:0,koupeno:0,zabaleno:0};
+  vRozsahu.forEach(r=>{pocty[r.stav]=(pocty[r.stav]||0)+1;});
+
+  return <div style={{display:"flex",flexDirection:"column",gap:20}}>
+    {zahlavi}
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12}}>
+      <DarkyStat label="Utraceno" val={kcD(celkem.koupeno)} pod={strop>0?`ze stropu ${kcD(strop*deti.length)}`:"bez stropu"}/>
+      <DarkyStat label="Zbývá koupit" val={`${celkem.nP} ${darkySklon(celkem.nP,"přání","přání","přání")}`} pod={`odhad ${kcD(celkem.prani)}`}/>
+      <DarkyStat label="Nezabaleno" val={`${celkem.nNezab} ${darkySklon(celkem.nNezab,"dárek","dárky","dárků")}`} pod="koupeno, čeká na papír"/>
+      <DarkyStat tmava label={odpocet.label} val={odpocet.val} pod={odpocet.pod}/>
+    </div>
+
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <div style={{fontSize:16,fontWeight:800}}>Děti</div>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.muted,fontWeight:700}}>Roční strop na dítě
+            <input type="number" style={{...inp,width:100,padding:"6px 10px"}} value={stropEdit??strop} onChange={e=>setStropEdit(e.target.value)} onBlur={ulozStrop} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}/>
+            Kč
+          </label>
+          {vybrane&&<button type="button" onClick={()=>setChild("all")} style={{border:"none",background:"none",cursor:"pointer",color:C.accent,fontWeight:700,fontSize:13,padding:"6px 0"}}>Zobrazit všechny děti</button>}
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:10}}>
+        {deti.map(d=><DarkyDiteKarta key={d.id} d={d} s={darkySoucty(rokRows.filter(r=>String(r.dite_id)===String(d.id)))} strop={strop} vybrano={vybrane?.id===d.id}
+          onClick={()=>setChild(vybrane?.id===d.id?"all":d.id)}/>)}
+      </div>
+    </div>
+
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,padding:16,display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <div style={{fontSize:16,fontWeight:800}}>Rok {rok} – {vybrane?vybrane.jmeno:"všechny děti"}</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          <select value={child} onChange={e=>setChild(e.target.value)} aria-label="Dítě" style={{...inp,width:"auto",borderRadius:999,fontWeight:700,minHeight:36}}>
+            <option value="all">Všechny děti</option>
+            {deti.map(d=><option key={d.id} value={d.id}>{d.jmeno}</option>)}
+          </select>
+          {[["all","Vše"],["prani","Přání"],["koupeno","Koupeno"],["zabaleno","Zabaleno"]].map(([id,label])=>{
+            const on=filtr===id;
+            return <button key={id} type="button" onClick={()=>setFiltr(id)} aria-pressed={on}
+              style={{border:`1px solid ${on?C.text:C.borderL}`,background:on?C.text:C.surface,color:on?"#fff":C.text,fontWeight:700,fontSize:12,padding:"7px 12px",borderRadius:999,cursor:"pointer",minHeight:36}}>{label} · {pocty[id]||0}</button>;
+          })}
+          <button type="button" onClick={()=>setModal("novy")} style={{...btnC(),borderRadius:999,minHeight:36}}>+ Dárek</button>
+        </div>
+      </div>
+
+      <DarkyRychlePrani deti={deti} diteId={vybrane?.id} prilezitost={pril} rok={rok} onSaved={dar.reload}/>
+
+      <div style={{border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+        {skupiny.map(({d,s,koupene,prani})=>{
+          const nad=strop>0&&s.koupeno>strop;
+          return <div key={d.id} style={{display:"flex",flexWrap:"wrap",borderTop:`1px solid ${C.border}`,marginTop:-1}}>
+            <div style={{flex:"1 0 170px",padding:14,display:"flex",alignItems:"flex-start",gap:10,background:"#fafbfd"}}>
+              <span style={{width:32,height:32,borderRadius:"50%",background:`${d.barva||C.accent}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flex:"0 0 auto"}}>{d.emoji||d.jmeno.charAt(0)}</span>
+              <span style={{display:"flex",flexDirection:"column",gap:2}}>
+                <span style={{fontWeight:800,fontSize:15}}>{d.jmeno}</span>
+                <span style={{fontSize:12,color:C.muted}}>{s.nB} koupeno · {s.nP} přání</span>
+              </span>
+            </div>
+            <div style={{flex:"9999 1 300px",minWidth:0,display:"flex",flexDirection:"column"}}>
+              {koupene.length===0&&prani.length===0&&<div style={{padding:14,color:C.muted,fontSize:13}}>Zatím nic.</div>}
+              {koupene.map((r,i)=><DarkyRadek key={r.id} r={r} num={i+1} uzke={uzke} onCycle={()=>posunStav(r)} onOpen={()=>setModal(r)}/>)}
+              {prani.map(r=><DarkyRadek key={r.id} r={r} num={0} uzke={uzke} onCycle={()=>posunStav(r)} onOpen={()=>setModal(r)}/>)}
+              <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"6px 12px",padding:"10px 14px",background:C.bg}}>
+                <span style={{flex:"1 1 200px",display:"flex",flexDirection:"column",gap:1}}>
+                  <span style={{fontWeight:800,fontSize:14}}>{sumLabel}</span>
+                  <span style={{fontSize:12,color:C.muted}}>{darkyRozpad(s.po)}</span>
+                </span>
+                <span style={{flex:"0 0 auto",minWidth:100,textAlign:"right",fontWeight:800,fontSize:16,color:nad?C.red:C.text}}>{kcD(s.koupeno)}</span>
+                <span style={{flex:"0 0 150px",fontSize:12,color:nad?C.red:C.muted}}>{nad?"nad ročním stropem · ":""}{s.nP?`přání ~ ${kcD(s.prani)}`:"bez přání"}</span>
+              </div>
+            </div>
+          </div>;
+        })}
+      </div>
+      <div style={{fontSize:12,color:C.muted}}>Stav se posouvá kliknutím: Přání → Koupeno → Zabaleno. Klik na název otevře úpravu.</div>
+    </div>
+    {modalEl}
+  </div>;
+}
+
+// Souhrn dárků v detailu dítěte (Rodina → Finance). Jen čte z tabulky darky.
+function DarkyDiteSouhrn({diteId}){
+  const rok=new Date().getFullYear();
+  const {data,error}=useData(()=>sb.from("darky").select("rok,prilezitost,cena,stav").eq("dite_id",diteId).eq("rok",rok),[diteId]);
+  if(error||!data)return null;
+  const s=darkySoucty(data);
+  return <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",marginBottom:16,background:C.bg,border:`1px solid ${C.border}`,borderRadius:12}}>
+    <span style={{fontSize:24}}>🎁</span>
+    <div style={{flex:1,minWidth:0}}>
+      <div style={{fontWeight:800,fontSize:14,color:C.text}}>Dárky {rok}: {kcD(s.koupeno)}</div>
+      <div style={{fontSize:12,color:C.muted}}>{darkyRozpad(s.po)}{s.nP?` · ${s.nP} ${darkySklon(s.nP,"přání","přání","přání")} (~ ${kcD(s.prani)})`:""}</div>
+    </div>
   </div>;
 }
 
@@ -13352,6 +13793,7 @@ const TILES=[
   {id:"boty",     emoji:"👟", label:"Boty",      popis:"Páry a umístění",        barva:"#6b3fa0"},
   {id:"sklad",    emoji:"📦", label:"Sklad",     popis:"Zásoby doma",            barva:"#c87000"},
   {id:"pomucky",  emoji:"📚", label:"Učební pomůcky", popis:"Sešity, zásoba a nákup", barva:"#2563eb"},
+  {id:"darky",    emoji:"🎁", label:"Dárky",     popis:"Vánoce a narozeniny dětí", barva:"#a8361f"},
   {id:"ukoly",    emoji:"🔁", label:"Úkoly",     popis:"Pravidelná údržba",      barva:"#1a6fa8"},
   {id:"spotreba", emoji:"💧", label:"Spotřeba",  popis:"Voda, elektřina, plyn",  barva:"#1a7a4a"},
   {id:"voda",     emoji:"🚰", label:"Voda",      popis:"Odečty, faktury, odhad", barva:"#0369a1"},
@@ -13566,6 +14008,7 @@ function AppInner() {
         {modul==="boty"     && <BotyTab/>}
         {modul==="sklad"    && <SkladTab/>}
         {modul==="pomucky"  && <PomuckyTab/>}
+        {modul==="darky"    && <DarkyTab/>}
         {modul==="ukoly"    && <UkolyTab/>}
         {modul==="spotreba" && <SpotrebaTab/>}
         {modul==="voda"     && <VodaTab/>}
