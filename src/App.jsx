@@ -2850,6 +2850,94 @@ function PeceTab(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// UŽIVATELÉ — kdo smí do appky a které moduly nevidí (jen pro správce)
+// ══════════════════════════════════════════════════════════════════════════════
+const UZIV_VYCHOZI_SKRYTE=["cashflow","finance"]; // nový člen: bez Cashflow a staré evidence Financí
+
+function UzivatelKarta({u,ja,onSaved}){
+  const [skryte,setSkryte]=useState(u.skryte_moduly||[]);
+  const [saving,setSaving]=useState(false);
+  const zmeneno=JSON.stringify([...skryte].sort())!==JSON.stringify([...(u.skryte_moduly||[])].sort());
+  const spravce=u.role==="spravce";
+  const prepni=id=>setSkryte(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+  const uloz=async()=>{
+    setSaving(true);
+    const {error}=await sb.from("uzivatele").update({skryte_moduly:skryte}).eq("email",u.email);
+    setSaving(false);
+    if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+    onSaved();
+  };
+  const zmenRoli=async()=>{
+    const nova=spravce?"clen":"spravce";
+    if(!confirm(nova==="spravce"?`Udělat z ${u.jmeno||u.email} správce? Uvidí vše a bude moct měnit oprávnění.`:`Odebrat ${u.jmeno||u.email} roli správce?`))return;
+    const {error}=await sb.from("uzivatele").update({role:nova}).eq("email",u.email);
+    if(error){alert(error.message);return;}
+    onSaved();
+  };
+  const smaz=async()=>{
+    if(!confirm(`Odebrat ${u.jmeno||u.email} přístup do appky? (Účet v Supabase zůstane, jen se do appky nedostane.)`))return;
+    const {error}=await sb.from("uzivatele").delete().eq("email",u.email);
+    if(error){alert(error.message);return;}
+    onSaved();
+  };
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:16,display:"flex",flexDirection:"column",gap:12}}>
+    <div style={{display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"center",gap:8}}>
+      <div>
+        <div style={{fontWeight:800,fontSize:16}}>{u.jmeno||u.email} {ja&&<span style={{fontSize:12,color:C.muted,fontWeight:600}}>(ty)</span>}</div>
+        <div style={{fontSize:12,color:C.muted}}>{u.email}</div>
+      </div>
+      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <Tag color={spravce?C.purple:C.blue}>{spravce?"Správce":"Člen"}</Tag>
+        {!ja&&<button onClick={zmenRoli} style={{...btnC(C.muted,true),padding:"5px 10px",fontSize:12}}>{spravce?"Udělat členem":"Udělat správcem"}</button>}
+        {!ja&&<button onClick={smaz} style={{...btnC(C.red,true),padding:"5px 10px",fontSize:12}}>Odebrat</button>}
+      </div>
+    </div>
+    {spravce?<div style={{fontSize:13,color:C.muted}}>Správce vidí všechny moduly.</div>:<>
+      <div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5}}>Vidí moduly</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:6}}>
+        {TILES.filter(t=>t.id!=="uzivatele").map(t=>{const vidi=!skryte.includes(t.id);return <label key={t.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:9,border:`1px solid ${vidi?C.borderL:C.border}`,background:vidi?C.surface:C.bg,color:vidi?C.text:C.dim,fontSize:13,fontWeight:600,cursor:"pointer"}}>
+          <input type="checkbox" checked={vidi} onChange={()=>prepni(t.id)}/>{t.emoji} {t.label}</label>;})}
+      </div>
+      {zmeneno&&<div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+        <button onClick={()=>setSkryte(u.skryte_moduly||[])} style={btnC(C.muted,true)}>Zrušit změny</button>
+        <button onClick={uloz} disabled={saving} style={btnC()}>{saving?"Ukládám…":"Uložit oprávnění"}</button>
+      </div>}
+    </>}
+  </div>;
+}
+
+function UzivateleTab({mujEmail}){
+  const {data,loading,error,reload}=useData(()=>sb.from("uzivatele").select("*").order("role").order("email"));
+  const [f,setF]=useState({email:"",jmeno:""});
+  const [saving,setSaving]=useState(false);
+  const pridej=async e=>{
+    e.preventDefault();
+    const email=f.email.trim().toLowerCase();
+    if(!/^\S+@\S+\.\S+$/.test(email)){alert("Zadej platný e-mail.");return;}
+    setSaving(true);
+    const {error}=await sb.from("uzivatele").insert({email,jmeno:f.jmeno.trim()||null,role:"clen",skryte_moduly:UZIV_VYCHOZI_SKRYTE});
+    setSaving(false);
+    if(error){alert("Nepodařilo se přidat: "+error.message);return;}
+    setF({email:"",jmeno:""});reload();
+  };
+  if(error)return <div style={{background:C.redS,color:C.red,borderRadius:10,padding:"10px 14px",fontSize:13}}>Nepodařilo se načíst uživatele: {error}</div>;
+  if(loading&&!data)return <Spinner/>;
+  return <div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <div>
+      <h2 style={{margin:0,fontSize:24,fontWeight:800}}>Uživatelé</h2>
+      <div style={{fontSize:13,color:C.muted,marginTop:4}}>Kdo se smí přihlásit a které moduly vidí. Přihlašovací účet (e-mail + heslo) založíš v Supabase → Authentication → Users → Add user; tady mu pak přidělíš přístup.</div>
+    </div>
+    <form onSubmit={pridej} style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-end",background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
+      <label style={{display:"flex",flexDirection:"column",gap:4,flex:"2 1 220px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>E-mail<input style={inp} type="email" value={f.email} onChange={e=>setF(p=>({...p,email:e.target.value}))} placeholder="stejný jako v Supabase"/></label>
+      <label style={{display:"flex",flexDirection:"column",gap:4,flex:"1 1 140px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>Jméno<input style={inp} value={f.jmeno} onChange={e=>setF(p=>({...p,jmeno:e.target.value}))} placeholder="např. Mili"/></label>
+      <button type="submit" disabled={saving} style={btnC()}>{saving?"Přidávám…":"Přidat člena"}</button>
+      <div style={{flex:"1 1 100%",fontSize:12,color:C.muted}}>Nový člen nevidí Cashflow a Finance OLD – zbytek se dá upravit hned po přidání.</div>
+    </form>
+    {(data||[]).map(u=><UzivatelKarta key={u.email} u={u} ja={u.email===mujEmail} onSaved={reload}/>)}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ÚKOLY
 // ══════════════════════════════════════════════════════════════════════════════
 function UkolModal({ukol,onClose,onSaved}){
@@ -14352,6 +14440,7 @@ const TILES=[
   {id:"zvirata",  emoji:"🐾",  label:"Zvířata",   popis:"Profily a péče",           barva:"#7a5c3a"},
   {id:"dokumenty",emoji:"📁",  label:"Dokumenty", popis:"Centrální kartotéka",      barva:"#5a6acf"},
   {id:"ucty",     emoji:"🔐",  label:"Účty & PC", popis:"Hesla, licence, hardware",   barva:"#334155"},
+  {id:"uzivatele",emoji:"👥",  label:"Uživatelé", popis:"Kdo co v appce vidí",        barva:"#475569"},
 ];
 
 // ── TÝDENNÍ WIDGET NA HOMEPAGE ───────────────────────────────────────────────
@@ -14459,7 +14548,10 @@ function TydenWidget(){
   </div>;
 }
 
-function AppInner() {
+function AppInner({uzivatel}) {
+  const spravce=uzivatel?.role==="spravce";
+  const skryte=spravce?[]:(uzivatel?.skryte_moduly||[]);
+  const smiVidet=id=>id==="uzivatele"?spravce:!skryte.includes(id);
   const [modul,setModul]=useState(null);
   const [upravy,setUpravy]=useState(false);
   const [poradi,setPoradi]=useState(null); // null = načítám
@@ -14493,6 +14585,7 @@ function AppInner() {
 
   const tiles=poradi||TILES;
   const aktivniTile=TILES.find(t=>t.id===modul);
+  const viditelne=tiles.filter(t=>smiVidet(t.id));
 
   // Drag & drop handlery
   const onDragStart=(e,id)=>{
@@ -14529,6 +14622,7 @@ function AppInner() {
 
   const globalStyle=`*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:${C.bg}}::-webkit-scrollbar-thumb{background:${C.border};border-radius:3px}input[type=number]::-webkit-inner-spin-button{opacity:.4}.tile-normal:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.12)!important;}`;
 
+  if(modul&&!smiVidet(modul)){setTimeout(()=>setModul(null),0);return null;}
   if(modul){
     return <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter','Segoe UI',sans-serif",color:C.text}}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"/>
@@ -14568,6 +14662,7 @@ function AppInner() {
         {modul==="zvirata"  && <ZvirataTab/>}
         {modul==="dokumenty"&& <DokumentyTab/>}
         {modul==="ucty"     && <UctyTab/>}
+        {modul==="uzivatele"&& <UzivateleTab mujEmail={uzivatel?.email}/>}
       </div>
     </div>;
   }
@@ -14630,7 +14725,7 @@ function AppInner() {
         {upravy?"Přetáhni pro změnu pořadí":"Vyberte sekci"}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:14}}>
-        {tiles.map(t=>(
+        {viditelne.map(t=>(
           <div
             key={t.id}
             className={upravy?"":"tile-normal"}
@@ -14709,8 +14804,24 @@ export default function App(){
   },[]);
   if(session===undefined) return <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center"}}><Spinner/></div>;
   if(!session) return <LoginScreen/>;
+  return <AppPrihlaseny session={session}/>;
+}
+
+function AppPrihlaseny({session}){
+  const email=(session.user?.email||"").toLowerCase();
+  const {data:uzivatel,loading,error}=useData(()=>sb.from("uzivatele").select("*").eq("email",email).maybeSingle(),[email]);
+  const odhlasit=<button onClick={()=>sb.auth.signOut()} title={`Přihlášen: ${session.user?.email||""}`} style={{position:"fixed",bottom:14,right:14,zIndex:1000,background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,padding:"7px 12px",fontSize:12,fontWeight:700,color:C.muted,cursor:"pointer",boxShadow:"0 3px 10px rgba(0,0,0,.12)"}}>🚪 Odhlásit</button>;
+  if(loading&&uzivatel==null&&!error) return <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center"}}><Spinner/></div>;
+  if(error||!uzivatel) return <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'Inter','Segoe UI',sans-serif"}}>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,padding:28,maxWidth:420,textAlign:"center"}}>
+      <div style={{fontSize:40,marginBottom:10}}>🔒</div>
+      <div style={{fontWeight:800,fontSize:18,marginBottom:8}}>Zatím nemáš přístup</div>
+      <div style={{color:C.muted,fontSize:14,lineHeight:1.5}}>{error?`Nepodařilo se ověřit oprávnění: ${error}`:`Účet ${session.user?.email||""} ještě nemá v appce přidělená oprávnění. Požádej správce, ať tě přidá v modulu Uživatelé.`}</div>
+    </div>
+    {odhlasit}
+  </div>;
   return <>
-    <AppInner/>
+    <AppInner uzivatel={uzivatel}/>
     <button onClick={()=>sb.auth.signOut()} title={`Přihlášen: ${session.user?.email||""}`} style={{position:"fixed",bottom:14,right:14,zIndex:1000,background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,padding:"7px 12px",fontSize:12,fontWeight:700,color:C.muted,cursor:"pointer",boxShadow:"0 3px 10px rgba(0,0,0,.12)"}}>🚪 Odhlásit</button>
   </>;
 }
