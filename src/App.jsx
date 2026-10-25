@@ -2326,7 +2326,7 @@ const PECE_KDO={
 };
 const PECE_DNY=["Po","Út","St","Čt","Pá","So","Ne"];
 const PECE_MESICE=["leden","únor","březen","duben","květen","červen","červenec","srpen","září","říjen","listopad","prosinec"];
-const PECE_VYCHOZI={kotva:"2026-10-19",vyzivne:11000,splatnost:15,ucet_terezy:"1763986028/3030"};
+const PECE_VYCHOZI={kotva:"2026-10-19",vyzivne:11000,splatnost:15,ucet_terezy:"1763986028/3030",evidence_od:"2026-10-25",prvni_nemoc:"ja"};
 
 // Datum jako číslo dne (UTC) — odolné vůči přechodu na letní/zimní čas
 const pcNum=(y,m,d)=>Math.floor(Date.UTC(y,m-1,d)/86400000);
@@ -2365,7 +2365,7 @@ const pcLbl={display:"flex",flexDirection:"column",gap:4,fontSize:11,fontWeight:
 const pcForm={display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-end",background:C.bg,padding:12,borderRadius:12};
 
 // ── Karta dítěte na přehledu ─────────────────────────────────────────────────
-function PeceKartaDitete({d,stav,stavKdo,pod,nemoc,lekar}){
+function PeceKartaDitete({d,stav,stavKdo,pod,nemoc,lekar,prazdne}){
   return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,padding:"14px 16px",display:"flex",flexDirection:"column",gap:6}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
       <span style={{fontWeight:800,fontSize:16}}>{d.emoji||""} {d.jmeno}</span>
@@ -2374,11 +2374,11 @@ function PeceKartaDitete({d,stav,stavKdo,pod,nemoc,lekar}){
     <div style={{fontSize:13,color:C.muted}}>{pod}</div>
     <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,marginTop:2,display:"flex",flexDirection:"column",gap:6,fontSize:13}}>
       <div><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5}}>Naposledy nemocný</div>
-        <div style={{fontWeight:700}}>{nemoc?nemoc.text:"zatím nezapsáno"}</div>
+        <div style={{fontWeight:700}}>{nemoc?nemoc.text:prazdne}</div>
         {nemoc&&<div style={{fontSize:12,fontWeight:700,color:PECE_KDO[nemoc.kdo].softFg}}>{nemoc.kdo==="ja"?"hlídal jsi ty":"hlídala Tereza"}</div>}
       </div>
       <div><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5}}>Naposledy u lékaře</div>
-        <div style={{fontWeight:700}}>{lekar?lekar.text:"zatím nezapsáno"}</div>
+        <div style={{fontWeight:700}}>{lekar?lekar.text:prazdne}</div>
         {lekar&&<div style={{fontSize:12,fontWeight:700,color:PECE_KDO[lekar.kdo].softFg}}>{PECE_KDO[lekar.kdo].s}</div>}
       </div>
     </div>
@@ -2444,13 +2444,13 @@ function PeceRozpis({start,setStart,kotva,vyj,dnes,uzke,onPrehod,detiInfo}){
 }
 
 // ── Nemoci ───────────────────────────────────────────────────────────────────
-function PeceNemoci({nemoci,deti,dalsiKdo,rok,onSaved}){
+function PeceNemoci({nemoci,deti,dalsiKdo,rok,evidOd,onSaved}){
   const [f,setF]=useState({od:"",do:"",deti:{},kdo:""});
   const [saving,setSaving]=useState(false);
   const kdo=f.kdo||dalsiKdo;
   const jmeno=id=>deti.find(d=>String(d.id)===String(id))?.jmeno||"?";
   const bil={ja:{n:0,d:0},tereza:{n:0,d:0}};
-  nemoci.forEach(x=>{const a=pcParse(x.od),b=pcParse(x.do)??a;if(pcInfo(a).y===rok&&bil[x.kdo]){bil[x.kdo].n++;bil[x.kdo].d+=b-a+1;}});
+  nemoci.forEach(x=>{const a=pcParse(x.od),b=pcParse(x.do)??a;if(b>=evidOd&&bil[x.kdo]){bil[x.kdo].n++;bil[x.kdo].d+=b-a+1;}});
   const bilTxt=b=>`${b.n} ${pcSklon(b.n,"nemoc","nemoci","nemocí")} · ${pcDni(b.d)}`;
   const posl=nemoci[0];
   const uloz=async e=>{
@@ -2470,16 +2470,16 @@ function PeceNemoci({nemoci,deti,dalsiKdo,rok,onSaved}){
       <div style={{flex:"1 1 220px",background:dk.bg,color:dk.fg,borderRadius:14,padding:16}}>
         <div style={{fontSize:13,fontWeight:700,opacity:.85}}>Příští nemoc hlídá</div>
         <div style={{fontSize:28,fontWeight:800}}>{dk.label}</div>
-        <div style={{fontSize:13,opacity:.85}}>{posl?`Poslední: ${posl.deti.map(jmeno).join(", ")} – ${posl.kdo==="ja"?"hlídal jsi ty":"hlídala Tereza"}`:"Zatím žádná nemoc"}</div>
+        <div style={{fontSize:13,opacity:.85}}>{posl?`Poslední: ${posl.deti.map(jmeno).join(", ")} – ${posl.kdo==="ja"?"hlídal jsi ty":"hlídala Tereza"}`:`Od ${pcFmt(evidOd)} zatím žádná nemoc – první hlídá podle nastavení`}</div>
       </div>
       <div style={{flex:"1 1 220px",background:C.bg,borderRadius:14,padding:16,display:"flex",flexDirection:"column",gap:8}}>
-        <div style={{fontSize:13,fontWeight:700,color:C.muted}}>Bilance {rok}</div>
+        <div style={{fontSize:13,fontWeight:700,color:C.muted}}>Bilance od {pcFmt(evidOd)} {pcInfo(evidOd).y}</div>
         <div style={{display:"flex",justifyContent:"space-between"}}><b style={{color:PECE_KDO.ja.softFg}}>Ty</b><span style={{fontWeight:700}}>{bilTxt(bil.ja)}</span></div>
         <div style={{display:"flex",justifyContent:"space-between"}}><b style={{color:PECE_KDO.tereza.softFg}}>Tereza</b><span style={{fontWeight:700}}>{bilTxt(bil.tereza)}</span></div>
       </div>
     </div>
     <form onSubmit={uloz} style={pcForm}>
-      <label style={{...pcLbl,flex:"1 1 130px"}}>Od<input type="date" style={{...inp,minHeight:40}} value={f.od} onChange={e=>setF(p=>({...p,od:e.target.value}))}/></label>
+      <label style={{...pcLbl,flex:"1 1 130px"}}>Od<input type="date" min={pcIso(evidOd)} style={{...inp,minHeight:40}} value={f.od} onChange={e=>setF(p=>({...p,od:e.target.value}))}/></label>
       <label style={{...pcLbl,flex:"1 1 130px"}}>Do<input type="date" style={{...inp,minHeight:40}} value={f.do} onChange={e=>setF(p=>({...p,do:e.target.value}))}/></label>
       <div style={{...pcLbl,flex:"2 1 220px"}}>Kdo je nemocný
         <div style={{display:"flex",gap:6,flexWrap:"wrap",textTransform:"none",letterSpacing:0}}>
@@ -2695,6 +2695,10 @@ function PeceNastaveniModal({nast,onClose,onSaved}){
       <Field label="Výživné měsíčně (Kč)"><input type="number" style={inp} value={f.vyzivne} onChange={e=>setF(p=>({...p,vyzivne:e.target.value}))}/></Field>
       <Field label="Splatné do dne"><input type="number" min="1" max="28" style={inp} value={f.splatnost} onChange={e=>setF(p=>({...p,splatnost:e.target.value}))}/></Field>
     </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
+      <Field label="Evidence od" hint="Nemoci, lékaři a výpomoc se počítají od tohoto dne."><input type="date" style={inp} value={f.evidence_od||""} onChange={e=>setF(p=>({...p,evidence_od:e.target.value}))}/></Field>
+      <Field label="První nemoc hlídá" hint="Platí, dokud není zapsaná žádná nemoc."><select style={inp} value={f.prvni_nemoc||"ja"} onChange={e=>setF(p=>({...p,prvni_nemoc:e.target.value}))}><option value="ja">Ty</option><option value="tereza">Tereza</option></select></Field>
+    </div>
     <Field label="Účet Terezy" hint="Podle něj se ve Financích hledají platby výživného."><input style={inp} value={f.ucet_terezy} onChange={e=>setF(p=>({...p,ucet_terezy:e.target.value}))}/></Field>
     <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
       <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
@@ -2722,6 +2726,7 @@ function PeceTab(){
   let nast=PECE_VYCHOZI;
   try{if(nas.data?.hodnota)nast={...PECE_VYCHOZI,...JSON.parse(nas.data.hodnota)};}catch{}
   const kotva=pcParse(nast.kotva)??pcParse(PECE_VYCHOZI.kotva);
+  const evidOd=pcParse(nast.evidence_od)??pcParse(PECE_VYCHOZI.evidence_od);
   const ucet=nast.ucet_terezy;
   const katIds=(kat.data||[]).map(k=>k.id);
   const katKlic=katIds.join(",");
@@ -2760,7 +2765,7 @@ function PeceTab(){
   const vyjMap={};(vyj.data||[]).forEach(v=>{const n=pcParse(v.datum);if(n!=null)vyjMap[n]=v.kdo;});
   const nemoci=nem.data||[],lekari=lek.data||[],navstevy=nav.data||[],vypomoc=vyp.data||[];
   const posl=nemoci[0];
-  const dalsiKdo=posl?(posl.kdo==="ja"?"tereza":"ja"):"ja";
+  const dalsiKdo=posl?(posl.kdo==="ja"?"tereza":"ja"):(nast.prvni_nemoc==="tereza"?"tereza":"ja");
   const bal=pcBilanceVypomoci(vypomoc);
   const vyz=platby.data?pcVyzivneMesice(platby.data,nast,platby.dataDo,dnes):null;
   const zacatek=start??(dnes-pcInfo(dnes).dow);
@@ -2813,12 +2818,14 @@ function PeceTab(){
         style={{flex:"1 0 auto",whiteSpace:"nowrap",border:"none",background:on?C.surface:"transparent",color:on?C.text:C.muted,fontWeight:800,fontSize:14,padding:"9px 12px",borderRadius:9,minHeight:42,cursor:"pointer"}}>{label}</button>;})}
     </div>
 
+    <div style={{fontSize:12,color:C.muted,marginTop:-8}}>Nemoci, lékaře a výpomoc evidujeme od {pcFmt(evidOd)} {pcInfo(evidOd).y}. Výživné se bere z výpisů celé.</div>
+
     {detiInfo.length<PECE_DETI.length&&<div style={{background:C.orangeS,color:C.orange,borderRadius:10,padding:"8px 12px",fontSize:13}}>
       V Rodině chybí: {PECE_DETI.filter(x=>!detiInfo.some(y=>y.klic===x.klic)).map(x=>x.jmeno).join(", ")} (hledá se podle jména).</div>}
 
     {tab==="prehled"&&<>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
-        {karty.map(c=><PeceKartaDitete key={c.x.klic} d={c.x.d} stav={c.stav} stavKdo={c.stavKdo} pod={c.pod} nemoc={posledniNemoc(c.x.d.id)} lekar={posledniLekar(c.x.d.id)}/>)}
+        {karty.map(c=><PeceKartaDitete key={c.x.klic} d={c.x.d} stav={c.stav} stavKdo={c.stavKdo} pod={c.pod} nemoc={posledniNemoc(c.x.d.id)} lekar={posledniLekar(c.x.d.id)} prazdne={`od ${pcFmt(evidOd)} nic nezapsáno`}/>)}
       </div>
       <div style={{background:dk.bg,color:dk.fg,borderRadius:14,padding:"10px 14px",display:"flex",flexWrap:"wrap",alignItems:"center",justifyContent:"space-between",gap:"8px 16px"}}>
         <span style={{display:"flex",flexWrap:"wrap",gap:"4px 18px",fontSize:14}}>
@@ -2833,7 +2840,7 @@ function PeceTab(){
       </div>
       <PeceRozpis start={zacatek} setStart={setStart} kotva={kotva} vyj={vyjMap} dnes={dnes} uzke={uzke} onPrehod={prehod} detiInfo={detiInfo}/>
     </>}
-    {tab==="nemoci"&&<PeceNemoci nemoci={nemoci} deti={deti} dalsiKdo={dalsiKdo} rok={pcInfo(dnes).y} onSaved={nem.reload}/>}
+    {tab==="nemoci"&&<PeceNemoci nemoci={nemoci} deti={deti} dalsiKdo={dalsiKdo} rok={pcInfo(dnes).y} evidOd={evidOd} onSaved={nem.reload}/>}
     {tab==="lekari"&&<PeceLekari lekari={lekari} navstevy={navstevy} deti={deti} onSaved={()=>{lek.reload();nav.reload();}}/>}
     {tab==="vypomoc"&&<PeceVypomoc vypomoc={vypomoc} dnes={dnes} onSaved={vyp.reload}/>}
     {tab==="vyzivne"&&(platby.data?<PeceVyzivne platby={platby.data} nast={nast} dataDo={platby.dataDo} dnes={dnes} chyba={platby.error}/>:<Spinner/>)}
