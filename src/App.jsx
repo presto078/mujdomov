@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 
@@ -2306,6 +2306,539 @@ function DarkyDiteSouhrn({diteId}){
       <div style={{fontWeight:800,fontSize:14,color:C.text}}>Dárky {rok}: {kcD(s.koupeno)}</div>
       <div style={{fontSize:12,color:C.muted}}>{darkyRozpad(s.po)}{s.nP?` · ${s.nP} ${darkySklon(s.nP,"přání","přání","přání")} (~ ${kcD(s.prani)})`:""}</div>
     </div>
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PÉČE — střídání s Terezou, nemoci, lékaři, výpomoc, výživné
+// ══════════════════════════════════════════════════════════════════════════════
+// Které děti modul řeší. Patrik se střídá ve 14denním cyklu, Beatka a Jiřík
+// jsou u Jirky (ob 14 dní v sobotu odpoledne u mámy).
+const PECE_DETI=[
+  {klic:"patrik",jmeno:"Patrik",stridani:true},
+  {klic:"bibi",  jmeno:"Beatka",stridani:false},
+  {klic:"jirik", jmeno:"Jiřík", stridani:false},
+];
+const PECE_KDO={
+  ja:     {label:"Ty",     s:"s tebou",  bg:"#2F5D8A",fg:"#ffffff",soft:"#dce7f3",softFg:"#1f4166"},
+  tereza: {label:"Tereza", s:"s Terezou",bg:"#e8a06c",fg:"#3b1a04",soft:"#f8dcc6",softFg:"#5a2a08"},
+  domluva:{label:"Domluva",s:"podle domluvy",bg:"#e6e8ee",fg:"#3d4556",soft:"#e6e8ee",softFg:"#3d4556"},
+};
+const PECE_DNY=["Po","Út","St","Čt","Pá","So","Ne"];
+const PECE_MESICE=["leden","únor","březen","duben","květen","červen","červenec","srpen","září","říjen","listopad","prosinec"];
+const PECE_VYCHOZI={kotva:"2026-10-19",vyzivne:11000,splatnost:15,ucet_terezy:"1763986028/3030"};
+
+// Datum jako číslo dne (UTC) — odolné vůči přechodu na letní/zimní čas
+const pcNum=(y,m,d)=>Math.floor(Date.UTC(y,m-1,d)/86400000);
+const pcInfo=n=>{const t=new Date(n*86400000);return {y:t.getUTCFullYear(),m:t.getUTCMonth()+1,d:t.getUTCDate(),dow:(t.getUTCDay()+6)%7};};
+const pcIso=n=>{const i=pcInfo(n);return `${i.y}-${String(i.m).padStart(2,"0")}-${String(i.d).padStart(2,"0")}`;};
+const pcParse=s=>{const p=String(s||"").slice(0,10).split("-");return p.length===3?pcNum(+p[0],+p[1],+p[2]):null;};
+const pcDnes=()=>{const t=new Date();return pcNum(t.getFullYear(),t.getMonth()+1,t.getDate());};
+const pcFmt=n=>{const i=pcInfo(n);return `${i.d}. ${i.m}.`;};
+const pcFmtDen=n=>`${PECE_DNY[pcInfo(n).dow]} ${pcFmt(n)}`;
+const pcRozsah=(a,b)=>{if(b==null||a===b)return pcFmt(a);const ia=pcInfo(a),ib=pcInfo(b);return ia.m===ib.m?`${ia.d}.–${pcFmt(b)}`:`${pcFmt(a)}–${pcFmt(b)}`;};
+const pcSklon=(n,a,b,c)=>n===1?a:(n>=2&&n<=4?b:c);
+const pcDni=n=>`${n} ${pcSklon(n,"den","dny","dní")}`;
+const pcKc=n=>Math.round(+n||0).toLocaleString("cs-CZ")+" Kč";
+
+// Rozpis Patrika: týden A (od kotvy) = u Jirky jen St+Čt, týden B = Po, Út, Pá, So, Ne
+function pcTydenA(n,kotva){const wk=Math.floor((n-kotva)/7);return ((wk%2)+2)%2===0;}
+function pcZaklad(n,kotva){const dow=pcInfo(n).dow,stct=dow===2||dow===3;return pcTydenA(n,kotva)?(stct?"ja":"tereza"):(stct?"tereza":"ja");}
+function pcKdoMa(n,kotva,vyj){return vyj[n]||pcZaklad(n,kotva);}
+function pcNavsteva(n,kotva){return pcInfo(n).dow===5&&pcTydenA(n,kotva);}
+
+function PeceTlacitko({onClick,children,plne}){
+  return <button type="button" onClick={onClick} style={{border:plne?"none":`1px solid ${C.borderL}`,background:plne?"#2F5D8A":C.surface,color:plne?"#fff":C.text,fontWeight:800,fontSize:13,padding:"9px 14px",borderRadius:999,cursor:"pointer",minHeight:40}}>+ {children}</button>;
+}
+function PeceStitek({kdo,text}){
+  const k=PECE_KDO[kdo]||PECE_KDO.domluva;
+  return <span style={{fontSize:12,fontWeight:800,padding:"4px 11px",borderRadius:999,background:k.soft,color:k.softFg,whiteSpace:"nowrap"}}>{text||k.label}</span>;
+}
+function PeceBox({titulek,children,pod}){
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,padding:16,display:"flex",flexDirection:"column",gap:12}}>
+    {titulek&&<div style={{fontWeight:800,fontSize:16}}>{titulek}</div>}
+    {pod&&<div style={{fontSize:13,color:C.muted,marginTop:-6}}>{pod}</div>}
+    {children}
+  </div>;
+}
+const pcLbl={display:"flex",flexDirection:"column",gap:4,fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5};
+const pcForm={display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-end",background:C.bg,padding:12,borderRadius:12};
+
+// ── Karta dítěte na přehledu ─────────────────────────────────────────────────
+function PeceKartaDitete({d,stav,stavKdo,pod,nemoc,lekar}){
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,padding:"14px 16px",display:"flex",flexDirection:"column",gap:6}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+      <span style={{fontWeight:800,fontSize:16}}>{d.emoji||""} {d.jmeno}</span>
+      <PeceStitek kdo={stavKdo} text={stav}/>
+    </div>
+    <div style={{fontSize:13,color:C.muted}}>{pod}</div>
+    <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,marginTop:2,display:"flex",flexDirection:"column",gap:6,fontSize:13}}>
+      <div><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5}}>Naposledy nemocný</div>
+        <div style={{fontWeight:700}}>{nemoc?nemoc.text:"zatím nezapsáno"}</div>
+        {nemoc&&<div style={{fontSize:12,fontWeight:700,color:PECE_KDO[nemoc.kdo].softFg}}>{nemoc.kdo==="ja"?"hlídal jsi ty":"hlídala Tereza"}</div>}
+      </div>
+      <div><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5}}>Naposledy u lékaře</div>
+        <div style={{fontWeight:700}}>{lekar?lekar.text:"zatím nezapsáno"}</div>
+        {lekar&&<div style={{fontSize:12,fontWeight:700,color:PECE_KDO[lekar.kdo].softFg}}>{PECE_KDO[lekar.kdo].s}</div>}
+      </div>
+    </div>
+  </div>;
+}
+
+// ── Rozpis na 14 dní ─────────────────────────────────────────────────────────
+function PeceRozpis({start,setStart,kotva,vyj,dnes,uzke,onPrehod,detiInfo}){
+  const dny=[];for(let i=0;i<14;i++)dny.push(start+i);
+  const pozn=n=>{
+    if(vyj[n])return "výjimka";
+    const o=pcKdoMa(n,kotva,vyj),dow=pcInfo(n).dow;
+    if(dow===6&&pcKdoMa(n+1,kotva,vyj)!==o)return "18:00";
+    if((dow===2||dow===4)&&pcKdoMa(n-1,kotva,vyj)!==o)return "škola";
+    return "";
+  };
+  const navBtn={border:`1px solid ${C.borderL}`,background:C.surface,borderRadius:10,width:40,height:40,cursor:"pointer",fontSize:16,color:C.text};
+  const patrik=detiInfo.find(x=>x.klic==="patrik"),ostatni=detiInfo.filter(x=>x.klic!=="patrik");
+  return <PeceBox>
+    <div style={{display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"center",gap:10}}>
+      <div style={{fontWeight:800,fontSize:16}}>Rozpis</div>
+      <div style={{display:"flex",alignItems:"center",gap:6}}>
+        <button type="button" aria-label="Předchozí týden" onClick={()=>setStart(start-7)} style={navBtn}>‹</button>
+        <span style={{fontWeight:700,fontSize:13,minWidth:150,textAlign:"center"}}>{pcFmt(start)} – {pcFmt(start+13)} {pcInfo(start+13).y}</span>
+        <button type="button" aria-label="Další týden" onClick={()=>setStart(start+7)} style={navBtn}>›</button>
+      </div>
+    </div>
+    {!uzke?<div style={{overflowX:"auto"}}>
+      <div style={{minWidth:860,display:"grid",gridTemplateColumns:"96px repeat(14,minmax(0,1fr))",gap:4}}>
+        <span/>
+        {dny.map(n=><span key={n} style={{textAlign:"center",fontSize:12,fontWeight:700,padding:"4px 0",borderRadius:8,background:n===dnes?C.text:"transparent",color:n===dnes?"#fff":C.muted,display:"flex",flexDirection:"column"}}>
+          <span>{PECE_DNY[pcInfo(n).dow]}</span><span style={{fontWeight:800,fontSize:13}}>{pcFmt(n)}</span>
+        </span>)}
+        {patrik&&<>
+          <span style={{fontWeight:800,fontSize:14,display:"flex",alignItems:"center"}}>{patrik.d.jmeno}</span>
+          {dny.map(n=>{const k=PECE_KDO[pcKdoMa(n,kotva,vyj)];return <button key={n} type="button" onClick={()=>onPrehod(n)} title="Kliknutím prohodíš (výjimka)"
+            style={{border:vyj[n]?`2px dashed ${C.text}`:"2px solid transparent",background:k.bg,color:k.fg,borderRadius:8,height:56,fontWeight:800,fontSize:13,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,padding:0}}>
+            <span>{k.label}</span><span style={{fontSize:10,fontWeight:700}}>{pozn(n)}</span></button>;})}
+        </>}
+        {ostatni.map(x=><Fragment key={x.klic}>
+          <span style={{fontWeight:800,fontSize:14,display:"flex",alignItems:"center"}}>{x.d.jmeno}</span>
+          {dny.map(n=>{const v=pcNavsteva(n,kotva);return <span key={n} style={{background:PECE_KDO.ja.bg,color:"#fff",borderRadius:8,height:44,fontWeight:800,fontSize:13,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2}}>
+            <span>Ty</span>{v&&<span style={{fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:999,background:PECE_KDO.tereza.soft,color:PECE_KDO.tereza.softFg}}>odp. máma</span>}</span>;})}
+        </Fragment>)}
+      </div>
+    </div>
+    :<div style={{display:"flex",flexDirection:"column"}}>
+      {dny.map(n=>{const k=PECE_KDO[pcKdoMa(n,kotva,vyj)],p=pozn(n);return <div key={n} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
+        <span style={{flex:"0 0 62px",display:"flex",flexDirection:"column",fontSize:12,fontWeight:700,color:n===dnes?C.accent:C.muted}}>
+          <span>{n===dnes?"Dnes":PECE_DNY[pcInfo(n).dow]}</span><span style={{fontSize:14,fontWeight:800,color:C.text}}>{pcFmt(n)}</span></span>
+        <div style={{flex:"1 1 auto",display:"flex",flexWrap:"wrap",gap:6}}>
+          {patrik&&<button type="button" onClick={()=>onPrehod(n)} style={{border:vyj[n]?`2px dashed ${C.text}`:"2px solid transparent",background:k.bg,color:k.fg,borderRadius:999,padding:"6px 10px",fontWeight:800,fontSize:12,minHeight:34,cursor:"pointer"}}>{patrik.d.jmeno} · {k.label}{p?` · ${p}`:""}</button>}
+          {pcNavsteva(n,kotva)&&<span style={{background:PECE_KDO.tereza.soft,color:PECE_KDO.tereza.softFg,borderRadius:999,padding:"6px 10px",fontWeight:800,fontSize:12}}>{ostatni.map(x=>x.d.jmeno).join(" a ")} odp. u mámy</span>}
+        </div>
+      </div>;})}
+      <div style={{fontSize:12,color:C.muted,paddingTop:8}}>{ostatni.map(x=>x.d.jmeno).join(" a ")} jsou jinak celou dobu u tebe.</div>
+    </div>}
+    <div style={{display:"flex",flexWrap:"wrap",gap:"4px 18px",fontSize:12,color:C.muted}}>
+      <span>Předání: neděle v 18:00, ve středu a v pátek ráno přes školu.</span>
+      <span>Klik na den u Patrika = výjimka (prohození), druhý klik ji zruší.</span>
+    </div>
+  </PeceBox>;
+}
+
+// ── Nemoci ───────────────────────────────────────────────────────────────────
+function PeceNemoci({nemoci,deti,dalsiKdo,rok,onSaved}){
+  const [f,setF]=useState({od:"",do:"",deti:{},kdo:""});
+  const [saving,setSaving]=useState(false);
+  const kdo=f.kdo||dalsiKdo;
+  const jmeno=id=>deti.find(d=>String(d.id)===String(id))?.jmeno||"?";
+  const bil={ja:{n:0,d:0},tereza:{n:0,d:0}};
+  nemoci.forEach(x=>{const a=pcParse(x.od),b=pcParse(x.do)??a;if(pcInfo(a).y===rok&&bil[x.kdo]){bil[x.kdo].n++;bil[x.kdo].d+=b-a+1;}});
+  const bilTxt=b=>`${b.n} ${pcSklon(b.n,"nemoc","nemoci","nemocí")} · ${pcDni(b.d)}`;
+  const posl=nemoci[0];
+  const uloz=async e=>{
+    e.preventDefault();
+    const ids=deti.filter(d=>f.deti[d.id]).map(d=>d.id);
+    if(!f.od||!ids.length){alert("Vyplň datum od a vyber aspoň jedno dítě.");return;}
+    setSaving(true);
+    const {error}=await sb.from("pece_nemoci").insert({od:f.od,do:f.do&&f.do>=f.od?f.do:f.od,deti:ids,kdo});
+    setSaving(false);
+    if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+    setF({od:"",do:"",deti:{},kdo:""});onSaved();
+  };
+  const smaz=async x=>{if(!confirm("Smazat záznam o nemoci?"))return;const {error}=await sb.from("pece_nemoci").delete().eq("id",x.id);if(error)alert(error.message);onSaved();};
+  const dk=PECE_KDO[dalsiKdo];
+  return <PeceBox titulek="Nemoci">
+    <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+      <div style={{flex:"1 1 220px",background:dk.bg,color:dk.fg,borderRadius:14,padding:16}}>
+        <div style={{fontSize:13,fontWeight:700,opacity:.85}}>Příští nemoc hlídá</div>
+        <div style={{fontSize:28,fontWeight:800}}>{dk.label}</div>
+        <div style={{fontSize:13,opacity:.85}}>{posl?`Poslední: ${posl.deti.map(jmeno).join(", ")} – ${posl.kdo==="ja"?"hlídal jsi ty":"hlídala Tereza"}`:"Zatím žádná nemoc"}</div>
+      </div>
+      <div style={{flex:"1 1 220px",background:C.bg,borderRadius:14,padding:16,display:"flex",flexDirection:"column",gap:8}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.muted}}>Bilance {rok}</div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><b style={{color:PECE_KDO.ja.softFg}}>Ty</b><span style={{fontWeight:700}}>{bilTxt(bil.ja)}</span></div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><b style={{color:PECE_KDO.tereza.softFg}}>Tereza</b><span style={{fontWeight:700}}>{bilTxt(bil.tereza)}</span></div>
+      </div>
+    </div>
+    <form onSubmit={uloz} style={pcForm}>
+      <label style={{...pcLbl,flex:"1 1 130px"}}>Od<input type="date" style={{...inp,minHeight:40}} value={f.od} onChange={e=>setF(p=>({...p,od:e.target.value}))}/></label>
+      <label style={{...pcLbl,flex:"1 1 130px"}}>Do<input type="date" style={{...inp,minHeight:40}} value={f.do} onChange={e=>setF(p=>({...p,do:e.target.value}))}/></label>
+      <div style={{...pcLbl,flex:"2 1 220px"}}>Kdo je nemocný
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",textTransform:"none",letterSpacing:0}}>
+          {deti.map(d=><label key={d.id} style={{display:"flex",alignItems:"center",gap:6,background:C.surface,border:`1px solid ${C.borderL}`,borderRadius:999,padding:"7px 12px",fontWeight:700,fontSize:13,color:C.text,cursor:"pointer"}}>
+            <input type="checkbox" checked={!!f.deti[d.id]} onChange={()=>setF(p=>({...p,deti:{...p.deti,[d.id]:!p.deti[d.id]}}))}/>{d.jmeno}</label>)}
+        </div>
+      </div>
+      <label style={{...pcLbl,flex:"1 1 120px"}}>Hlídá<select style={{...inp,minHeight:40}} value={kdo} onChange={e=>setF(p=>({...p,kdo:e.target.value}))}>
+        <option value="ja">Ty</option><option value="tereza">Tereza</option></select></label>
+      <button type="submit" disabled={saving} style={{...btnC("#2F5D8A"),minHeight:40}}>{saving?"Ukládám…":"Zapsat nemoc"}</button>
+    </form>
+    <div>
+      {nemoci.length===0&&<div style={{color:C.muted,fontSize:13}}>Zatím žádná nemoc.</div>}
+      {nemoci.map(x=>{const a=pcParse(x.od),b=pcParse(x.do)??a;return <div key={x.id} style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"6px 12px",padding:"9px 2px",borderTop:`1px solid ${C.border}`}}>
+        <span style={{flex:"0 0 110px",fontWeight:800}}>{pcRozsah(a,b)} {pcInfo(a).y!==rok?pcInfo(a).y:""}</span>
+        <span style={{flex:"1 1 140px",minWidth:0}}><div style={{fontWeight:700}}>{x.deti.map(jmeno).join(", ")}</div><div style={{fontSize:12,color:C.muted}}>{pcDni(b-a+1)}{x.poznamka?` · ${x.poznamka}`:""}</div></span>
+        <PeceStitek kdo={x.kdo}/>
+        <button type="button" aria-label="Smazat" onClick={()=>smaz(x)} style={{border:"none",background:"none",color:C.muted,cursor:"pointer",fontSize:15,width:36,height:36}}>✕</button>
+      </div>;})}
+    </div>
+  </PeceBox>;
+}
+
+// ── Lékaři + návštěvy ────────────────────────────────────────────────────────
+function PeceLekari({lekari,navstevy,deti,onSaved}){
+  const [f,setF]=useState({dite_id:deti[0]?.id||"",obor:lekari[0]?.obor||"",datum:"",kdo:"",poznamka:""});
+  const [novy,setNovy]=useState("");
+  const [saving,setSaving]=useState(false);
+  const vychoziKdo=lekari.find(l=>l.obor===f.obor)?.kdo;
+  const kdo=f.kdo||(vychoziKdo==="tereza"?"tereza":"ja");
+  const jmeno=id=>deti.find(d=>String(d.id)===String(id))?.jmeno||"?";
+  const poradi=["ja","tereza","domluva"];
+  const prepni=async l=>{const k=poradi[(poradi.indexOf(l.kdo)+1)%3];const {error}=await sb.from("pece_lekari").update({kdo:k}).eq("id",l.id);if(error)alert(error.message);onSaved();};
+  const pridejObor=async e=>{e.preventDefault();const o=novy.trim();if(!o)return;const {error}=await sb.from("pece_lekari").insert({obor:o,kdo:"domluva",poradi:(lekari.length+1)*10});if(error){alert(error.message);return;}setNovy("");onSaved();};
+  const smazObor=async l=>{if(!confirm(`Odebrat obor „${l.obor}"? Zapsané návštěvy zůstanou.`))return;const {error}=await sb.from("pece_lekari").delete().eq("id",l.id);if(error)alert(error.message);onSaved();};
+  const zapis=async e=>{
+    e.preventDefault();
+    if(!f.datum||!f.dite_id||!f.obor){alert("Vyplň dítě, lékaře a datum.");return;}
+    setSaving(true);
+    const {error}=await sb.from("pece_navstevy").insert({dite_id:f.dite_id,obor:f.obor,datum:f.datum,kdo,poznamka:f.poznamka||null});
+    setSaving(false);
+    if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+    setF(p=>({...p,datum:"",kdo:"",poznamka:""}));onSaved();
+  };
+  const smazNav=async v=>{if(!confirm("Smazat návštěvu?"))return;const {error}=await sb.from("pece_navstevy").delete().eq("id",v.id);if(error)alert(error.message);onSaved();};
+  return <div style={{display:"flex",flexWrap:"wrap",gap:16,alignItems:"flex-start"}}>
+    <div style={{flex:"1 1 300px",minWidth:0}}><PeceBox titulek="Kdo chodí k jakému lékaři" pod="Klik přepne Ty → Tereza → Domluva.">
+      <div>{lekari.map(l=><div key={l.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"8px 0",borderTop:`1px solid ${C.border}`}}>
+        <span style={{fontWeight:700}}>{l.obor}</span>
+        <span style={{display:"flex",gap:4,alignItems:"center"}}>
+          <button type="button" onClick={()=>prepni(l)} style={{border:"none",background:PECE_KDO[l.kdo].bg,color:PECE_KDO[l.kdo].fg,fontWeight:800,fontSize:12,padding:"8px 12px",borderRadius:999,minWidth:88,minHeight:36,cursor:"pointer"}}>{PECE_KDO[l.kdo].label}</button>
+          <button type="button" aria-label={`Odebrat ${l.obor}`} onClick={()=>smazObor(l)} style={{border:"none",background:"none",color:C.dim,cursor:"pointer",width:32,height:32}}>✕</button>
+        </span>
+      </div>)}</div>
+      <form onSubmit={pridejObor} style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+        <label style={{...pcLbl,flex:"1 1 auto"}}>Nový obor<input style={{...inp,minHeight:40}} value={novy} onChange={e=>setNovy(e.target.value)} placeholder="např. ortodoncie"/></label>
+        <button type="submit" style={{...btnC("#2F5D8A"),minHeight:40}}>Přidat</button>
+      </form>
+    </PeceBox></div>
+    <div style={{flex:"2 1 420px",minWidth:0}}><PeceBox titulek="Návštěvy">
+      <form onSubmit={zapis} style={pcForm}>
+        <label style={{...pcLbl,flex:"1 1 110px"}}>Dítě<select style={{...inp,minHeight:40}} value={f.dite_id} onChange={e=>setF(p=>({...p,dite_id:e.target.value}))}>
+          {deti.map(d=><option key={d.id} value={d.id}>{d.jmeno}</option>)}</select></label>
+        <label style={{...pcLbl,flex:"1 1 130px"}}>Lékař<select style={{...inp,minHeight:40}} value={f.obor} onChange={e=>setF(p=>({...p,obor:e.target.value,kdo:""}))}>
+          {lekari.map(l=><option key={l.id} value={l.obor}>{l.obor}</option>)}</select></label>
+        <label style={{...pcLbl,flex:"1 1 130px"}}>Datum<input type="date" style={{...inp,minHeight:40}} value={f.datum} onChange={e=>setF(p=>({...p,datum:e.target.value}))}/></label>
+        <label style={{...pcLbl,flex:"1 1 110px"}}>S kým<select style={{...inp,minHeight:40}} value={kdo} onChange={e=>setF(p=>({...p,kdo:e.target.value}))}>
+          <option value="ja">S tebou</option><option value="tereza">S Terezou</option></select></label>
+        <label style={{...pcLbl,flex:"2 1 180px"}}>Poznámka<input style={{...inp,minHeight:40}} value={f.poznamka} onChange={e=>setF(p=>({...p,poznamka:e.target.value}))} placeholder="např. kontrola za půl roku"/></label>
+        <button type="submit" disabled={saving} style={{...btnC("#2F5D8A"),minHeight:40}}>{saving?"Ukládám…":"Zapsat návštěvu"}</button>
+      </form>
+      <div>
+        {navstevy.length===0&&<div style={{color:C.muted,fontSize:13}}>Zatím žádná návštěva.</div>}
+        {navstevy.map(v=><div key={v.id} style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"6px 12px",padding:"8px 0",borderTop:`1px solid ${C.border}`}}>
+          <span style={{flex:"1 1 180px",minWidth:0}}><div style={{fontWeight:700}}>{jmeno(v.dite_id)} · {v.obor}</div><div style={{fontSize:12,color:C.muted}}>{pcFmtDen(pcParse(v.datum))} {pcInfo(pcParse(v.datum)).y}{v.poznamka?` · ${v.poznamka}`:""}</div></span>
+          <PeceStitek kdo={v.kdo} text={v.kdo==="ja"?"S tebou":"S Terezou"}/>
+          <button type="button" aria-label="Smazat" onClick={()=>smazNav(v)} style={{border:"none",background:"none",color:C.muted,cursor:"pointer",width:36,height:36}}>✕</button>
+        </div>)}
+      </div>
+    </PeceBox></div>
+  </div>;
+}
+
+// ── Výpomoc ──────────────────────────────────────────────────────────────────
+function pcBilanceVypomoci(rows){
+  const b={den:0,hod:0};// kladné = Tereza dluží tobě
+  rows.forEach(v=>{b[v.jednotka]=(b[v.jednotka]||0)+(v.kdo_hlidal==="ja"?1:-1)*(+v.pocet||0);});
+  const t=(d,h)=>[d?pcDni(d):"",h?`${h} h`:""].filter(Boolean).join(" a ");
+  const plus=t(Math.max(b.den,0),Math.max(b.hod,0)),minus=t(Math.max(-b.den,0),Math.max(-b.hod,0));
+  const text=!plus&&!minus?"vyrovnáno":[plus?`Tereza dluží tobě ${plus}`:"",minus?`ty dlužíš Tereze ${minus}`:""].filter(Boolean).join(" · ");
+  return {b,text,kdo:plus&&!minus?"ja":(minus&&!plus?"tereza":"domluva")};
+}
+function PeceVypomoc({vypomoc,dnes,onSaved}){
+  const [f,setF]=useState({datum:"",kdo_hlidal:"ja",jednotka:"den",pocet:"1",poznamka:""});
+  const [saving,setSaving]=useState(false);
+  const bal=pcBilanceVypomoci(vypomoc);
+  const bk=PECE_KDO[bal.kdo];
+  const uloz=async e=>{
+    e.preventDefault();
+    const p=parseFloat(String(f.pocet).replace(",","."));
+    if(!f.datum||!(p>0)){alert("Vyplň datum a počet.");return;}
+    setSaving(true);
+    const {error}=await sb.from("pece_vypomoc").insert({datum:f.datum,kdo_hlidal:f.kdo_hlidal,jednotka:f.jednotka,pocet:p,poznamka:f.poznamka||null});
+    setSaving(false);
+    if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+    setF(x=>({...x,datum:"",pocet:"1",poznamka:""}));onSaved();
+  };
+  const vyrovnej=async()=>{
+    const rows=[];
+    if(bal.b.den)rows.push({datum:pcIso(dnes),kdo_hlidal:bal.b.den>0?"tereza":"ja",jednotka:"den",pocet:Math.abs(bal.b.den),vyrovnani:true,poznamka:"vyrovnání"});
+    if(bal.b.hod)rows.push({datum:pcIso(dnes),kdo_hlidal:bal.b.hod>0?"tereza":"ja",jednotka:"hod",pocet:Math.abs(bal.b.hod),vyrovnani:true,poznamka:"vyrovnání"});
+    if(!rows.length)return;
+    if(!confirm(`Označit jako vyrovnané (${bal.text})?`))return;
+    const {error}=await sb.from("pece_vypomoc").insert(rows);
+    if(error){alert(error.message);return;}
+    onSaved();
+  };
+  const smaz=async v=>{if(!confirm("Smazat záznam?"))return;const {error}=await sb.from("pece_vypomoc").delete().eq("id",v.id);if(error)alert(error.message);onSaved();};
+  return <PeceBox titulek="Výpomoc" pod="Když vezmeš děti místo Terezy nebo ona místo tebe – den nebo pár hodin. Dny a hodiny se sčítají zvlášť.">
+    <div style={{background:bk.bg,color:bk.fg,borderRadius:14,padding:16,display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"center",gap:10}}>
+      <div><div style={{fontSize:13,fontWeight:700,opacity:.85}}>Stav</div><div style={{fontSize:22,fontWeight:800}}>{bal.text}</div></div>
+      {bal.text!=="vyrovnáno"&&<button type="button" onClick={vyrovnej} style={{border:"none",background:"#fff",color:C.text,fontWeight:800,fontSize:13,padding:"9px 14px",borderRadius:999,cursor:"pointer",minHeight:40}}>Vyrovnáno</button>}
+    </div>
+    <form onSubmit={uloz} style={pcForm}>
+      <label style={{...pcLbl,flex:"1 1 130px"}}>Kdy<input type="date" style={{...inp,minHeight:40}} value={f.datum} onChange={e=>setF(p=>({...p,datum:e.target.value}))}/></label>
+      <label style={{...pcLbl,flex:"2 1 170px"}}>Kdo za koho<select style={{...inp,minHeight:40}} value={f.kdo_hlidal} onChange={e=>setF(p=>({...p,kdo_hlidal:e.target.value}))}>
+        <option value="ja">Já za Terezu</option><option value="tereza">Tereza za mě</option></select></label>
+      <label style={{...pcLbl,flex:"1 1 100px"}}>Jak dlouho<select style={{...inp,minHeight:40}} value={f.jednotka} onChange={e=>setF(p=>({...p,jednotka:e.target.value}))}>
+        <option value="den">Dny</option><option value="hod">Hodiny</option></select></label>
+      <label style={{...pcLbl,flex:"0 1 80px"}}>Počet<input type="number" min="0.5" step="0.5" style={{...inp,minHeight:40}} value={f.pocet} onChange={e=>setF(p=>({...p,pocet:e.target.value}))}/></label>
+      <label style={{...pcLbl,flex:"3 1 200px"}}>Poznámka<input style={{...inp,minHeight:40}} value={f.poznamka} onChange={e=>setF(p=>({...p,poznamka:e.target.value}))} placeholder="např. Patrik v sobotu, má práci"/></label>
+      <button type="submit" disabled={saving} style={{...btnC("#2F5D8A"),minHeight:40}}>{saving?"Ukládám…":"Zapsat"}</button>
+    </form>
+    <div>
+      {vypomoc.length===0&&<div style={{color:C.muted,fontSize:13}}>Zatím nic.</div>}
+      {vypomoc.map(v=><div key={v.id} style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"6px 12px",padding:"9px 2px",borderTop:`1px solid ${C.border}`,opacity:v.vyrovnani?.7:1}}>
+        <span style={{flex:"0 0 90px",fontWeight:800}}>{pcFmt(pcParse(v.datum))}</span>
+        <span style={{flex:"1 1 160px",minWidth:0}}><div style={{fontWeight:700}}>{v.vyrovnani?"Vyrovnání":(v.kdo_hlidal==="ja"?"Ty za Terezu":"Tereza za tebe")}</div>{v.poznamka&&!v.vyrovnani&&<div style={{fontSize:12,color:C.muted}}>{v.poznamka}</div>}</span>
+        <PeceStitek kdo={v.vyrovnani?"domluva":v.kdo_hlidal} text={`${v.kdo_hlidal==="ja"?"+":"−"}${v.jednotka==="den"?pcDni(+v.pocet):`${+v.pocet} h`}`}/>
+        <button type="button" aria-label="Smazat" onClick={()=>smaz(v)} style={{border:"none",background:"none",color:C.muted,cursor:"pointer",width:36,height:36}}>✕</button>
+      </div>)}
+    </div>
+  </PeceBox>;
+}
+
+// ── Výživné od Terezy (jen čte z fin_transakce) ──────────────────────────────
+function pcVyzivneMesice(platby,nast,dataDo,dnes){
+  const castka=+nast.vyzivne||0,spl=+nast.splatnost||15;
+  const poMesici={};
+  platby.forEach(p=>{const k=String(p.datum).slice(0,7);(poMesici[k]=poMesici[k]||[]).push(p);});
+  const prvni=platby.length?pcParse(platby[platby.length-1].datum):dnes;
+  const rokOd=pcInfo(prvni).y,mesOd=pcInfo(prvni).m;
+  const di=pcInfo(dnes);
+  const rows=[];let dluh=0;
+  for(let y=di.y,m=di.m;y>rokOd||(y===rokOd&&m>=mesOd);m>1?m--:(m=12,y--)){
+    const k=`${y}-${String(m).padStart(2,"0")}`;
+    const splatne=pcNum(y,m,Math.min(spl,28));
+    const pl=poMesici[k]||[];
+    const suma=pl.reduce((s,p)=>s+(+p.castka||0),0);
+    let stav,kdy;
+    if(pl.length){stav=suma>=castka?"zaplaceno":"castecne";kdy=`přišlo ${pl.map(p=>pcFmt(pcParse(p.datum))).join(", ")}`;if(suma<castka&&dataDo!=null&&splatne<=dataDo)dluh+=castka-suma;}
+    else if(dataDo==null||splatne>dataDo){stav="ceka";kdy=dataDo!=null&&splatne<=dnes?`čeká na výpis (výpis do ${pcFmt(dataDo)})`:`splatné ${pcFmt(splatne)}`;}
+    else{stav="chybi";kdy=`nepřišlo (výpis do ${pcFmt(dataDo)})`;dluh+=castka;}
+    rows.push({k,mesic:`${PECE_MESICE[m-1]} ${y}`,suma,stav,kdy});
+  }
+  return {rows,dluh};
+}
+function PeceVyzivne({platby,nast,dataDo,dnes,chyba}){
+  const {rows,dluh}=pcVyzivneMesice(platby,nast,dataDo,dnes);
+  const rok=pcInfo(dnes).y;
+  const letos=platby.filter(p=>String(p.datum).startsWith(String(rok)));
+  const sumaLetos=letos.reduce((s,p)=>s+(+p.castka||0),0);
+  const ST={zaplaceno:["Zaplaceno",C.greenS,C.green],castecne:["Částečně",C.orangeS,C.orange],ceka:["Čeká","#e6e8ee","#3d4556"],chybi:["Chybí",C.redS,C.red]};
+  const karta={background:C.bg,borderRadius:14,padding:14,display:"flex",flexDirection:"column",gap:2};
+  return <PeceBox>
+    <div style={{display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
+      <div style={{fontWeight:800,fontSize:16}}>Výživné od Terezy</div>
+      <div style={{fontSize:12,color:C.muted,fontWeight:700}}>{dataDo!=null?`Data z výpisu do ${pcFmt(dataDo)} ${pcInfo(dataDo).y}`:"Výpisy zatím nejsou naimportované"}</div>
+    </div>
+    {chyba&&<div style={{background:C.redS,color:C.red,borderRadius:10,padding:"8px 12px",fontSize:13}}>Nepodařilo se načíst platby: {chyba}</div>}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
+      <div style={karta}><span style={{fontSize:12,fontWeight:700,color:C.muted}}>Měsíčně</span><span style={{fontSize:22,fontWeight:800}}>{pcKc(nast.vyzivne)}</span><span style={{fontSize:12,color:C.muted}}>splatné do {nast.splatnost}. v měsíci</span></div>
+      <div style={karta}><span style={{fontSize:12,fontWeight:700,color:C.muted}}>Letos přišlo</span><span style={{fontSize:22,fontWeight:800}}>{pcKc(sumaLetos)}</span><span style={{fontSize:12,color:C.muted}}>{letos.length} {pcSklon(letos.length,"platba","platby","plateb")}</span></div>
+      <div style={{...karta,background:dluh?C.redS:C.greenS}}><span style={{fontSize:12,fontWeight:700,color:dluh?C.red:C.green}}>Dluh</span><span style={{fontSize:22,fontWeight:800,color:dluh?C.red:C.green}}>{pcKc(dluh)}</span><span style={{fontSize:12,color:dluh?C.red:C.green}}>{dluh?"podle výpisů chybí":"podle výpisů vše zaplaceno"}</span></div>
+    </div>
+    <div>
+      {rows.map(r=>{const s=ST[r.stav];return <div key={r.k} style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"6px 12px",padding:"9px 2px",borderTop:`1px solid ${C.border}`}}>
+        <span style={{flex:"1 1 120px",fontWeight:700}}>{r.mesic}</span>
+        <span style={{flex:"1 1 160px",fontSize:13,color:C.muted}}>{r.kdy}</span>
+        <span style={{flex:"0 0 100px",textAlign:"right",fontWeight:800}}>{r.suma?pcKc(r.suma):"—"}</span>
+        <span style={{fontSize:12,fontWeight:800,padding:"4px 11px",borderRadius:999,background:s[1],color:s[2],minWidth:84,textAlign:"center"}}>{s[0]}</span>
+      </div>;})}
+    </div>
+    <div style={{fontSize:12,color:C.muted}}>Platby se berou z výpisů ve Financích: příchozí z účtu {nast.ucet_terezy} v kategorii Alimenty. Měsíc po posledním výpisu se nehlásí jako nezaplacený, jen jako „čeká na výpis“.</div>
+  </PeceBox>;
+}
+
+function PeceNastaveniModal({nast,onClose,onSaved}){
+  const [f,setF]=useState({...nast});
+  const uloz=async()=>{
+    const data={...nast,...f,vyzivne:+f.vyzivne||0,splatnost:Math.min(28,Math.max(1,+f.splatnost||15))};
+    const {error}=await sb.from("app_nastaveni").upsert({klic:"pece",hodnota:JSON.stringify(data)});
+    if(error){alert("Nepodařilo se uložit: "+error.message);return;}
+    onSaved();
+  };
+  const kotvaN=pcParse(f.kotva);
+  return <Modal title="⚙️ Nastavení péče" onClose={onClose} width={480}>
+    <Field label="Týden, kdy máš Patrika jen St + Čt" hint={kotvaN!=null?`Pondělí ${pcFmt(kotvaN)} ${pcInfo(kotvaN).y} – od něj se rozpis počítá ve 14denním cyklu.`:""}>
+      <input type="date" style={inp} value={f.kotva} onChange={e=>{const n=pcParse(e.target.value);if(n==null)return;setF(p=>({...p,kotva:pcIso(n-pcInfo(n).dow)}));}}/>
+    </Field>
+    <button type="button" onClick={()=>kotvaN!=null&&setF(p=>({...p,kotva:pcIso(kotvaN+7)}))} style={{...btnC(C.muted,true),marginBottom:14}}>Prohodit týdny</button>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
+      <Field label="Výživné měsíčně (Kč)"><input type="number" style={inp} value={f.vyzivne} onChange={e=>setF(p=>({...p,vyzivne:e.target.value}))}/></Field>
+      <Field label="Splatné do dne"><input type="number" min="1" max="28" style={inp} value={f.splatnost} onChange={e=>setF(p=>({...p,splatnost:e.target.value}))}/></Field>
+    </div>
+    <Field label="Účet Terezy" hint="Podle něj se ve Financích hledají platby výživného."><input style={inp} value={f.ucet_terezy} onChange={e=>setF(p=>({...p,ucet_terezy:e.target.value}))}/></Field>
+    <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+      <button onClick={onClose} style={btnC(C.muted,true)}>Zrušit</button>
+      <button onClick={uloz} style={btnC()}>Uložit</button>
+    </div>
+  </Modal>;
+}
+
+function PeceTab(){
+  const uzke=useUzkeOkno();
+  const dnes=pcDnes();
+  const det=useData(()=>sb.from("deti").select("id,jmeno,emoji,barva,narozen").in("jmeno",PECE_DETI.map(x=>x.jmeno)));
+  const nas=useData(()=>sb.from("app_nastaveni").select("hodnota").eq("klic","pece").maybeSingle());
+  const vyj=useData(()=>sb.from("pece_vyjimky").select("*"));
+  const nem=useData(()=>sb.from("pece_nemoci").select("*").order("od",{ascending:false}));
+  const lek=useData(()=>sb.from("pece_lekari").select("*").order("poradi"));
+  const nav=useData(()=>sb.from("pece_navstevy").select("*").order("datum",{ascending:false}));
+  const vyp=useData(()=>sb.from("pece_vypomoc").select("*").order("datum",{ascending:false}).order("created_at",{ascending:false}));
+  const kat=useData(()=>sb.from("fin_kategorie").select("id").eq("nazev","Alimenty"));
+  const [tab,setTab]=useState("prehled");
+  const [start,setStart]=useState(null);
+  const [nastModal,setNastModal]=useState(false);
+  const [platby,setPlatby]=useState({data:null,dataDo:null,error:null});
+
+  let nast=PECE_VYCHOZI;
+  try{if(nas.data?.hodnota)nast={...PECE_VYCHOZI,...JSON.parse(nas.data.hodnota)};}catch{}
+  const kotva=pcParse(nast.kotva)??pcParse(PECE_VYCHOZI.kotva);
+  const ucet=nast.ucet_terezy;
+  const katIds=(kat.data||[]).map(k=>k.id);
+  const katKlic=katIds.join(",");
+
+  // Výživné: příchozí platby od Terezy v kategorii Alimenty + do kdy jsou výpisy
+  useEffect(()=>{
+    if(kat.data==null||nas.loading)return;
+    let zruseno=false;
+    (async()=>{
+      let q=sb.from("fin_transakce").select("id,datum,castka,ucet_id,popis").eq("protistrana",ucet).gt("castka",0).order("datum",{ascending:false});
+      if(katIds.length)q=q.in("kategorie_id",katIds);
+      const {data,error}=await q;
+      if(zruseno)return;
+      if(error){setPlatby({data:[],dataDo:null,error:error.message});return;}
+      const ucty=[...new Set((data||[]).map(p=>p.ucet_id).filter(Boolean))];
+      let dataDo=null;
+      if(ucty.length){
+        const r=await sb.from("fin_transakce").select("datum").in("ucet_id",ucty).order("datum",{ascending:false}).limit(1);
+        if(r.data?.[0])dataDo=pcParse(r.data[0].datum);
+      }
+      if(!zruseno)setPlatby({data:data||[],dataDo,error:null});
+    })();
+    return()=>{zruseno=true;};
+  },[ucet,katKlic,kat.data==null,nas.loading]);
+
+  const zdroje=[["děti",det],["nastavení",nas],["výjimky",vyj],["nemoci",nem],["lékaře",lek],["návštěvy",nav],["výpomoc",vyp]];
+  const chyby=zdroje.filter(([,d])=>d.error);
+  if(chyby.length)return <div style={{background:C.redS,color:C.red,borderRadius:10,padding:"10px 14px",fontSize:13}}>
+    {chyby.map(([co,d])=><div key={co}>Nepodařilo se načíst {co}: {d.error}</div>)}
+    <div style={{marginTop:6}}>Je spuštěná migrace sql/migrace/pece.sql?</div>
+  </div>;
+  if(zdroje.some(([,d])=>d.data===null&&d.loading))return <Spinner/>;
+
+  const detiInfo=PECE_DETI.map(x=>({...x,d:(det.data||[]).find(d=>d.jmeno===x.jmeno)})).filter(x=>x.d);
+  const deti=detiInfo.map(x=>x.d);
+  const vyjMap={};(vyj.data||[]).forEach(v=>{const n=pcParse(v.datum);if(n!=null)vyjMap[n]=v.kdo;});
+  const nemoci=nem.data||[],lekari=lek.data||[],navstevy=nav.data||[],vypomoc=vyp.data||[];
+  const posl=nemoci[0];
+  const dalsiKdo=posl?(posl.kdo==="ja"?"tereza":"ja"):"ja";
+  const bal=pcBilanceVypomoci(vypomoc);
+  const vyz=platby.data?pcVyzivneMesice(platby.data,nast,platby.dataDo,dnes):null;
+  const zacatek=start??(dnes-pcInfo(dnes).dow);
+
+  const prehod=async n=>{
+    if(vyjMap[n]){
+      if(!confirm(`Zrušit výjimku ${pcFmtDen(n)}?`))return;
+      const {error}=await sb.from("pece_vyjimky").delete().eq("datum",pcIso(n));
+      if(error)alert(error.message);
+    }else{
+      const novy=pcZaklad(n,kotva)==="ja"?"tereza":"ja";
+      if(!confirm(`${pcFmtDen(n)}: Patrik bude ${novy==="ja"?"u tebe":"u Terezy"} (výjimka). Pokud jde o výpomoc, zapiš ji zvlášť.`))return;
+      const {error}=await sb.from("pece_vyjimky").insert({datum:pcIso(n),kdo:novy});
+      if(error)alert(error.message);
+    }
+    vyj.reload();
+  };
+
+  // ── „Dnes“ pro karty dětí ──
+  let k=0;while(k<30&&pcKdoMa(dnes+k+1,kotva,vyjMap)===pcKdoMa(dnes+k,kotva,vyjMap))k++;
+  const zmena=dnes+k+1,novyMa=pcKdoMa(zmena,kotva,vyjMap);
+  const kdyPredani=pcInfo(zmena).dow===0?`${k===0?"dnes":pcFmtDen(dnes+k)} v 18:00`:`${pcFmtDen(zmena)} ráno přes školu`;
+  let vis=dnes;while(!pcNavsteva(vis,kotva)&&vis<dnes+15)vis++;
+  const visTxt=vis===dnes?"dnes odpoledne":`${pcFmtDen(vis)} odpoledne`;
+  const posledniNemoc=id=>{const x=nemoci.find(n=>(n.deti||[]).some(d=>String(d)===String(id)));if(!x)return null;const a=pcParse(x.od),b=pcParse(x.do)??a;return {text:`${pcRozsah(a,b)} · ${pcDni(b-a+1)}`,kdo:x.kdo};};
+  const posledniLekar=id=>{const v=navstevy.find(n=>String(n.dite_id)===String(id));return v?{text:`${v.obor} · ${pcFmt(pcParse(v.datum))}`,kdo:v.kdo}:null;};
+  const karty=detiInfo.map(x=>{
+    if(x.stridani){const o=pcKdoMa(dnes,kotva,vyjMap);return {x,stav:o==="ja"?"Dnes u tebe":"Dnes u mámy",stavKdo:o,pod:`Předání ${kdyPredani} → ${novyMa==="ja"?"k tobě":"k mámě"}`};}
+    return {x,stav:"U tebe",stavKdo:"ja",pod:x.klic==="bibi"?`U mámy: ${visTxt} · ze školy ji vozí Tereza`:`K mámě by měl jít ${visTxt}`};
+  });
+  const vyzKratce=!vyz?"načítám…":(vyz.dluh?`dluh ${pcKc(vyz.dluh)}`:"bez dluhu");
+
+  const tabs=[["prehled","Přehled"],["nemoci","Nemoci"],["lekari","Lékaři"],["vypomoc","Výpomoc"],["vyzivne","Výživné"]];
+  const dk=PECE_KDO[dalsiKdo];
+  const odkaz={border:"none",background:"none",padding:0,color:dk.fg,fontSize:14,textDecoration:"underline",cursor:"pointer"};
+
+  return <div style={{display:"flex",flexDirection:"column",gap:18}}>
+    <div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",justifyContent:"space-between",gap:12}}>
+      <h2 style={{margin:0,fontSize:26,fontWeight:800,letterSpacing:"-0.02em"}}>Péče o děti</h2>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+        <PeceTlacitko plne onClick={()=>setTab("nemoci")}>Zapsat nemoc</PeceTlacitko>
+        <PeceTlacitko onClick={()=>setTab("lekari")}>Zapsat lékaře</PeceTlacitko>
+        <PeceTlacitko onClick={()=>setTab("vypomoc")}>Zapsat výpomoc</PeceTlacitko>
+        <button type="button" aria-label="Nastavení" onClick={()=>setNastModal(true)} style={{border:`1px solid ${C.borderL}`,background:C.surface,borderRadius:999,width:40,height:40,cursor:"pointer",fontSize:16}}>⚙️</button>
+      </div>
+    </div>
+
+    <div role="tablist" style={{display:"flex",gap:4,background:"#e4e7ef",padding:4,borderRadius:12,overflowX:"auto"}}>
+      {tabs.map(([id,label])=>{const on=tab===id;return <button key={id} type="button" role="tab" aria-selected={on} onClick={()=>setTab(id)}
+        style={{flex:"1 0 auto",whiteSpace:"nowrap",border:"none",background:on?C.surface:"transparent",color:on?C.text:C.muted,fontWeight:800,fontSize:14,padding:"9px 12px",borderRadius:9,minHeight:42,cursor:"pointer"}}>{label}</button>;})}
+    </div>
+
+    {detiInfo.length<PECE_DETI.length&&<div style={{background:C.orangeS,color:C.orange,borderRadius:10,padding:"8px 12px",fontSize:13}}>
+      V Rodině chybí: {PECE_DETI.filter(x=>!detiInfo.some(y=>y.klic===x.klic)).map(x=>x.jmeno).join(", ")} (hledá se podle jména).</div>}
+
+    {tab==="prehled"&&<>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
+        {karty.map(c=><PeceKartaDitete key={c.x.klic} d={c.x.d} stav={c.stav} stavKdo={c.stavKdo} pod={c.pod} nemoc={posledniNemoc(c.x.d.id)} lekar={posledniLekar(c.x.d.id)}/>)}
+      </div>
+      <div style={{background:dk.bg,color:dk.fg,borderRadius:14,padding:"10px 14px",display:"flex",flexWrap:"wrap",alignItems:"center",justifyContent:"space-between",gap:"8px 16px"}}>
+        <span style={{display:"flex",flexWrap:"wrap",gap:"4px 18px",fontSize:14}}>
+          <span>Příští nemoc hlídá: <b>{dk.label}</b></span>
+          <button type="button" onClick={()=>setTab("vypomoc")} style={odkaz}>Výpomoc: <b>{bal.text}</b></button>
+          <button type="button" onClick={()=>setTab("vyzivne")} style={odkaz}>Výživné: <b>{vyzKratce}</b></button>
+        </span>
+        <span style={{display:"flex",gap:12,fontSize:12,fontWeight:700}}>
+          <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:12,borderRadius:3,background:PECE_KDO.ja.bg,border:"1px solid #fff"}}/>Ty</span>
+          <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:12,borderRadius:3,background:PECE_KDO.tereza.bg,border:"1px solid #fff"}}/>Tereza</span>
+        </span>
+      </div>
+      <PeceRozpis start={zacatek} setStart={setStart} kotva={kotva} vyj={vyjMap} dnes={dnes} uzke={uzke} onPrehod={prehod} detiInfo={detiInfo}/>
+    </>}
+    {tab==="nemoci"&&<PeceNemoci nemoci={nemoci} deti={deti} dalsiKdo={dalsiKdo} rok={pcInfo(dnes).y} onSaved={nem.reload}/>}
+    {tab==="lekari"&&<PeceLekari lekari={lekari} navstevy={navstevy} deti={deti} onSaved={()=>{lek.reload();nav.reload();}}/>}
+    {tab==="vypomoc"&&<PeceVypomoc vypomoc={vypomoc} dnes={dnes} onSaved={vyp.reload}/>}
+    {tab==="vyzivne"&&(platby.data?<PeceVyzivne platby={platby.data} nast={nast} dataDo={platby.dataDo} dnes={dnes} chyba={platby.error}/>:<Spinner/>)}
+
+    {nastModal&&<PeceNastaveniModal nast={nast} onClose={()=>setNastModal(false)} onSaved={()=>{setNastModal(false);nas.reload();}}/>}
   </div>;
 }
 
@@ -13794,6 +14327,7 @@ const TILES=[
   {id:"sklad",    emoji:"📦", label:"Sklad",     popis:"Zásoby doma",            barva:"#c87000"},
   {id:"pomucky",  emoji:"📚", label:"Učební pomůcky", popis:"Sešity, zásoba a nákup", barva:"#2563eb"},
   {id:"darky",    emoji:"🎁", label:"Dárky",     popis:"Vánoce a narozeniny dětí", barva:"#a8361f"},
+  {id:"pece",     emoji:"🤝", label:"Péče",      popis:"Střídání, nemoci, lékaři",  barva:"#2F5D8A"},
   {id:"ukoly",    emoji:"🔁", label:"Úkoly",     popis:"Pravidelná údržba",      barva:"#1a6fa8"},
   {id:"spotreba", emoji:"💧", label:"Spotřeba",  popis:"Voda, elektřina, plyn",  barva:"#1a7a4a"},
   {id:"voda",     emoji:"🚰", label:"Voda",      popis:"Odečty, faktury, odhad", barva:"#0369a1"},
@@ -14009,6 +14543,7 @@ function AppInner() {
         {modul==="sklad"    && <SkladTab/>}
         {modul==="pomucky"  && <PomuckyTab/>}
         {modul==="darky"    && <DarkyTab/>}
+        {modul==="pece"     && <PeceTab/>}
         {modul==="ukoly"    && <UkolyTab/>}
         {modul==="spotreba" && <SpotrebaTab/>}
         {modul==="voda"     && <VodaTab/>}
