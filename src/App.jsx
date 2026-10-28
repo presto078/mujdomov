@@ -2347,6 +2347,21 @@ function pcZaklad(n,kotva){const dow=pcInfo(n).dow,stct=dow===2||dow===3;return 
 function pcKdoMa(n,kotva,vyj){return vyj[n]||pcZaklad(n,kotva);}
 function pcNavsteva(n,kotva){return pcInfo(n).dow===5&&pcTydenA(n,kotva);}
 
+// Státní svátky ČR (pevné + Velký pátek a Velikonoční pondělí). Škola není → předání „přes školu“ neplatí.
+const PECE_SVATKY_PEVNE={"1-1":"Nový rok, Den obnovy samostatného českého státu","5-1":"Svátek práce","5-8":"Den vítězství","7-5":"Cyril a Metoděj","7-6":"Mistr Jan Hus","9-28":"Den české státnosti","10-28":"Vznik samostatného československého státu","11-17":"Den boje za svobodu a demokracii","12-24":"Štědrý den","12-25":"1. svátek vánoční","12-26":"2. svátek vánoční"};
+function pcVelikonoce(y){// neděle; Meeus/Jones/Butcher
+  const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451);
+  return pcNum(y,Math.floor((h+l-7*m+114)/31),((h+l-7*m+114)%31)+1);
+}
+function pcSvatek(n){
+  const i=pcInfo(n),p=PECE_SVATKY_PEVNE[`${i.m}-${i.d}`];
+  if(p)return p;
+  const v=pcVelikonoce(i.y);
+  if(n===v-2)return "Velký pátek";
+  if(n===v+1)return "Velikonoční pondělí";
+  return null;
+}
+
 function PeceTlacitko({onClick,children,plne}){
   return <button type="button" onClick={onClick} style={{border:plne?"none":`1px solid ${C.borderL}`,background:plne?"#2F5D8A":C.surface,color:plne?"#fff":C.text,fontWeight:800,fontSize:13,padding:"9px 14px",borderRadius:999,cursor:"pointer",minHeight:40}}>+ {children}</button>;
 }
@@ -2392,7 +2407,7 @@ function PeceRozpis({start,setStart,kotva,vyj,dnes,uzke,onPrehod,detiInfo}){
     if(vyj[n])return "výjimka";
     const o=pcKdoMa(n,kotva,vyj),dow=pcInfo(n).dow;
     if(dow===6&&pcKdoMa(n+1,kotva,vyj)!==o)return "18:00";
-    if((dow===2||dow===4)&&pcKdoMa(n-1,kotva,vyj)!==o)return "škola";
+    if((dow===2||dow===4)&&pcKdoMa(n-1,kotva,vyj)!==o)return pcSvatek(n)?"svátek":"škola";
     return "";
   };
   const navBtn={border:`1px solid ${C.borderL}`,background:C.surface,borderRadius:10,width:40,height:40,cursor:"pointer",fontSize:16,color:C.text};
@@ -2409,9 +2424,10 @@ function PeceRozpis({start,setStart,kotva,vyj,dnes,uzke,onPrehod,detiInfo}){
     {!uzke?<div style={{overflowX:"auto"}}>
       <div style={{minWidth:860,display:"grid",gridTemplateColumns:"96px repeat(14,minmax(0,1fr))",gap:4}}>
         <span/>
-        {dny.map(n=><span key={n} style={{textAlign:"center",fontSize:12,fontWeight:700,padding:"4px 0",borderRadius:8,background:n===dnes?C.text:"transparent",color:n===dnes?"#fff":C.muted,display:"flex",flexDirection:"column"}}>
+        {dny.map(n=>{const sv=pcSvatek(n);return <span key={n} title={sv?`Státní svátek – ${sv}`:undefined} style={{textAlign:"center",fontSize:12,fontWeight:700,padding:"4px 0",borderRadius:8,background:n===dnes?C.text:(sv?"#fde2e2":"transparent"),color:n===dnes?"#fff":(sv?"#b42318":C.muted),display:"flex",flexDirection:"column"}}>
           <span>{PECE_DNY[pcInfo(n).dow]}</span><span style={{fontWeight:800,fontSize:13}}>{pcFmt(n)}</span>
-        </span>)}
+          {sv&&<span style={{fontSize:10,fontWeight:800}}>svátek</span>}
+        </span>;})}
         {patrik&&<>
           <span style={{fontWeight:800,fontSize:14,display:"flex",alignItems:"center"}}>{patrik.d.jmeno}</span>
           {dny.map(n=>{const k=PECE_KDO[pcKdoMa(n,kotva,vyj)];return <button key={n} type="button" onClick={()=>onPrehod(n)} title="Kliknutím prohodíš (výjimka)"
@@ -2431,7 +2447,8 @@ function PeceRozpis({start,setStart,kotva,vyj,dnes,uzke,onPrehod,detiInfo}){
     :<div style={{display:"flex",flexDirection:"column"}}>
       {dny.map(n=>{const k=PECE_KDO[pcKdoMa(n,kotva,vyj)],p=pozn(n);return <div key={n} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
         <span style={{flex:"0 0 62px",display:"flex",flexDirection:"column",fontSize:12,fontWeight:700,color:n===dnes?C.accent:C.muted}}>
-          <span>{n===dnes?"Dnes":PECE_DNY[pcInfo(n).dow]}</span><span style={{fontSize:14,fontWeight:800,color:C.text}}>{pcFmt(n)}</span></span>
+          <span>{n===dnes?"Dnes":PECE_DNY[pcInfo(n).dow]}</span><span style={{fontSize:14,fontWeight:800,color:pcSvatek(n)?"#b42318":C.text}}>{pcFmt(n)}</span>
+          {pcSvatek(n)&&<span style={{fontSize:10,fontWeight:800,color:"#b42318"}}>svátek</span>}</span>
         <div style={{flex:"1 1 auto",display:"flex",flexWrap:"wrap",gap:6}}>
           {patrik&&<button type="button" onClick={()=>onPrehod(n)} style={{border:vyj[n]?`2px dashed ${C.text}`:"2px solid transparent",background:k.bg,color:k.fg,borderRadius:999,padding:"6px 10px",fontWeight:800,fontSize:12,minHeight:34,cursor:"pointer"}}>{patrik.d.jmeno} · {k.label}{p?` · ${p}`:""}</button>}
           {pcNavsteva(n,kotva)&&<span style={{background:PECE_KDO.tereza.soft,color:PECE_KDO.tereza.softFg,borderRadius:999,padding:"6px 10px",fontWeight:800,fontSize:12}}>{ostatni.map(x=>x.d.jmeno).join(" a ")} odp. u mámy</span>}
@@ -2442,6 +2459,7 @@ function PeceRozpis({start,setStart,kotva,vyj,dnes,uzke,onPrehod,detiInfo}){
     <div style={{display:"flex",flexWrap:"wrap",gap:"4px 18px",fontSize:12,color:C.muted}}>
       <span>Předání: neděle v 18:00, ve středu a v pátek ráno přes školu.</span>
       <span>Klik na den u Patrika = výjimka (prohození), druhý klik ji zruší.</span>
+      {dny.some(n=>pcSvatek(n))&&<span style={{color:"#b42318"}}>Červeně = státní svátek: škola není, předání podle domluvy ({dny.filter(n=>pcSvatek(n)).map(n=>`${pcFmt(n)} ${pcSvatek(n)}`).join("; ")}).</span>}
     </div>
   </PeceBox>;
 }
@@ -2808,7 +2826,7 @@ function PeceTab(){
   // ── „Dnes“ pro karty dětí ──
   let k=0;while(k<30&&pcKdoMa(dnes+k+1,kotva,vyjMap)===pcKdoMa(dnes+k,kotva,vyjMap))k++;
   const zmena=dnes+k+1,novyMa=pcKdoMa(zmena,kotva,vyjMap);
-  const kdyPredani=pcInfo(zmena).dow===0?`${k===0?"dnes":pcFmtDen(dnes+k)} v 18:00`:`${pcFmtDen(zmena)} ráno přes školu`;
+  const kdyPredani=pcInfo(zmena).dow===0?`${k===0?"dnes":pcFmtDen(dnes+k)} v 18:00`:(pcSvatek(zmena)?`${pcFmtDen(zmena)} (svátek – škola není, domluvit)`:`${pcFmtDen(zmena)} ráno přes školu`);
   let vis=dnes;while(!pcNavsteva(vis,kotva)&&vis<dnes+15)vis++;
   const visTxt=vis===dnes?"dnes odpoledne":`${pcFmtDen(vis)} odpoledne`;
   const posledniNemoc=id=>{const x=nemoci.find(n=>(n.deti||[]).some(d=>String(d)===String(id)));if(!x)return null;const a=pcParse(x.od),b=pcParse(x.do)??a;return {text:`${pcRozsah(a,b)} · ${pcDni(b-a+1)}`,kdo:x.kdo};};
