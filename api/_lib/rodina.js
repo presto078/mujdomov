@@ -161,7 +161,7 @@ export async function pece(a) {
     navstevy_lekare: (nav || []).map((x) => ({ datum: x.datum, dite: jmeno(x.dite_id), obor: x.obor, kdo: KDO[x.kdo] || x.kdo, poznamka: x.poznamka || undefined })),
     vypomoc: {
       bilance: !plus && !minus ? "vyrovnáno" : [plus ? `Tereza dluží Jirkovi ${plus}` : "", minus ? `Jirka dluží Tereze ${minus}` : ""].filter(Boolean).join(" · "),
-      zaznamy: (vyp || []).slice(0, 10).map((v) => ({ datum: v.datum, hlidal: KDO[v.kdo_hlidal] || v.kdo_hlidal, kolik: `${v.pocet} ${v.jednotka === "den" ? "d" : "h"}`, poznamka: v.poznamka || undefined })),
+      zaznamy: (vyp || []).slice(0, 10).map((v) => ({ datum: v.datum, hlidal: KDO[v.kdo_hlidal] || v.kdo_hlidal, deti: (v.deti || []).length ? v.deti.map(jmeno) : undefined, kolik: `${v.pocet} ${v.jednotka === "den" ? "d" : "h"}`, poznamka: v.poznamka || undefined })),
     },
     vyzivne_od_terezy: {
       mesicne: kc0(nast.vyzivne),

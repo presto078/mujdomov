@@ -69,6 +69,8 @@ create table if not exists pece_vypomoc (
   created_at  timestamptz not null default now()
 );
 create index if not exists pece_vypomoc_datum_idx on pece_vypomoc (datum);
+-- 28. 10. 2026: u výpomoci se zapisuje, o které děti šlo
+alter table pece_vypomoc add column if not exists deti uuid[] not null default '{}';
 
 
 -- ── RLS + granty ─────────────────────────────────────────────────────────

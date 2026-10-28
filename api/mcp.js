@@ -233,7 +233,7 @@ export const NASTROJE = [
     zapisuje: true,
     description:
       "druh=vyjimka: Patrik bude daný den u někoho jiného než podle rozpisu (datum, kdo). druh=nemoc: od, do, deti, kdo (bez kdo = kdo je na řadě). " +
-      "druh=vypomoc: kdo hlídal místo druhého (datum, kdo, jednotka den/hod, pocet). druh=navsteva_lekare: datum, dite, obor, kdo. kdo = ja / tereza / domluva.",
+      "druh=vypomoc: kdo hlídal místo druhého (datum, kdo, deti, jednotka den/hod, pocet). druh=navsteva_lekare: datum, dite, obor, kdo. kdo = ja / tereza / domluva.",
     inputSchema: obj({
       druh: { type: "string", enum: ["vyjimka", "nemoc", "vypomoc", "navsteva_lekare"] },
       datum: datum("Den"), od: datum("Nemoc od"), do: datum("Nemoc do"),

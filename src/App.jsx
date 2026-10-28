@@ -2572,20 +2572,30 @@ function pcBilanceVypomoci(rows){
   const text=!plus&&!minus?"vyrovnáno":[plus?`Tereza dluží tobě ${plus}`:"",minus?`ty dlužíš Tereze ${minus}`:""].filter(Boolean).join(" · ");
   return {b,text,kdo:plus&&!minus?"ja":(minus&&!plus?"tereza":"domluva")};
 }
-function PeceVypomoc({vypomoc,dnes,onSaved}){
-  const [f,setF]=useState({datum:"",kdo_hlidal:"ja",jednotka:"den",pocet:"1",poznamka:""});
+function PeceVypomoc({vypomoc,deti,dnes,onSaved}){
+  const [f,setF]=useState({datum:"",kdo_hlidal:"ja",jednotka:"den",pocet:"1",poznamka:"",deti:{}});
+  const jmeno=id=>deti.find(d=>String(d.id)===String(id))?.jmeno||"?";
   const [saving,setSaving]=useState(false);
   const bal=pcBilanceVypomoci(vypomoc);
   const bk=PECE_KDO[bal.kdo];
   const uloz=async e=>{
     e.preventDefault();
     const p=parseFloat(String(f.pocet).replace(",","."));
-    if(!f.datum||!(p>0)){alert("Vyplň datum a počet.");return;}
+    const ids=deti.filter(d=>f.deti[d.id]).map(d=>d.id);
+    if(!f.datum||!(p>0)||!ids.length){alert("Vyplň datum, počet a vyber aspoň jedno dítě.");return;}
     setSaving(true);
-    const {error}=await sb.from("pece_vypomoc").insert({datum:f.datum,kdo_hlidal:f.kdo_hlidal,jednotka:f.jednotka,pocet:p,poznamka:f.poznamka||null});
+    const {error}=await sb.from("pece_vypomoc").insert({datum:f.datum,kdo_hlidal:f.kdo_hlidal,jednotka:f.jednotka,pocet:p,deti:ids,poznamka:f.poznamka||null});
     setSaving(false);
     if(error){alert("Nepodařilo se uložit: "+error.message);return;}
-    setF(x=>({...x,datum:"",pocet:"1",poznamka:""}));onSaved();
+    setF(x=>({...x,datum:"",pocet:"1",poznamka:"",deti:{}}));onSaved();
+  };
+  // u starších záznamů (bez dětí) jde děti doplnit klikem
+  const prepniDite=async(v,id)=>{
+    const ma=(v.deti||[]).map(String);
+    const nove=ma.includes(String(id))?(v.deti||[]).filter(x=>String(x)!==String(id)):[...(v.deti||[]),id];
+    const {error}=await sb.from("pece_vypomoc").update({deti:nove}).eq("id",v.id);
+    if(error){alert(error.message);return;}
+    onSaved();
   };
   const vyrovnej=async()=>{
     const rows=[];
@@ -2607,6 +2617,12 @@ function PeceVypomoc({vypomoc,dnes,onSaved}){
       <label style={{...pcLbl,flex:"1 1 130px"}}>Kdy<input type="date" style={{...inp,minHeight:40}} value={f.datum} onChange={e=>setF(p=>({...p,datum:e.target.value}))}/></label>
       <label style={{...pcLbl,flex:"2 1 170px"}}>Kdo za koho<select style={{...inp,minHeight:40}} value={f.kdo_hlidal} onChange={e=>setF(p=>({...p,kdo_hlidal:e.target.value}))}>
         <option value="ja">Já za Terezu</option><option value="tereza">Tereza za mě</option></select></label>
+      <div style={{...pcLbl,flex:"2 1 220px"}}>Které děti
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",textTransform:"none",letterSpacing:0}}>
+          {deti.map(d=><label key={d.id} style={{display:"flex",alignItems:"center",gap:6,background:C.surface,border:`1px solid ${C.borderL}`,borderRadius:999,padding:"7px 12px",fontWeight:700,fontSize:13,color:C.text,cursor:"pointer"}}>
+            <input type="checkbox" checked={!!f.deti[d.id]} onChange={()=>setF(p=>({...p,deti:{...p.deti,[d.id]:!p.deti[d.id]}}))}/>{d.jmeno}</label>)}
+        </div>
+      </div>
       <label style={{...pcLbl,flex:"1 1 100px"}}>Jak dlouho<select style={{...inp,minHeight:40}} value={f.jednotka} onChange={e=>setF(p=>({...p,jednotka:e.target.value}))}>
         <option value="den">Dny</option><option value="hod">Hodiny</option></select></label>
       <label style={{...pcLbl,flex:"0 1 80px"}}>Počet<input type="number" min="0.5" step="0.5" style={{...inp,minHeight:40}} value={f.pocet} onChange={e=>setF(p=>({...p,pocet:e.target.value}))}/></label>
@@ -2617,7 +2633,9 @@ function PeceVypomoc({vypomoc,dnes,onSaved}){
       {vypomoc.length===0&&<div style={{color:C.muted,fontSize:13}}>Zatím nic.</div>}
       {vypomoc.map(v=><div key={v.id} style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"6px 12px",padding:"9px 2px",borderTop:`1px solid ${C.border}`,opacity:v.vyrovnani?.7:1}}>
         <span style={{flex:"0 0 90px",fontWeight:800}}>{pcFmt(pcParse(v.datum))}</span>
-        <span style={{flex:"1 1 160px",minWidth:0}}><div style={{fontWeight:700}}>{v.vyrovnani?"Vyrovnání":(v.kdo_hlidal==="ja"?"Ty za Terezu":"Tereza za tebe")}</div>{v.poznamka&&!v.vyrovnani&&<div style={{fontSize:12,color:C.muted}}>{v.poznamka}</div>}</span>
+        <span style={{flex:"1 1 160px",minWidth:0}}><div style={{fontWeight:700}}>{v.vyrovnani?"Vyrovnání":(v.kdo_hlidal==="ja"?"Ty za Terezu":"Tereza za tebe")}</div>{!v.vyrovnani&&(v.deti||[]).length>0&&<div style={{fontSize:13,fontWeight:600}}>{v.deti.map(jmeno).join(", ")}</div>}
+          {!v.vyrovnani&&!(v.deti||[]).length&&<div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center",fontSize:12,color:C.muted}}>doplnit děti:{deti.map(d=><button key={d.id} type="button" onClick={()=>prepniDite(v,d.id)} style={{border:`1px dashed ${C.borderL}`,background:"none",color:C.text,borderRadius:999,padding:"2px 9px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{d.jmeno}</button>)}</div>}
+          {v.poznamka&&!v.vyrovnani&&<div style={{fontSize:12,color:C.muted}}>{v.poznamka}</div>}</span>
         <PeceStitek kdo={v.vyrovnani?"domluva":v.kdo_hlidal} text={`${v.kdo_hlidal==="ja"?"+":"−"}${v.jednotka==="den"?pcDni(+v.pocet):`${+v.pocet} h`}`}/>
         <button type="button" aria-label="Smazat" onClick={()=>smaz(v)} style={{border:"none",background:"none",color:C.muted,cursor:"pointer",width:36,height:36}}>✕</button>
       </div>)}
@@ -2842,7 +2860,7 @@ function PeceTab(){
     </>}
     {tab==="nemoci"&&<PeceNemoci nemoci={nemoci} deti={deti} dalsiKdo={dalsiKdo} rok={pcInfo(dnes).y} evidOd={evidOd} onSaved={nem.reload}/>}
     {tab==="lekari"&&<PeceLekari lekari={lekari} navstevy={navstevy} deti={deti} onSaved={()=>{lek.reload();nav.reload();}}/>}
-    {tab==="vypomoc"&&<PeceVypomoc vypomoc={vypomoc} dnes={dnes} onSaved={vyp.reload}/>}
+    {tab==="vypomoc"&&<PeceVypomoc vypomoc={vypomoc} deti={deti} dnes={dnes} onSaved={vyp.reload}/>}
     {tab==="vyzivne"&&(platby.data?<PeceVyzivne platby={platby.data} nast={nast} dataDo={platby.dataDo} dnes={dnes} chyba={platby.error}/>:<Spinner/>)}
 
     {nastModal&&<PeceNastaveniModal nast={nast} onClose={()=>setNastModal(false)} onSaved={()=>{setNastModal(false);nas.reload();}}/>}

@@ -233,16 +233,18 @@ export async function peceZapis(a) {
   }
 
   if (a.druh === "vypomoc") {
-    povinne(a, ["datum", "kdo", "jednotka", "pocet"]);
+    povinne(a, ["datum", "kdo", "jednotka", "pocet", "deti"]);
     const datum = den(a.datum, "datum");
     const kdo = kdoPece(a.kdo, "kdo (kdo hlídal)");
     if (kdo === "domluva") throw new Error("U výpomoci: hlídal buď ja, nebo tereza.");
     const jednotka = { den: "den", dny: "den", d: "den", hod: "hod", hodina: "hod", hodiny: "hod", h: "hod" }[String(a.jednotka).toLowerCase()];
     if (!jednotka) throw new Error("jednotka: den nebo hod.");
     const pocet = cislo(a.pocet, "pocet", { kladne: true, nula: false });
-    const zmena = { datum, hlidal: KDO[kdo], kolik: `${pocet} ${jednotka === "den" ? "d" : "h"}`, poznamka: a.poznamka || null };
+    const vybrane = [].concat(a.deti).map(dite);
+    if (!vybrane.length) throw new Error("deti: aspoň jedno dítě (Patrik, Beatka, Jiřík).");
+    const zmena = { datum, hlidal: KDO[kdo], deti: vybrane.map((d) => d.jmeno), kolik: `${pocet} ${jednotka === "den" ? "d" : "h"}`, poznamka: a.poznamka || null };
     if (!potvrzeno(a)) return nahled("Výpomoc s hlídáním", zmena);
-    await q(db().from("pece_vypomoc").insert({ datum, kdo_hlidal: kdo, jednotka, pocet, poznamka: a.poznamka || null }));
+    await q(db().from("pece_vypomoc").insert({ datum, kdo_hlidal: kdo, jednotka, pocet, deti: vybrane.map((d) => d.id), poznamka: a.poznamka || null }));
     return zapsano("Výpomoc zapsána", zmena);
   }
 
