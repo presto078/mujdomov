@@ -2420,8 +2420,11 @@ function PeceRozpis({start,setStart,kotva,vyj,dnes,uzke,onPrehod,detiInfo}){
         </>}
         {ostatni.map(x=><Fragment key={x.klic}>
           <span style={{fontWeight:800,fontSize:14,display:"flex",alignItems:"center"}}>{x.d.jmeno}</span>
-          {dny.map(n=>{const v=pcNavsteva(n,kotva);return <span key={n} style={{background:PECE_KDO.ja.bg,color:"#fff",borderRadius:8,height:44,fontWeight:800,fontSize:13,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2}}>
-            <span>Ty</span>{v&&<span style={{fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:999,background:PECE_KDO.tereza.soft,color:PECE_KDO.tereza.softFg}}>odp. máma</span>}</span>;})}
+          {dny.map(n=>{const v=pcNavsteva(n,kotva);
+            if(v)return <span key={n} title="Dopoledne u tebe, odpoledne pár hodin u mámy" style={{borderRadius:8,height:44,overflow:"hidden",display:"flex",flexDirection:"column",fontWeight:800,whiteSpace:"nowrap"}}>
+              <span style={{flex:1,background:PECE_KDO.ja.bg,color:"#fff",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>Ty</span>
+              <span style={{flex:1,background:PECE_KDO.tereza.bg,color:PECE_KDO.tereza.fg,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}}>máma</span></span>;
+            return <span key={n} style={{background:PECE_KDO.ja.bg,color:"#fff",borderRadius:8,height:44,fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>Ty</span>;})}
         </Fragment>)}
       </div>
     </div>
@@ -2617,9 +2620,9 @@ function PeceVypomoc({vypomoc,deti,dnes,onSaved}){
       <label style={{...pcLbl,flex:"1 1 130px"}}>Kdy<input type="date" style={{...inp,minHeight:40}} value={f.datum} onChange={e=>setF(p=>({...p,datum:e.target.value}))}/></label>
       <label style={{...pcLbl,flex:"2 1 170px"}}>Kdo za koho<select style={{...inp,minHeight:40}} value={f.kdo_hlidal} onChange={e=>setF(p=>({...p,kdo_hlidal:e.target.value}))}>
         <option value="ja">Já za Terezu</option><option value="tereza">Tereza za mě</option></select></label>
-      <div style={{...pcLbl,flex:"2 1 220px"}}>Které děti
-        <div style={{display:"flex",gap:6,flexWrap:"wrap",textTransform:"none",letterSpacing:0}}>
-          {deti.map(d=><label key={d.id} style={{display:"flex",alignItems:"center",gap:6,background:C.surface,border:`1px solid ${C.borderL}`,borderRadius:999,padding:"7px 12px",fontWeight:700,fontSize:13,color:C.text,cursor:"pointer"}}>
+      <div style={{...pcLbl,flex:"0 0 auto"}}>Které děti
+        <div style={{display:"flex",flexDirection:"column",gap:3,textTransform:"none",letterSpacing:0}}>
+          {deti.map(d=><label key={d.id} style={{display:"flex",alignItems:"center",gap:6,background:C.surface,border:`1px solid ${C.borderL}`,borderRadius:8,padding:"3px 10px",fontWeight:700,fontSize:13,color:C.text,cursor:"pointer",whiteSpace:"nowrap"}}>
             <input type="checkbox" checked={!!f.deti[d.id]} onChange={()=>setF(p=>({...p,deti:{...p.deti,[d.id]:!p.deti[d.id]}}))}/>{d.jmeno}</label>)}
         </div>
       </div>
