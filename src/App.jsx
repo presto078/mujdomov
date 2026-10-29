@@ -2585,30 +2585,44 @@ function PeceLekari({lekari,navstevy,deti,onSaved}){
 }
 
 // ── Výpomoc ──────────────────────────────────────────────────────────────────
+const pcHod=h=>`${(Math.round(h*100)/100).toLocaleString("cs-CZ")} h`;
+const pcNoci=n=>`${n} ${pcSklon(n,"noc","noci","nocí")}`;
+const pcKolik=(j,n)=>j==="den"?pcDni(n):(j==="noc"?pcNoci(n):pcHod(n));
+const pcCas=t=>t?String(t).slice(0,5):"";
+// hodiny z času od–do; přes půlnoc (do < od) se přičte 24 h
+function pcHodinyOdDo(od,doo){
+  if(!od||!doo)return null;
+  const m=s=>{const [h,mi]=String(s).split(":").map(Number);return h*60+(mi||0);};
+  let r=m(doo)-m(od);if(r<=0)r+=1440;
+  return Math.round(r/60*100)/100;
+}
 function pcBilanceVypomoci(rows){
-  const b={den:0,hod:0};// kladné = Tereza dluží tobě
+  const b={den:0,noc:0,hod:0};// kladné = Tereza dluží tobě
   rows.forEach(v=>{b[v.jednotka]=(b[v.jednotka]||0)+(v.kdo_hlidal==="ja"?1:-1)*(+v.pocet||0);});
-  const t=(d,h)=>[d?pcDni(d):"",h?`${h} h`:""].filter(Boolean).join(" a ");
-  const plus=t(Math.max(b.den,0),Math.max(b.hod,0)),minus=t(Math.max(-b.den,0),Math.max(-b.hod,0));
+  b.hod=Math.round(b.hod*100)/100;
+  const t=(d,n,h)=>[d?pcDni(d):"",n?pcNoci(n):"",h?pcHod(h):""].filter(Boolean).join(" a ");
+  const plus=t(Math.max(b.den,0),Math.max(b.noc,0),Math.max(b.hod,0)),minus=t(Math.max(-b.den,0),Math.max(-b.noc,0),Math.max(-b.hod,0));
   const text=!plus&&!minus?"vyrovnáno":[plus?`Tereza dluží tobě ${plus}`:"",minus?`ty dlužíš Tereze ${minus}`:""].filter(Boolean).join(" · ");
   return {b,text,kdo:plus&&!minus?"ja":(minus&&!plus?"tereza":"domluva")};
 }
 function PeceVypomoc({vypomoc,deti,dnes,onSaved}){
-  const [f,setF]=useState({datum:"",kdo_hlidal:"ja",jednotka:"den",pocet:"1",poznamka:"",deti:{}});
+  const [f,setF]=useState({datum:"",kdo_hlidal:"ja",jednotka:"den",pocet:"1",cas_od:"",cas_do:"",poznamka:"",deti:{}});
+  const hodOdDo=f.jednotka==="hod"?pcHodinyOdDo(f.cas_od,f.cas_do):null;
   const jmeno=id=>deti.find(d=>String(d.id)===String(id))?.jmeno||"?";
   const [saving,setSaving]=useState(false);
   const bal=pcBilanceVypomoci(vypomoc);
   const bk=PECE_KDO[bal.kdo];
   const uloz=async e=>{
     e.preventDefault();
-    const p=parseFloat(String(f.pocet).replace(",","."));
+    const p=hodOdDo??parseFloat(String(f.pocet).replace(",","."));
+    if(f.jednotka==="hod"&&(!!f.cas_od!==!!f.cas_do)){alert("Vyplň čas od i do (nebo ani jeden a zadej počet hodin).");return;}
     const ids=deti.filter(d=>f.deti[d.id]).map(d=>d.id);
     if(!f.datum||!(p>0)||!ids.length){alert("Vyplň datum, počet a vyber aspoň jedno dítě.");return;}
     setSaving(true);
-    const {error}=await sb.from("pece_vypomoc").insert({datum:f.datum,kdo_hlidal:f.kdo_hlidal,jednotka:f.jednotka,pocet:p,deti:ids,poznamka:f.poznamka||null});
+    const {error}=await sb.from("pece_vypomoc").insert({datum:f.datum,kdo_hlidal:f.kdo_hlidal,jednotka:f.jednotka,pocet:p,deti:ids,cas_od:hodOdDo!=null?f.cas_od:null,cas_do:hodOdDo!=null?f.cas_do:null,poznamka:f.poznamka||null});
     setSaving(false);
     if(error){alert("Nepodařilo se uložit: "+error.message);return;}
-    setF(x=>({...x,datum:"",pocet:"1",poznamka:"",deti:{}}));onSaved();
+    setF(x=>({...x,datum:"",pocet:"1",cas_od:"",cas_do:"",poznamka:"",deti:{}}));onSaved();
   };
   // u starších záznamů (bez dětí) jde děti doplnit klikem
   const prepniDite=async(v,id)=>{
@@ -2621,6 +2635,7 @@ function PeceVypomoc({vypomoc,deti,dnes,onSaved}){
   const vyrovnej=async()=>{
     const rows=[];
     if(bal.b.den)rows.push({datum:pcIso(dnes),kdo_hlidal:bal.b.den>0?"tereza":"ja",jednotka:"den",pocet:Math.abs(bal.b.den),vyrovnani:true,poznamka:"vyrovnání"});
+    if(bal.b.noc)rows.push({datum:pcIso(dnes),kdo_hlidal:bal.b.noc>0?"tereza":"ja",jednotka:"noc",pocet:Math.abs(bal.b.noc),vyrovnani:true,poznamka:"vyrovnání"});
     if(bal.b.hod)rows.push({datum:pcIso(dnes),kdo_hlidal:bal.b.hod>0?"tereza":"ja",jednotka:"hod",pocet:Math.abs(bal.b.hod),vyrovnani:true,poznamka:"vyrovnání"});
     if(!rows.length)return;
     if(!confirm(`Označit jako vyrovnané (${bal.text})?`))return;
@@ -2629,7 +2644,7 @@ function PeceVypomoc({vypomoc,deti,dnes,onSaved}){
     onSaved();
   };
   const smaz=async v=>{if(!confirm("Smazat záznam?"))return;const {error}=await sb.from("pece_vypomoc").delete().eq("id",v.id);if(error)alert(error.message);onSaved();};
-  return <PeceBox titulek="Výpomoc" pod="Když vezmeš děti místo Terezy nebo ona místo tebe – den nebo pár hodin. Dny a hodiny se sčítají zvlášť.">
+  return <PeceBox titulek="Výpomoc" pod="Když vezmeš děti místo Terezy nebo ona místo tebe – den, noc nebo pár hodin. Dny, noci a hodiny se sčítají zvlášť.">
     <div style={{background:bk.bg,color:bk.fg,borderRadius:14,padding:16,display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"center",gap:10}}>
       <div><div style={{fontSize:13,fontWeight:700,opacity:.85}}>Stav</div><div style={{fontSize:22,fontWeight:800}}>{bal.text}</div></div>
       {bal.text!=="vyrovnáno"&&<button type="button" onClick={vyrovnej} style={{border:"none",background:"#fff",color:C.text,fontWeight:800,fontSize:13,padding:"9px 14px",borderRadius:999,cursor:"pointer",minHeight:40}}>Vyrovnáno</button>}
@@ -2645,8 +2660,12 @@ function PeceVypomoc({vypomoc,deti,dnes,onSaved}){
         </div>
       </div>
       <label style={{...pcLbl,flex:"1 1 100px"}}>Jak dlouho<select style={{...inp,minHeight:40}} value={f.jednotka} onChange={e=>setF(p=>({...p,jednotka:e.target.value}))}>
-        <option value="den">Dny</option><option value="hod">Hodiny</option></select></label>
-      <label style={{...pcLbl,flex:"0 1 80px"}}>Počet<input type="number" min="0.5" step="0.5" style={{...inp,minHeight:40}} value={f.pocet} onChange={e=>setF(p=>({...p,pocet:e.target.value}))}/></label>
+        <option value="den">Dny</option><option value="noc">Noci</option><option value="hod">Hodiny</option></select></label>
+      {f.jednotka==="hod"&&<label style={{...pcLbl,flex:"0 1 100px"}}>Od<input type="time" style={{...inp,minHeight:40}} value={f.cas_od} onChange={e=>setF(p=>({...p,cas_od:e.target.value}))}/></label>}
+      {f.jednotka==="hod"&&<label style={{...pcLbl,flex:"0 1 100px"}}>Do<input type="time" style={{...inp,minHeight:40}} value={f.cas_do} onChange={e=>setF(p=>({...p,cas_do:e.target.value}))}/></label>}
+      <label style={{...pcLbl,flex:"0 1 80px"}}>{hodOdDo!=null?"Hodin":"Počet"}{hodOdDo!=null
+        ?<input readOnly title="Spočítáno z času od–do" style={{...inp,minHeight:40,background:C.bg,fontWeight:700}} value={hodOdDo.toLocaleString("cs-CZ")}/>
+        :<input type="number" min="0.25" step={f.jednotka==="hod"?"0.25":"1"} style={{...inp,minHeight:40}} value={f.pocet} onChange={e=>setF(p=>({...p,pocet:e.target.value}))}/>}</label>
       <label style={{...pcLbl,flex:"3 1 200px"}}>Poznámka<input style={{...inp,minHeight:40}} value={f.poznamka} onChange={e=>setF(p=>({...p,poznamka:e.target.value}))} placeholder="např. Patrik v sobotu, má práci"/></label>
       <button type="submit" disabled={saving} style={{...btnC("#2F5D8A"),minHeight:40}}>{saving?"Ukládám…":"Zapsat"}</button>
     </form>
@@ -2654,10 +2673,11 @@ function PeceVypomoc({vypomoc,deti,dnes,onSaved}){
       {vypomoc.length===0&&<div style={{color:C.muted,fontSize:13}}>Zatím nic.</div>}
       {vypomoc.map(v=><div key={v.id} style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"6px 12px",padding:"9px 2px",borderTop:`1px solid ${C.border}`,opacity:v.vyrovnani?.7:1}}>
         <span style={{flex:"0 0 90px",fontWeight:800}}>{pcFmt(pcParse(v.datum))}</span>
-        <span style={{flex:"1 1 160px",minWidth:0}}><div style={{fontWeight:700}}>{v.vyrovnani?"Vyrovnání":(v.kdo_hlidal==="ja"?"Ty za Terezu":"Tereza za tebe")}</div>{!v.vyrovnani&&(v.deti||[]).length>0&&<div style={{fontSize:13,fontWeight:600}}>{v.deti.map(jmeno).join(", ")}</div>}
+        <span style={{flex:"1 1 160px",minWidth:0}}><div style={{fontWeight:700}}>{v.vyrovnani?"Vyrovnání":(v.kdo_hlidal==="ja"?"Ty za Terezu":"Tereza za tebe")}</div>
+          {!v.vyrovnani&&(v.cas_od||v.jednotka==="noc")&&<div style={{fontSize:13,fontWeight:600,color:C.muted}}>{v.jednotka==="noc"?"🌙 přes noc":`${pcCas(v.cas_od)}–${pcCas(v.cas_do)}`}</div>}{!v.vyrovnani&&(v.deti||[]).length>0&&<div style={{fontSize:13,fontWeight:600}}>{v.deti.map(jmeno).join(", ")}</div>}
           {!v.vyrovnani&&!(v.deti||[]).length&&<div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center",fontSize:12,color:C.muted}}>doplnit děti:{deti.map(d=><button key={d.id} type="button" onClick={()=>prepniDite(v,d.id)} style={{border:`1px dashed ${C.borderL}`,background:"none",color:C.text,borderRadius:999,padding:"2px 9px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{d.jmeno}</button>)}</div>}
           {v.poznamka&&!v.vyrovnani&&<div style={{fontSize:12,color:C.muted}}>{v.poznamka}</div>}</span>
-        <PeceStitek kdo={v.vyrovnani?"domluva":v.kdo_hlidal} text={`${v.kdo_hlidal==="ja"?"+":"−"}${v.jednotka==="den"?pcDni(+v.pocet):`${+v.pocet} h`}`}/>
+        <PeceStitek kdo={v.vyrovnani?"domluva":v.kdo_hlidal} text={`${v.kdo_hlidal==="ja"?"+":"−"}${pcKolik(v.jednotka,+v.pocet)}`}/>
         <button type="button" aria-label="Smazat" onClick={()=>smaz(v)} style={{border:"none",background:"none",color:C.muted,cursor:"pointer",width:36,height:36}}>✕</button>
       </div>)}
     </div>

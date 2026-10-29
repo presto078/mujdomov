@@ -233,18 +233,33 @@ export async function peceZapis(a) {
   }
 
   if (a.druh === "vypomoc") {
-    povinne(a, ["datum", "kdo", "jednotka", "pocet", "deti"]);
+    povinne(a, ["datum", "kdo", "jednotka", "deti"]);
     const datum = den(a.datum, "datum");
     const kdo = kdoPece(a.kdo, "kdo (kdo hlídal)");
     if (kdo === "domluva") throw new Error("U výpomoci: hlídal buď ja, nebo tereza.");
-    const jednotka = { den: "den", dny: "den", d: "den", hod: "hod", hodina: "hod", hodiny: "hod", h: "hod" }[String(a.jednotka).toLowerCase()];
-    if (!jednotka) throw new Error("jednotka: den nebo hod.");
-    const pocet = cislo(a.pocet, "pocet", { kladne: true, nula: false });
+    const jednotka = { den: "den", dny: "den", d: "den", noc: "noc", noci: "noc", hod: "hod", hodina: "hod", hodiny: "hod", h: "hod" }[String(a.jednotka).toLowerCase()];
+    if (!jednotka) throw new Error("jednotka: den, noc nebo hod.");
+    const cas = (v, k) => {
+      if (!v) return null;
+      const m = String(v).trim().match(/^(\d{1,2})[:.](\d{2})$/);
+      if (!m || +m[1] > 23 || +m[2] > 59) throw new Error(`${k}: čas ve tvaru HH:MM.`);
+      return `${m[1].padStart(2, "0")}:${m[2]}`;
+    };
+    const casOd = jednotka === "hod" ? cas(a.cas_od, "cas_od") : null;
+    const casDo = jednotka === "hod" ? cas(a.cas_do, "cas_do") : null;
+    if (!!casOd !== !!casDo) throw new Error("cas_od a cas_do: buď oba, nebo ani jeden.");
+    let pocet;
+    if (casOd) {
+      const mi = (s) => +s.slice(0, 2) * 60 + +s.slice(3, 5);
+      let r = mi(casDo) - mi(casOd);
+      if (r <= 0) r += 1440;
+      pocet = Math.round((r / 60) * 100) / 100;
+    } else pocet = cislo(a.pocet, "pocet", { kladne: true, nula: false });
     const vybrane = [].concat(a.deti).map(dite);
     if (!vybrane.length) throw new Error("deti: aspoň jedno dítě (Patrik, Beatka, Jiřík).");
-    const zmena = { datum, hlidal: KDO[kdo], deti: vybrane.map((d) => d.jmeno), kolik: `${pocet} ${jednotka === "den" ? "d" : "h"}`, poznamka: a.poznamka || null };
+    const zmena = { datum, hlidal: KDO[kdo], deti: vybrane.map((d) => d.jmeno), kolik: `${pocet} ${{ den: "d", noc: "noc", hod: "h" }[jednotka]}`, cas: casOd ? `${casOd}–${casDo}` : null, poznamka: a.poznamka || null };
     if (!potvrzeno(a)) return nahled("Výpomoc s hlídáním", zmena);
-    await q(db().from("pece_vypomoc").insert({ datum, kdo_hlidal: kdo, jednotka, pocet, deti: vybrane.map((d) => d.id), poznamka: a.poznamka || null }));
+    await q(db().from("pece_vypomoc").insert({ datum, kdo_hlidal: kdo, jednotka, pocet, cas_od: casOd, cas_do: casDo, deti: vybrane.map((d) => d.id), poznamka: a.poznamka || null }));
     return zapsano("Výpomoc zapsána", zmena);
   }
 

@@ -71,6 +71,11 @@ create table if not exists pece_vypomoc (
 create index if not exists pece_vypomoc_datum_idx on pece_vypomoc (datum);
 -- 28. 10. 2026: u výpomoci se zapisuje, o které děti šlo
 alter table pece_vypomoc add column if not exists deti uuid[] not null default '{}';
+-- 29. 10. 2026: noc jako samostatná jednotka, u hodin čas od–do
+alter table pece_vypomoc add column if not exists cas_od time;
+alter table pece_vypomoc add column if not exists cas_do time;
+alter table pece_vypomoc drop constraint if exists pece_vypomoc_jednotka_check;
+alter table pece_vypomoc add constraint pece_vypomoc_jednotka_check check (jednotka in ('den','noc','hod'));
 
 
 -- ── RLS + granty ─────────────────────────────────────────────────────────

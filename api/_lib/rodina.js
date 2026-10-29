@@ -123,11 +123,12 @@ export async function pece(a) {
     }
   });
 
-  const b = { den: 0, hod: 0 };
+  const b = { den: 0, noc: 0, hod: 0 };
   (vyp || []).forEach((v) => (b[v.jednotka] = (b[v.jednotka] || 0) + (v.kdo_hlidal === "ja" ? 1 : -1) * (+v.pocet || 0)));
-  const fmt = (dd, hh) => [dd ? `${dd} d` : "", hh ? `${hh} h` : ""].filter(Boolean).join(" a ");
-  const plus = fmt(Math.max(b.den, 0), Math.max(b.hod, 0));
-  const minus = fmt(Math.max(-b.den, 0), Math.max(-b.hod, 0));
+  b.hod = Math.round(b.hod * 100) / 100;
+  const fmt = (dd, nn, hh) => [dd ? `${dd} d` : "", nn ? `${nn} noc` : "", hh ? `${hh} h` : ""].filter(Boolean).join(" a ");
+  const plus = fmt(Math.max(b.den, 0), Math.max(b.noc, 0), Math.max(b.hod, 0));
+  const minus = fmt(Math.max(-b.den, 0), Math.max(-b.noc, 0), Math.max(-b.hod, 0));
 
   // Výživné od Terezy: příchozí platby z jejího účtu v kategorii Alimenty.
   const katIds = (katAlim || []).map((k) => k.id);
@@ -161,7 +162,7 @@ export async function pece(a) {
     navstevy_lekare: (nav || []).map((x) => ({ datum: x.datum, dite: jmeno(x.dite_id), obor: x.obor, kdo: KDO[x.kdo] || x.kdo, poznamka: x.poznamka || undefined })),
     vypomoc: {
       bilance: !plus && !minus ? "vyrovnáno" : [plus ? `Tereza dluží Jirkovi ${plus}` : "", minus ? `Jirka dluží Tereze ${minus}` : ""].filter(Boolean).join(" · "),
-      zaznamy: (vyp || []).slice(0, 10).map((v) => ({ datum: v.datum, hlidal: KDO[v.kdo_hlidal] || v.kdo_hlidal, deti: (v.deti || []).length ? v.deti.map(jmeno) : undefined, kolik: `${v.pocet} ${v.jednotka === "den" ? "d" : "h"}`, poznamka: v.poznamka || undefined })),
+      zaznamy: (vyp || []).slice(0, 10).map((v) => ({ datum: v.datum, hlidal: KDO[v.kdo_hlidal] || v.kdo_hlidal, deti: (v.deti || []).length ? v.deti.map(jmeno) : undefined, kolik: `${v.pocet} ${{ den: "d", noc: "noc", hod: "h" }[v.jednotka] || v.jednotka}`, cas: v.cas_od ? `${String(v.cas_od).slice(0, 5)}–${String(v.cas_do).slice(0, 5)}` : undefined, poznamka: v.poznamka || undefined })),
     },
     vyzivne_od_terezy: {
       mesicne: kc0(nast.vyzivne),
