@@ -13426,6 +13426,10 @@ function AutoNastaveni({auto,reload,onBack}){
 // ══════════════════════════════════════════════════════════════════════════════
 // MODUL: ÚČTY & PC — evidence uživatelských účtů, hesel, licencí a hardwaru
 //
+// SKRYTÝ: evidence IT se přestěhovala do DATA PRESCO. Dlaždice a vstup do
+// modulu jsou pryč, kód a tabulky it_* (včetně šifrovaných tajne/klic a
+// it_vault_meta) zůstávají beze změny.
+//
 // ZABEZPEČENÍ (zero-knowledge trezor):
 //   • Hardware a názvy zůstávají čitelné (kvůli přehledu a hledání).
 //   • Tajné údaje (hesla, 2FA/recovery kódy, licenční klíče, tajné poznámky)
@@ -14478,7 +14482,6 @@ const TILES=[
   {id:"kalendar", emoji:"📅",  label:"Kalendář",  popis:"Google Calendar",         barva:"#1a7a4a"},
   {id:"zvirata",  emoji:"🐾",  label:"Zvířata",   popis:"Profily a péče",           barva:"#7a5c3a"},
   {id:"dokumenty",emoji:"📁",  label:"Dokumenty", popis:"Centrální kartotéka",      barva:"#5a6acf"},
-  {id:"ucty",     emoji:"🔐",  label:"Účty & PC", popis:"Hesla, licence, hardware",   barva:"#334155"},
   {id:"uzivatele",emoji:"👥",  label:"Uživatelé", popis:"Kdo co v appce vidí",        barva:"#475569"},
 ];
 
@@ -14700,7 +14703,6 @@ function AppInner({uzivatel}) {
         {modul==="kalendar" && <KalendarTab/>}
         {modul==="zvirata"  && <ZvirataTab/>}
         {modul==="dokumenty"&& <DokumentyTab/>}
-        {modul==="ucty"     && <UctyTab/>}
         {modul==="uzivatele"&& <UzivateleTab mujEmail={uzivatel?.email}/>}
       </div>
     </div>;

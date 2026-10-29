@@ -12,18 +12,18 @@
      SUPABASE_URL               nepovinné — jinak se vezme VITE_SUPA_URL
 
    Čtecí nástroje jen čtou. Zapisující bez `potvrdit: true` jen ukážou
-   náhled a nic nezapíšou. Žádný nástroj nemaže. Šifrovaný trezor
-   (hesla, licenční klíče) konektor nevypisuje.
+   náhled a nic nezapíšou. Žádný nástroj nemaže. Evidence IT je
+   v DATA PRESCO, nástroje it a zapsat_zarizeni tu proto nejsou.
    Návod k nastavení: MCP.md v kořeni repozitáře.
    ===================================================================== */
 
 import { timingSafeEqual } from "node:crypto";
 import { kdeJsem, prijmyAVydaje, transakce, ciselniky } from "./_lib/finance.js";
 import { pece, alimenty, rodina } from "./_lib/rodina.js";
-import { pravnik, projekty, dumAAuta, energie, ukoly, it, hledej } from "./_lib/domacnost.js";
+import { pravnik, projekty, dumAAuta, energie, ukoly, hledej } from "./_lib/domacnost.js";
 import {
   zaraditTransakce, zapsatHotovost, zapsatZustatek, zapsatOdecet, peceZapis, pravnikZapis,
-  zapsatPoznamku, oznacitSplnene, zapsatZarizeni, zapsatAuto, zapsatDarek, zapsatOpravu,
+  zapsatPoznamku, oznacitSplnene, zapsatAuto, zapsatDarek, zapsatOpravu,
 } from "./_lib/zapis.js";
 
 export const config = { maxDuration: 60 };
@@ -164,16 +164,9 @@ export const NASTROJE = [
     handler: ukoly,
   },
   {
-    name: "it",
-    title: "IT — počítače a zařízení",
-    description: "Evidence počítačů a zařízení (kde, kdo, HW, OS, IP/MAC, poznámky a historie instalací), licence a účty bez tajných údajů. Hesla a klíče se nevracejí.",
-    inputSchema: obj({ text: S("string", "Filtr — název, uživatel, model, poznámka…") }),
-    handler: it,
-  },
-  {
     name: "hledej",
     title: "Hledat v Domově",
-    description: "Jedním dotazem projde platby, poznámky, opravy, todo, IT zařízení, dárky a právní případy.",
+    description: "Jedním dotazem projde platby, poznámky, opravy, todo, dárky a právní případy.",
     inputSchema: obj({ dotaz: S("string", "Co hledat"), limit: S("integer", "Max výsledků na druh (výchozí 15)") }, ["dotaz"]),
     handler: hledej,
   },
@@ -275,21 +268,6 @@ export const NASTROJE = [
     handler: oznacitSplnene,
   },
   {
-    name: "zapsat_zarizeni",
-    title: "IT — zařízení",
-    zapisuje: true,
-    description:
-      "Bez id založí počítač/zařízení, s id upraví. zapsat_do_historie přidá do poznámky datovaný řádek, např. „nainstalován Office 2021“. " +
-      "Hesla a licenční klíče sem nepatří (KeePass).",
-    inputSchema: obj({
-      id: S("string", "Úprava existujícího"), nazev: S("string", ""), typ: S("string", "pc, notebook, tiskárna, router…"), uzivatel: S("string", "Kdo ho používá / kde stojí"),
-      vyrobce: S("string", ""), model: S("string", ""), serie_cislo: S("string", ""), cpu: S("string", ""), ram: S("string", ""), disk: S("string", ""), gpu: S("string", ""),
-      os: S("string", ""), mac: S("string", ""), ip: S("string", ""), poznamka: S("string", "Přepíše celou poznámku"),
-      zapsat_do_historie: S("string", "Co se udělalo — přidá se jako nový řádek"), datum: datum("Datum pro historii"), potvrdit,
-    }),
-    handler: zapsatZarizeni,
-  },
-  {
     name: "zapsat_auto",
     title: "Auto — km, servis, náklad",
     zapisuje: true,
@@ -328,7 +306,7 @@ export const NASTROJE = [
 
 const INSTRUKCE =
   "Domov — Jirkova rodinná appka: finance z bankovních výpisů, péče o děti a střídání s Terezou, alimenty se Šímou, právník, projekty, " +
-  "dům a auta, voda a elektřina, úkoly, dárky a evidence počítačů. Nástroje bez „zapisuje“ jen čtou. Zapisující nástroje nejdřív zavolej " +
+  "dům a auta, voda a elektřina, úkoly a dárky. Evidence počítačů je v DATA PRESCO, ne tady. Nástroje bez „zapisuje“ jen čtou. Zapisující nástroje nejdřív zavolej " +
   "bez potvrdit, ukaž náhled uživateli a zapisuj (potvrdit: true) až po jeho výslovném souhlasu. Nic se nemaže. " +
   "Než něco označíš za nezaplacené nebo chybějící, podívej se na vypisy_do — po tom datu výpisy ještě nejsou nahrané. Částky jsou v Kč.";
 

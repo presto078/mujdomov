@@ -298,6 +298,7 @@ export async function ukoly(a) {
 }
 
 /* ---------------------------------------------------------------- IT */
+/* Mimo registr nástrojů: evidence IT se přestěhovala do DATA PRESCO. */
 
 export async function it(a) {
   const [zar, lic, ucty] = await Promise.all([
@@ -331,14 +332,13 @@ export async function hledej(a) {
   const n = limit(a.limit, 15, 100);
   const like = `*${t}*`;
   const nebo = (...sloupce) => sloupce.map((c) => `${c}.ilike."${like}"`).join(",");
-  const [tr, pozn, opr, todo, zar, dar, prip] = await Promise.all([
+  const [tr, pozn, opr, todo, dar, prip] = await Promise.all([
     q(db().from("fin_transakce").select("id,datum,castka,protistrana,popis,ucet_id").or(nebo("popis", "protistrana", "poznamka", "vs")).order("datum", { ascending: false }).limit(n)),
     q(db().from("poznamky").select("id,nazev,obsah,splneno").or(nebo("nazev", "obsah")).limit(n)),
     q(db().from("dum_opravy").select("id,nazev,stav,castka").or(nebo("nazev", "popis")).limit(n)),
     q(db().from("projekty_todo").select("id,nazev,splneno").ilike("nazev", like).limit(n)),
-    q(db().from("it_zarizeni").select("id,nazev,typ,uzivatel,poznamka").or(nebo("nazev", "uzivatel", "poznamka", "model")).limit(n)),
     q(db().from("darky").select("id,rok,nazev,cena,stav").ilike("nazev", like).limit(n)),
     q(db().from("pravnici_pripady").select("id,nazev,stav").ilike("nazev", like).limit(n)),
   ]);
-  return { transakce: tr, poznamky: pozn, opravy: opr, projektove_todo: todo, it_zarizeni: zar, darky: dar, pravni_pripady: prip };
+  return { transakce: tr, poznamky: pozn, opravy: opr, projektove_todo: todo, darky: dar, pravni_pripady: prip };
 }

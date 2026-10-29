@@ -12,7 +12,7 @@ Logika je v `api/_lib/`:
 | `zaklad.js` | připojení k Supabase, data, částky, dohledání účtu/kategorie podle názvu |
 | `finance.js` | Kde jsem, příjmy a výdaje, hledání plateb, číselníky |
 | `rodina.js` | Péče, alimenty, děti a dárky |
-| `domacnost.js` | právník, projekty, dům a auta, voda a elektřina, úkoly, IT, hledání |
+| `domacnost.js` | právník, projekty, dům a auta, voda a elektřina, úkoly, hledání |
 | `zapis.js` | všechny zapisující nástroje |
 
 > **Pozor:** výpočty ve `finance.js`, `rodina.js` a `domacnost.js` jsou přepsané
@@ -77,8 +77,10 @@ Nastavení → Konektory → Přidat vlastní konektor.
 | `dum_a_auta` | Otevřené opravy, auta (km, servis, leasing, náklady). |
 | `energie` | Voda a elektřina: odečty, faktury, průběžný přeplatek/nedoplatek. |
 | `ukoly` | Pravidelné úkoly, poznámky, todo projektů, předplatné, zásoby pod minimem. |
-| `it` | Počítače a zařízení, licence a účty **bez hesel a klíčů**. |
-| `hledej` | Jedním dotazem napříč platbami, poznámkami, opravami, IT, dárky… |
+| `hledej` | Jedním dotazem napříč platbami, poznámkami, opravami, dárky… |
+
+Evidence IT (počítače, licence, účty) je v DATA PRESCO, nástroje `it`
+a `zapsat_zarizeni` byly z konektoru odebrané. Tabulky `it_*` v Supabase zůstávají.
 
 ### Zápis — vždy dva kroky
 
@@ -97,7 +99,6 @@ Nastavení → Konektory → Přidat vlastní konektor.
 | `pravnik_zapis` | Záznam práce (částka ze sazby) nebo platba (propíše se i do cashflow plánu). |
 | `zapsat_poznamku` | Poznámka, nebo položka do todo projektu. |
 | `oznacit_splnene` | Poznámka / todo splněno; pravidelný úkol splněn a posunut termín. |
-| `zapsat_zarizeni` | Počítač nebo zařízení; `zapsat_do_historie` přidá datovaný řádek („nainstalován Office“). |
 | `zapsat_auto` | Kilometry, servis, náklad. |
 | `zapsat_darek` | Dárek nebo přání; změna stavu, ceny, kde je schovaný. |
 | `zapsat_opravu` | Oprava domu; změna stavu, částky, priority. |
@@ -106,6 +107,6 @@ Nastavení → Konektory → Přidat vlastní konektor.
 
 ## 4. Co konektor záměrně nedělá
 
-- Nevypisuje hesla ani licenční klíče (trezor), ani rodná čísla.
+- Nevypisuje rodná čísla. IT evidenci (ani hesla a klíče z trezoru) nečte vůbec.
 - Nemaže.
 - Nepouští libovolné SQL — jen pevně dané nástroje.
