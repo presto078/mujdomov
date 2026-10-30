@@ -2605,12 +2605,31 @@ function pcBilanceVypomoci(rows){
   const text=!plus&&!minus?"vyrovnáno":[plus?`Tereza dluží tobě ${plus}`:"",minus?`ty dlužíš Tereze ${minus}`:""].filter(Boolean).join(" · ");
   return {b,text,kdo:plus&&!minus?"ja":(minus&&!plus?"tereza":"domluva")};
 }
+// Rozpis dluhu po dětech od posledního vyrovnání (vyrovnání děti nemá).
+// Hodina hlídání se do součtu počítá jednou bez ohledu na počet dětí,
+// tady jde jen o přehled, u koho výpomoc vznikla.
+function pcPoDetech(rows,deti){
+  const out={};const bez={den:0,noc:0,hod:0};
+  for(const v of rows){// rows jsou od nejnovějšího
+    if(v.vyrovnani)break;
+    const z=(v.kdo_hlidal==="ja"?1:-1)*(+v.pocet||0);
+    const ids=(v.deti||[]).map(String);
+    if(!ids.length){bez[v.jednotka]+=z;continue;}
+    ids.forEach(id=>{const o=out[id]=out[id]||{den:0,noc:0,hod:0};o[v.jednotka]+=z;});
+  }
+  const txt=b=>[["den",pcDni],["noc",pcNoci],["hod",pcHod]].filter(([k])=>Math.round(b[k]*100))
+    .map(([k,f])=>`${b[k]>0?"+":"−"}${f(Math.abs(Math.round(b[k]*100)/100))}`).join(", ");
+  const r=deti.map(d=>({jmeno:d.jmeno,text:out[String(d.id)]?txt(out[String(d.id)]):""})).filter(x=>x.text);
+  if(txt(bez))r.push({jmeno:"bez dětí",text:txt(bez)});
+  return r;
+}
 function PeceVypomoc({vypomoc,deti,dnes,onSaved}){
   const [f,setF]=useState({datum:"",kdo_hlidal:"ja",jednotka:"den",pocet:"1",cas_od:"",cas_do:"",poznamka:"",deti:{}});
   const hodOdDo=f.jednotka==="hod"?pcHodinyOdDo(f.cas_od,f.cas_do):null;
   const jmeno=id=>deti.find(d=>String(d.id)===String(id))?.jmeno||"?";
   const [saving,setSaving]=useState(false);
   const bal=pcBilanceVypomoci(vypomoc);
+  const poDetech=pcPoDetech(vypomoc,deti);
   const bk=PECE_KDO[bal.kdo];
   const uloz=async e=>{
     e.preventDefault();
@@ -2646,7 +2665,9 @@ function PeceVypomoc({vypomoc,deti,dnes,onSaved}){
   const smaz=async v=>{if(!confirm("Smazat záznam?"))return;const {error}=await sb.from("pece_vypomoc").delete().eq("id",v.id);if(error)alert(error.message);onSaved();};
   return <PeceBox titulek="Výpomoc" pod="Když vezmeš děti místo Terezy nebo ona místo tebe – den, noc nebo pár hodin. Dny, noci a hodiny se sčítají zvlášť.">
     <div style={{background:bk.bg,color:bk.fg,borderRadius:14,padding:16,display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"center",gap:10}}>
-      <div><div style={{fontSize:13,fontWeight:700,opacity:.85}}>Stav</div><div style={{fontSize:22,fontWeight:800}}>{bal.text}</div></div>
+      <div><div style={{fontSize:13,fontWeight:700,opacity:.85}}>Stav</div><div style={{fontSize:22,fontWeight:800}}>{bal.text}</div>
+        {poDetech.length>0&&<div style={{fontSize:13,fontWeight:700,opacity:.9,marginTop:4}}>{poDetech.map(x=>`${x.jmeno} ${x.text}`).join(" · ")}</div>}
+        {poDetech.length>0&&<div style={{fontSize:11,opacity:.75,marginTop:2}}>po dětech od posledního vyrovnání; + = hlídal jsi ty</div>}</div>
       {bal.text!=="vyrovnáno"&&<button type="button" onClick={vyrovnej} style={{border:"none",background:"#fff",color:C.text,fontWeight:800,fontSize:13,padding:"9px 14px",borderRadius:999,cursor:"pointer",minHeight:40}}>Vyrovnáno</button>}
     </div>
     <form onSubmit={uloz} style={pcForm}>

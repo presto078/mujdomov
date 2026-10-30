@@ -83,7 +83,7 @@ export async function pece(a) {
     q(db().from("pece_nemoci").select("*").order("od", { ascending: false })),
     q(db().from("pece_lekari").select("obor,kdo,poradi").order("poradi")),
     q(db().from("pece_navstevy").select("*").order("datum", { ascending: false }).limit(20)),
-    q(db().from("pece_vypomoc").select("*").order("datum", { ascending: false })),
+    q(db().from("pece_vypomoc").select("*").order("datum", { ascending: false }).order("created_at", { ascending: false })),
     q(db().from("fin_kategorie").select("id").eq("nazev", "Alimenty")),
   ]);
   const vyjMap = {};
@@ -129,6 +129,22 @@ export async function pece(a) {
   const fmt = (dd, nn, hh) => [dd ? `${dd} d` : "", nn ? `${nn} noc` : "", hh ? `${hh} h` : ""].filter(Boolean).join(" a ");
   const plus = fmt(Math.max(b.den, 0), Math.max(b.noc, 0), Math.max(b.hod, 0));
   const minus = fmt(Math.max(-b.den, 0), Math.max(-b.noc, 0), Math.max(-b.hod, 0));
+  // po dětech od posledního vyrovnání (+ = hlídal Jirka); součet výše se počítá jednou za záznam
+  const poDetech = {};
+  for (const v of vyp || []) {
+    if (v.vyrovnani) break;
+    const z = (v.kdo_hlidal === "ja" ? 1 : -1) * (+v.pocet || 0);
+    const kdo = (v.deti || []).length ? v.deti.map(jmeno) : ["bez dětí"];
+    kdo.forEach((j) => {
+      const o = (poDetech[j] = poDetech[j] || { den: 0, noc: 0, hod: 0 });
+      o[v.jednotka] += z;
+    });
+  }
+  const poDetechTxt = Object.fromEntries(
+    Object.entries(poDetech)
+      .map(([j, o]) => [j, [["den", "d"], ["noc", "noc"], ["hod", "h"]].filter(([k]) => Math.round(o[k] * 100)).map(([k, u]) => `${o[k] > 0 ? "+" : "−"}${Math.abs(Math.round(o[k] * 100) / 100)} ${u}`).join(", ")])
+      .filter(([, t]) => t)
+  );
 
   // Výživné od Terezy: příchozí platby z jejího účtu v kategorii Alimenty.
   const katIds = (katAlim || []).map((k) => k.id);
@@ -162,6 +178,7 @@ export async function pece(a) {
     navstevy_lekare: (nav || []).map((x) => ({ datum: x.datum, dite: jmeno(x.dite_id), obor: x.obor, kdo: KDO[x.kdo] || x.kdo, poznamka: x.poznamka || undefined })),
     vypomoc: {
       bilance: !plus && !minus ? "vyrovnáno" : [plus ? `Tereza dluží Jirkovi ${plus}` : "", minus ? `Jirka dluží Tereze ${minus}` : ""].filter(Boolean).join(" · "),
+      po_detech: Object.keys(poDetechTxt).length ? { pozn: "od posledního vyrovnání, + = hlídal Jirka", ...poDetechTxt } : undefined,
       zaznamy: (vyp || []).slice(0, 10).map((v) => ({ datum: v.datum, hlidal: KDO[v.kdo_hlidal] || v.kdo_hlidal, deti: (v.deti || []).length ? v.deti.map(jmeno) : undefined, kolik: `${v.pocet} ${{ den: "d", noc: "noc", hod: "h" }[v.jednotka] || v.jednotka}`, cas: v.cas_od ? `${String(v.cas_od).slice(0, 5)}–${String(v.cas_do).slice(0, 5)}` : undefined, poznamka: v.poznamka || undefined })),
     },
     vyzivne_od_terezy: {
